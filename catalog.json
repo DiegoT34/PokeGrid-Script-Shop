@@ -1,7 +1,35 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-24T17:55:40Z",
+    "updatedAt":  "2026-08-24T20:52:32Z",
     "scripts":  [
+                    {
+                        "id":  "better-market-and-more",
+                        "name":  "Better Market and More",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "10.8.0",
+                        "author":  "DiegoT34",
+                        "summary":  "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
+                        "description":  "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
+                        "category":  "Market",
+                        "tags":  [
+                                     "market",
+                                     "ivs",
+                                     "inventario",
+                                     "mapa"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz visible del juego",
+                                            "Lee datos visibles de mercado, inventario, depósito y Pokémon"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
+                        "sha256":  "bab90ca33d77ce99d5cdc66af94b69634ffbc13fc03e19f0260911da174feb34",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Actualización 10.8.0",
+                        "icon":  "🛒",
+                        "featured":  true,
+                        "publishedAt":  "2026-08-24T20:52:32Z"
+                    },
                     {
                         "id":  "breeding-center-calculator",
                         "name":  "Breeding Center - Breeding calculator",
@@ -145,34 +173,6 @@
                         "icon":  "🧬",
                         "featured":  false,
                         "publishedAt":  "2026-08-24T10:08:35Z"
-                    },
-                    {
-                        "id":  "better-market-and-more",
-                        "name":  "Better Market and More",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.7.1",
-                        "author":  "DiegoT34",
-                        "summary":  "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
-                        "description":  "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
-                        "category":  "Market",
-                        "tags":  [
-                                     "market",
-                                     "ivs",
-                                     "inventario",
-                                     "mapa"
-                                 ],
-                        "permissions":  [
-                                            "Modifica la interfaz visible del juego",
-                                            "Lee datos visibles de mercado, inventario, depósito y Pokémon"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
-                        "sha256":  "f8a8681690cd160a2707ceb5a264dbff486917551afa535358efd8b68e06051e",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación inicial en la PokeGrid Script Shop.",
-                        "icon":  "🛒",
-                        "featured":  true,
-                        "publishedAt":  "2026-08-24T10:08:34Z"
                     }
                 ]
 }

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Better Market and More
 // @namespace    http://tampermonkey.net/
-// @version      10.7.1
-// @description  Mercado Global rediseñado, sin alertas y con Exact IV Scanner completo y catálogo base integrado.
+// @version      10.8.0
+// @description  Mercado Global rediseñado, con cards Pokémon compactas, tipos visibles y Exact IV Scanner completo.
 // @match        https://poke.idleworld.online/play
 // @grant        none
 // @run-at       document-start
@@ -4295,6 +4295,57 @@
         }
         .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-buy { min-height:46px; }
 
+        /* Cards Pokémon compactas: conservan stats, precio, conversión, acciones, tier y tipos sin escalado borroso. */
+        .script-market-window .market-pokemon-listing { font-size:9px; }
+        .script-market-window .market-pokemon-listing .market-main { padding-right:76px; }
+        .script-market-window .market-pokemon-listing .market-kind-label { margin-bottom:3px;font-size:7px;line-height:1.1;letter-spacing:.13em; }
+        .script-market-window .market-pokemon-listing .market-item-name { font-size:13px;line-height:1.14; }
+        .script-market-window .market-pokemon-listing .market-meta { margin-top:2px;font-size:8px;line-height:1.2; }
+        .script-market-window .market-pokemon-listing .market-quality-tier { right:38px;min-height:17px;padding:2px 5px;font-size:6.5px;line-height:1.1; }
+        .script-market-window .market-pokemon-types { display:flex;flex-wrap:wrap;gap:3px;margin-top:4px; }
+        .script-market-window .market-pokemon-type {
+            --market-type-color:#91a3b7;display:inline-flex;align-items:center;min-height:15px;box-sizing:border-box;padding:1px 5px;color:#f4f7fb;background:color-mix(in srgb,var(--market-type-color) 24%,#0a1727);border:1px solid color-mix(in srgb,var(--market-type-color) 72%,#29415a);border-radius:4px;font-size:6.5px;font-weight:900;line-height:1;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;
+        }
+        .script-market-window .market-pokemon-type[data-pokemon-type="normal"] { --market-type-color:#a8a77a; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fire"] { --market-type-color:#ee8130; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="water"] { --market-type-color:#6390f0; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="electric"] { --market-type-color:#f7d02c; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="grass"] { --market-type-color:#7ac74c; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ice"] { --market-type-color:#96d9d6; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fighting"] { --market-type-color:#c22e28; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="poison"] { --market-type-color:#a33ea1; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ground"] { --market-type-color:#e2bf65; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="flying"] { --market-type-color:#a98ff3; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="psychic"] { --market-type-color:#f95587; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="bug"] { --market-type-color:#a6b91a; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="rock"] { --market-type-color:#b6a136; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ghost"] { --market-type-color:#735797; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="dragon"] { --market-type-color:#6f35fc; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="dark"] { --market-type-color:#705746; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="steel"] { --market-type-color:#b7b7ce; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fairy"] { --market-type-color:#d685ad; }
+        .script-market-window .market-pokemon-listing > .market-card-stats { gap:3px 5px;padding:5px 6px; }
+        .script-market-window .market-pokemon-listing > .market-card-stats .market-stat { min-height:15px;padding:2px 4px;font-size:7px;line-height:1; }
+        .script-market-window .market-pokemon-listing > .market-card-stats .market-stat b { font-size:7.5px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer { gap:5px;padding-top:7px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-data-box { min-height:45px;padding:5px 7px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-data-label { margin-bottom:2px;font-size:6px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-price b { font-size:10px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-conversion b { font-size:8.5px; }
+        .script-market-window .market-view-cards .market-buy-row.market-pokemon-listing {
+            min-height:270px !important;padding:9px !important;gap:7px 8px;grid-template-columns:56px minmax(0,1fr);grid-template-rows:minmax(66px,auto) minmax(53px,auto) minmax(101px,auto) !important;
+        }
+        .script-market-window .market-view-cards .market-buy-row.market-pokemon-listing .market-art { width:54px;height:54px; }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer { min-height:101px;grid-template-rows:minmax(45px,auto) minmax(39px,auto); }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-actions { margin-top:1px;padding-top:5px !important; }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-buy { min-height:38px;font-size:10px; }
+        .script-market-window .market-view-cards .market-sell-row.market-pokemon-listing {
+            min-height:150px !important;padding:9px !important;gap:7px 8px;grid-template-columns:56px minmax(0,1fr);grid-template-rows:minmax(64px,auto) auto;
+        }
+        .script-market-window .market-view-cards .market-sell-row.market-pokemon-listing .market-art { width:54px;height:54px; }
+        .script-market-window .market-view-list .market-buy-row.market-pokemon-listing { min-height:108px !important; }
+        .script-market-window .market-view-list .market-sell-row.market-pokemon-listing { min-height:98px !important; }
+
         /* Cards de objetos: identidad, banda de datos y compra en tres niveles claros. */
         .script-market-window .market-view-cards .market-buy-row.market-listing-row:not(.market-pokemon-listing) {
             min-height:224px !important;padding:12px !important;grid-template-columns:62px minmax(0,1fr) !important;grid-template-rows:minmax(78px,auto) minmax(112px,auto) !important;grid-template-areas:"art main" "footer footer" !important;gap:9px 11px !important;align-items:center !important;
@@ -8175,6 +8226,66 @@
             .join('');
     }
 
+    const MARKET_POKEMON_TYPE_ALIASES = Object.freeze({
+        normal:'normal', fire:'fire', fuego:'fire', water:'water', agua:'water', electric:'electric', electrico:'electric', eletrico:'electric',
+        grass:'grass', planta:'grass', ice:'ice', hielo:'ice', gelo:'ice', fighting:'fighting', lucha:'fighting', lutador:'fighting',
+        poison:'poison', veneno:'poison', ground:'ground', tierra:'ground', solo:'ground', flying:'flying', volador:'flying', voador:'flying',
+        psychic:'psychic', psiquico:'psychic', psiquica:'psychic', bug:'bug', bicho:'bug', inseto:'bug', rock:'rock', roca:'rock', pedra:'rock',
+        ghost:'ghost', fantasma:'ghost', dragon:'dragon', dark:'dark', siniestro:'dark', sombrio:'dark', steel:'steel', acero:'steel', aco:'steel',
+        fairy:'fairy', hada:'fairy', fada:'fairy'
+    });
+
+    function normalizeMarketPokemonType(value) {
+        const raw = typeof value === 'object' && value
+            ? (value.type?.name ?? value.name ?? value.type ?? value.label ?? '')
+            : value;
+        const normalized = String(raw || '').trim().toLocaleLowerCase().normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]+/g, '');
+        return MARKET_POKEMON_TYPE_ALIASES[normalized] || normalized;
+    }
+
+    function getMarketPokemonTypes(entry) {
+        const ref = entry?.pokemon || entry?.item || entry?.product || {};
+        const directTypes = [
+            ...(Array.isArray(entry?.types) ? entry.types : []), entry?.type1, entry?.type2, entry?.type_1, entry?.type_2,
+            ...(Array.isArray(ref?.types) ? ref.types : []), ref?.type1, ref?.type2, ref?.type_1, ref?.type_2
+        ].filter(Boolean);
+        const rawName = entry?.name || entry?.pokemonName || entry?.title || ref?.name || ref?.pokemonName || ref?.title || '';
+        const cleanName = normalizePokemonName(cleanMarketIvPokemonName(rawName));
+        let catalogCreature = null;
+        if (!directTypes.length) {
+            catalogCreature = cleanName ? globalCreatureApiData.get(cleanName) : null;
+            const speciesId = Number(entry?.speciesId ?? entry?.pokeId ?? entry?.pokemonId ?? ref?.speciesId ?? ref?.pokeId ?? ref?.pokemonId);
+            if (!catalogCreature && Number.isFinite(speciesId)) {
+                catalogCreature = [...new Set(globalCreatureApiData.values())].find(creature =>
+                    Number(creature?.speciesId ?? creature?.pokeId ?? creature?.pokemonId ?? creature?.id) === speciesId) || null;
+            }
+        }
+        const fallbackTypes = directTypes.length ? [] : [
+            ...(Array.isArray(catalogCreature?.types) ? catalogCreature.types : []), catalogCreature?.type1, catalogCreature?.type2,
+            catalogCreature?.type_1, catalogCreature?.type_2, ...(POKEMON_TYPES[cleanName] || [])
+        ].filter(Boolean);
+        const seen = new Set();
+        return [...directTypes, ...fallbackTypes].reduce((types, value) => {
+            const key = normalizeMarketPokemonType(value);
+            if (!key || seen.has(key) || types.length >= 2) return types;
+            seen.add(key);
+            const raw = typeof value === 'object' && value
+                ? (value.type?.name ?? value.name ?? value.type ?? value.label ?? key)
+                : value;
+            types.push({ key, label:String(raw || key).trim() });
+            return types;
+        }, []);
+    }
+
+    function getMarketPokemonTypesHTML(entry) {
+        const types = getMarketPokemonTypes(entry);
+        if (!types.length) return '';
+        return `<span class="market-pokemon-types" aria-label="Tipos: ${escapeHTML(types.map(type => type.label).join(', '))}">${types
+            .map(type => `<span class="market-pokemon-type" data-pokemon-type="${escapeHTML(type.key)}">${escapeHTML(type.label)}</span>`)
+            .join('')}</span>`;
+    }
+
     const STORAGE_MARKET_IV_BASE_STATS = 'script_market_iv_base_stats_v1';
     const marketIvBaseStatsRequests = new Map();
     let marketIvBaseStatsCache = {};
@@ -10564,10 +10675,11 @@
                 const kindLabel = isPokemon ? 'POKÉMON' : category === 'Poke Balls' ? 'POKÉ BALL' : category === 'Diamonds' ? 'MONEDA' : category === 'Stones' ? 'STONE' : 'OBJETO / DROP';
                 const details = isPokemon ? [ivTotal != null ? `${tr('ivTotal')}: ${ivTotal}/192` : '', quality != null ? `Q: ${Number(quality).toFixed(2)}` : ''].filter(Boolean).join(' · ') : '';
                 const statsHTML = isPokemon ? getMarketPokemonStatsHTML(stats) : '';
+                const typesHTML = isPokemon ? getMarketPokemonTypesHTML(entry) : '';
                 const badge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(name)}">` : `<span>${fallbackIcon}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel} · ${tr('marketMyListings')}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${badge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel} · ${tr('marketMyListings')}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${typesHTML}${badge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     <div class="market-buy-footer">
                         ${isPokemon ? '' : `<div class="market-quantity market-data-box"><small class="market-data-label">${tr('quantity')}</small><b>${quantity.toLocaleString(locale())}</b></div>`}
@@ -10933,9 +11045,10 @@
                 const tierBadge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : '';
                 const itemRarityBadge = itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
                 const statsHTML = isPokemon ? getMarketPokemonStatsHTML(entry.stats) : '';
+                const typesHTML = isPokemon ? getMarketPokemonTypesHTML(entry) : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(entry.name)}">` : `<span>${isPokemon ? '◉' : isDiamond ? '💎' : '📦'}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(entry.name)}</b><small class="market-meta">${escapeHTML(details)}</small>${tierBadge}${itemRarityBadge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(entry.name)}</b><small class="market-meta">${escapeHTML(details)}</small>${typesHTML}${tierBadge}${itemRarityBadge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     ${isPokemon ? '' : `<div class="market-quantity">${tr('amount')}<b>${Number(entry.quantity || 0).toLocaleString(locale())} ${tr('availableUnits')}</b></div>`}`;
                 row.querySelector('img')?.addEventListener('error', event => {
@@ -11128,9 +11241,10 @@
                 const fallbackIcon = isPokemonListing ? '◉' : entryKind === 'diamond' ? '💎' : '📦';
                 const tierBadge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : '';
                 const itemRarityBadge = itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
+                const typesHTML = isPokemonListing ? getMarketPokemonTypesHTML(entry) : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(name)}">` : `<span>${fallbackIcon}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${alertAccount ? `<small class="market-meta market-alert-account">${escapeHTML(alertAccount)}</small>` : ''}${tierBadge}${itemRarityBadge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${alertAccount ? `<small class="market-meta market-alert-account">${escapeHTML(alertAccount)}</small>` : ''}${typesHTML}${tierBadge}${itemRarityBadge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     <div class="market-buy-footer">
                         ${isPokemonListing ? '' : `<div class="market-quantity market-data-box"><small class="market-data-label">${tr('quantity')}</small><b>${quantity.toLocaleString(locale())}</b></div>`}
