@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PokeGrid Script Shop catalog",
+  "type": "object",
+  "required": ["schemaVersion", "updatedAt", "scripts"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "scripts": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "namespace", "version", "summary", "description", "category", "minLauncherVersion", "downloadUrl", "sha256"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,79}$" },
+          "name": { "type": "string", "maxLength": 120 },
+          "namespace": { "type": "string", "maxLength": 240 },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "downloadUrl": { "type": "string", "format": "uri" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+name: Validar catálogo
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar catálogo, metadatos y SHA-256
+        shell: pwsh
+        run: |
+          $catalog = Get-Content catalog.json -Raw | ConvertFrom-Json
+          if ($catalog.schemaVersion -ne 1) { throw 'schemaVersion debe ser 1.' }
+          $ids = @{}
+          foreach ($item in @($catalog.scripts)) {
+            if ($item.id -notmatch '^[a-z0-9][a-z0-9._-]{1,79}$') { throw "ID inválido: $($item.id)" }
+            if ($ids.ContainsKey($item.id)) { throw "ID duplicado: $($item.id)" }
+            $ids[$item.id] = $true
+            if ($item.version -notmatch '^\d+\.\d+\.\d+(?:[-+].*)?$') { throw "Versión inválida: $($item.id)" }
+            if ($item.sha256 -notmatch '^[a-f0-9]{64}$') { throw "SHA-256 inválido: $($item.id)" }
+            $expectedUrl = "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/$($item.id).user.js"
+            if ($item.downloadUrl -ne $expectedUrl) { throw "URL inválida: $($item.id)" }
+            $file = "scripts/$($item.id).user.js"
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "No existe $file" }
+            if ((Get-Item -LiteralPath $file).Length -gt 1000000) { throw "$file supera 1 MB" }
+            $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $item.sha256) { throw "SHA-256 no coincide: $($item.id)" }
+            $code = Get-Content -LiteralPath $file -Raw
+            $version = [regex]::Match($code, '(?im)^\s*//\s*@version\s+(.+?)\s*$').Groups[1].Value.Trim().TrimStart('v')
+            $namespace = [regex]::Match($code, '(?im)^\s*//\s*@namespace\s+(.+?)\s*$').Groups[1].Value.Trim()
+            if ($version -ne $item.version) { throw "@version no coincide: $($item.id)" }
+            if ($namespace -ne $item.namespace) { throw "@namespace no coincide: $($item.id)" }
+          }
+          Write-Host "Catálogo válido: $($catalog.scripts.Count) script(s)."
