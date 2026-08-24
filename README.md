@@ -4,6 +4,21 @@ Catálogo oficial de scripts descargables para **PokeGrid Launcher**.
 
 El launcher consulta `catalog.json` cuando el usuario abre **Scripts → Shop online**. Cada descarga se limita al repositorio `DiegoT34/PokeGrid-Script-Shop` y se verifica mediante SHA-256 antes de instalarse.
 
+## Publicador gráfico para Windows
+
+Ejecuta `Abrir-PokeGrid-Shop-Publisher.cmd` para abrir la aplicación gráfica. Permite:
+
+- seleccionar cualquier `.js` o `.user.js` con cabecera userscript;
+- leer automáticamente nombre, namespace, versión, autor y descripción;
+- completar categoría, etiquetas, permisos, icono y changelog;
+- crear o actualizar el archivo publicado;
+- normalizar versiones de dos componentes, como `3.91`, a `3.91.0`;
+- calcular y guardar el SHA-256;
+- actualizar `catalog.json`;
+- crear el commit y ejecutar `git push`.
+
+Si la aplicación se ejecuta desde el ZIP portátil del publicador, preparará una copia Git de la Shop en `%LOCALAPPDATA%\PokeGrid-Shop-Publisher\repository`. Git y GitHub CLI deben estar instalados y GitHub CLI debe estar autorizado con la cuenta `DiegoT34`.
+
 ## Publicación rápida
 
 1. Añade el archivo `.user.js` a `scripts/`.
