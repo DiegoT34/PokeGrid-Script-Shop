@@ -49,6 +49,7 @@ $targetDir = Join-Path $repoRoot 'scripts'
 $target = Join-Path $targetDir $targetName
 New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 $publishedCode = [regex]::Replace($code, '(?im)^(\s*//\s*@version\s+).+?\s*$', "`${1}$version", 1)
+$publishedCode = $publishedCode -replace "\r\n?", "`n"
 [IO.File]::WriteAllText($target, $publishedCode, [Text.UTF8Encoding]::new($false))
 $sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
 $catalogPath = Join-Path $repoRoot 'catalog.json'
