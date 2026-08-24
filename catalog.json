@@ -1,178 +1,178 @@
-{
-  "schemaVersion": 1,
-  "updatedAt": "2026-08-24T10:08:35Z",
-  "scripts": [
-    {
-      "id": "telegram-alerts",
-      "name": "PokeGrid Telegram Alerts",
-      "namespace": "pokegrid.telegram-alerts",
-      "version": "1.12.1",
-      "author": "PokeGrid",
-      "summary": "Alertas configurables de capturas, objetivos y stock mediante Telegram.",
-      "description": "Envía alertas de capturas, shinies, tiers, IVs, objetivos y stock de Poké Balls. Incluye deduplicación, selección de tarjetas y datos visuales del juego.",
-      "category": "Notificaciones",
-      "tags": [
-        "telegram",
-        "alertas",
-        "capturas",
-        "market"
-      ],
-      "permissions": [
-        "Modifica la interfaz mediante GM_addStyle",
-        "Guarda la configuración mediante GM_getValue y GM_setValue",
-        "Envía alertas a api.telegram.org mediante GM_xmlhttpRequest",
-        "Lee capturas, eventos y stock visibles del juego"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/telegram-alerts.user.js",
-      "sha256": "687653e6549a160ee932612c46c30781a4c26219103902f20e501e2fdf8b38bf",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial de la versión 1.12.1.",
-      "icon": "✈️",
-      "featured": false,
-      "publishedAt": "2026-08-24T10:08:35Z"
-    },
-    {
-      "id": "custom-card-ultimate",
-      "name": "Poke Idle World - Custom Card Ultimate v3.91 (Carga optimizada)",
-      "namespace": "http://tampermonkey.net/",
-      "version": "3.91.0",
-      "author": "DiegoT34",
-      "summary": "Rediseño configurable y responsivo de batalla, navegación y paneles.",
-      "description": "Rediseña cards de batalla, dock, Capture Bar, equipo, perfil, enemigos, eventos y notificaciones. Incluye tamaños configurables, autoajuste y paneles plegables.",
-      "category": "Interfaz",
-      "tags": [
-        "interfaz",
-        "batalla",
-        "dock",
-        "responsive"
-      ],
-      "permissions": [
-        "Modifica la interfaz del juego mediante GM_addStyle",
-        "Lee eventos visibles de batalla, navegación y perfil"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-card-ultimate.user.js",
-      "sha256": "c339987c262314050acba4fadf31d0b3049dd49facb1cb753dbe123c7e876d8f",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial de la versión con carga optimizada.",
-      "icon": "🎨",
-      "featured": true,
-      "publishedAt": "2026-08-24T10:08:35Z"
-    },
-    {
-      "id": "chat-translator",
-      "name": "Poke Idle World - Chat Translator",
-      "namespace": "pokegrid.launcher",
-      "version": "1.6.0",
-      "author": "PokeGrid",
-      "summary": "Traducción selectiva para chats públicos y mensajes privados.",
-      "description": "Permite seleccionar mensajes de texto para traducir, traducir mensajes salientes y abrir conversaciones privadas desde el nombre del usuario sin alterar nombres, enlaces, Pokémon, objetos o emojis.",
-      "category": "Comunicación",
-      "tags": [
-        "chat",
-        "traduccion",
-        "mensajes",
-        "idiomas"
-      ],
-      "permissions": [
-        "Modifica la interfaz mediante GM_addStyle",
-        "Guarda preferencias mediante GM_getValue y GM_setValue",
-        "Solicita traducciones a servicios declarados mediante GM_xmlhttpRequest"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/chat-translator.user.js",
-      "sha256": "bab6bb427e1f3d5c67c64826dbe6994a05057bedcb3a77508b57ea994ee5c7f6",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial de la interfaz compacta y traducción privada.",
-      "icon": "🌐",
-      "featured": true,
-      "publishedAt": "2026-08-24T10:08:35Z"
-    },
-    {
-      "id": "exact-iv-scanner",
-      "name": "PokeIdle Exact IV Scanner (Pro Suite) 56.0",
-      "namespace": "http://tampermonkey.net/",
-      "version": "56.5.0",
-      "author": "DiegoT34",
-      "summary": "Calculadora y escáner exacto de IVs para Pokémon.",
-      "description": "Detecta estadísticas visibles, consulta estadísticas base y calcula IVs y poder. Incluye lectura por hover sin apertura automática y herramientas opcionales de OCR.",
-      "category": "Calculadoras",
-      "tags": [
-        "ivs",
-        "pokemon",
-        "deposito",
-        "scanner"
-      ],
-      "permissions": [
-        "Modifica la interfaz mediante GM_addStyle",
-        "Puede realizar solicitudes a api.ocr.space mediante GM_xmlhttpRequest",
-        "Lee datos visibles de Pokémon al pasar el cursor"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/exact-iv-scanner.user.js",
-      "sha256": "191e210336858ada99b7fb60499f24d056fb4334d372da1917620f4c6a760785",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial de Pro Suite 56.5.",
-      "icon": "🧬",
-      "featured": false,
-      "publishedAt": "2026-08-24T10:08:35Z"
-    },
-    {
-      "id": "breeding-center-calculator",
-      "name": "Breeding Center - Breeding calculator",
-      "namespace": "http://tampermonkey.net/",
-      "version": "2.6.0",
-      "author": "Phoslead / DiegoT34",
-      "summary": "Calculadora y planificador para el centro de crianza.",
-      "description": "Analiza los Pokémon disponibles para proponer padres compatibles, calidad, IVs, resultados del huevo y precios relacionados.",
-      "category": "Crianza",
-      "tags": [
-        "breeding",
-        "crianza",
-        "calculadora",
-        "ivs"
-      ],
-      "permissions": [
-        "Lee Pokémon visibles del centro de crianza",
-        "Calcula combinaciones y recomendaciones de padres"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/breeding-center-calculator.user.js",
-      "sha256": "dc04114a6701f212d068072960aaa3749b6e7e65f7eb8f4eee2635a9522d81e6",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial con recomendaciones de segundo padre sin límite inferior de IV.",
-      "icon": "🥚",
-      "featured": false,
-      "publishedAt": "2026-08-24T10:08:35Z"
-    },
-    {
-      "id": "better-market-and-more",
-      "name": "Better Market and More",
-      "namespace": "http://tampermonkey.net/",
-      "version": "10.7.1",
-      "author": "DiegoT34",
-      "summary": "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
-      "description": "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
-      "category": "Market",
-      "tags": [
-        "market",
-        "ivs",
-        "inventario",
-        "mapa"
-      ],
-      "permissions": [
-        "Modifica la interfaz visible del juego",
-        "Lee datos visibles de mercado, inventario, depósito y Pokémon"
-      ],
-      "minLauncherVersion": "0.22.1",
-      "downloadUrl": "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
-      "sha256": "f8a8681690cd160a2707ceb5a264dbff486917551afa535358efd8b68e06051e",
-      "homepage": "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-      "changelog": "Publicación inicial en la PokeGrid Script Shop.",
-      "icon": "🛒",
-      "featured": true,
-      "publishedAt": "2026-08-24T10:08:34Z"
-    }
-  ]
+﻿{
+    "schemaVersion":  1,
+    "updatedAt":  "2026-08-24T17:55:40Z",
+    "scripts":  [
+                    {
+                        "id":  "breeding-center-calculator",
+                        "name":  "Breeding Center - Breeding calculator",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "2.7.0",
+                        "author":  "Phoslead / DiegoT34",
+                        "summary":  "Calculadora y planificador para el centro de crianza.",
+                        "description":  "Analiza los Pokémon disponibles para proponer padres compatibles, calidad, IVs, resultados del huevo y precios relacionados.",
+                        "category":  "Crianza",
+                        "tags":  [
+                                     "breeding",
+                                     "crianza",
+                                     "calculadora",
+                                     "ivs"
+                                 ],
+                        "permissions":  [
+                                            "Lee Pokémon visibles del centro de crianza",
+                                            "Calcula combinaciones y recomendaciones de padres"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/breeding-center-calculator.user.js",
+                        "sha256":  "69b133ae480e9e268d311b627604988f4bf700ab1f3ba7b5845912a3724bca32",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Actualización 2.7.0",
+                        "icon":  "🥚",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T17:55:40Z"
+                    },
+                    {
+                        "id":  "telegram-alerts",
+                        "name":  "PokeGrid Telegram Alerts",
+                        "namespace":  "pokegrid.telegram-alerts",
+                        "version":  "1.12.1",
+                        "author":  "PokeGrid",
+                        "summary":  "Alertas configurables de capturas, objetivos y stock mediante Telegram.",
+                        "description":  "Envía alertas de capturas, shinies, tiers, IVs, objetivos y stock de Poké Balls. Incluye deduplicación, selección de tarjetas y datos visuales del juego.",
+                        "category":  "Notificaciones",
+                        "tags":  [
+                                     "telegram",
+                                     "alertas",
+                                     "capturas",
+                                     "market"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz mediante GM_addStyle",
+                                            "Guarda la configuración mediante GM_getValue y GM_setValue",
+                                            "Envía alertas a api.telegram.org mediante GM_xmlhttpRequest",
+                                            "Lee capturas, eventos y stock visibles del juego"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/telegram-alerts.user.js",
+                        "sha256":  "687653e6549a160ee932612c46c30781a4c26219103902f20e501e2fdf8b38bf",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación inicial de la versión 1.12.1.",
+                        "icon":  "✈️",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T10:08:35Z"
+                    },
+                    {
+                        "id":  "custom-card-ultimate",
+                        "name":  "Poke Idle World - Custom Card Ultimate v3.91 (Carga optimizada)",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "3.91.0",
+                        "author":  "DiegoT34",
+                        "summary":  "Rediseño configurable y responsivo de batalla, navegación y paneles.",
+                        "description":  "Rediseña cards de batalla, dock, Capture Bar, equipo, perfil, enemigos, eventos y notificaciones. Incluye tamaños configurables, autoajuste y paneles plegables.",
+                        "category":  "Interfaz",
+                        "tags":  [
+                                     "interfaz",
+                                     "batalla",
+                                     "dock",
+                                     "responsive"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz del juego mediante GM_addStyle",
+                                            "Lee eventos visibles de batalla, navegación y perfil"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-card-ultimate.user.js",
+                        "sha256":  "c339987c262314050acba4fadf31d0b3049dd49facb1cb753dbe123c7e876d8f",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación inicial de la versión con carga optimizada.",
+                        "icon":  "🎨",
+                        "featured":  true,
+                        "publishedAt":  "2026-08-24T10:08:35Z"
+                    },
+                    {
+                        "id":  "chat-translator",
+                        "name":  "Poke Idle World - Chat Translator",
+                        "namespace":  "pokegrid.launcher",
+                        "version":  "1.6.0",
+                        "author":  "PokeGrid",
+                        "summary":  "Traducción selectiva para chats públicos y mensajes privados.",
+                        "description":  "Permite seleccionar mensajes de texto para traducir, traducir mensajes salientes y abrir conversaciones privadas desde el nombre del usuario sin alterar nombres, enlaces, Pokémon, objetos o emojis.",
+                        "category":  "Comunicación",
+                        "tags":  [
+                                     "chat",
+                                     "traduccion",
+                                     "mensajes",
+                                     "idiomas"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz mediante GM_addStyle",
+                                            "Guarda preferencias mediante GM_getValue y GM_setValue",
+                                            "Solicita traducciones a servicios declarados mediante GM_xmlhttpRequest"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/chat-translator.user.js",
+                        "sha256":  "bab6bb427e1f3d5c67c64826dbe6994a05057bedcb3a77508b57ea994ee5c7f6",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación inicial de la interfaz compacta y traducción privada.",
+                        "icon":  "🌐",
+                        "featured":  true,
+                        "publishedAt":  "2026-08-24T10:08:35Z"
+                    },
+                    {
+                        "id":  "exact-iv-scanner",
+                        "name":  "PokeIdle Exact IV Scanner (Pro Suite) 56.0",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "56.5.0",
+                        "author":  "DiegoT34",
+                        "summary":  "Calculadora y escáner exacto de IVs para Pokémon.",
+                        "description":  "Detecta estadísticas visibles, consulta estadísticas base y calcula IVs y poder. Incluye lectura por hover sin apertura automática y herramientas opcionales de OCR.",
+                        "category":  "Calculadoras",
+                        "tags":  [
+                                     "ivs",
+                                     "pokemon",
+                                     "deposito",
+                                     "scanner"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz mediante GM_addStyle",
+                                            "Puede realizar solicitudes a api.ocr.space mediante GM_xmlhttpRequest",
+                                            "Lee datos visibles de Pokémon al pasar el cursor"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/exact-iv-scanner.user.js",
+                        "sha256":  "191e210336858ada99b7fb60499f24d056fb4334d372da1917620f4c6a760785",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación inicial de Pro Suite 56.5.",
+                        "icon":  "🧬",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T10:08:35Z"
+                    },
+                    {
+                        "id":  "better-market-and-more",
+                        "name":  "Better Market and More",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "10.7.1",
+                        "author":  "DiegoT34",
+                        "summary":  "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
+                        "description":  "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
+                        "category":  "Market",
+                        "tags":  [
+                                     "market",
+                                     "ivs",
+                                     "inventario",
+                                     "mapa"
+                                 ],
+                        "permissions":  [
+                                            "Modifica la interfaz visible del juego",
+                                            "Lee datos visibles de mercado, inventario, depósito y Pokémon"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
+                        "sha256":  "f8a8681690cd160a2707ceb5a264dbff486917551afa535358efd8b68e06051e",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación inicial en la PokeGrid Script Shop.",
+                        "icon":  "🛒",
+                        "featured":  true,
+                        "publishedAt":  "2026-08-24T10:08:34Z"
+                    }
+                ]
 }

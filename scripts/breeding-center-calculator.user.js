@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Breeding Center - Breeding calculator
 // @namespace    http://tampermonkey.net/
-// @version      2.6.0
-// @description  Breeding planner with unrestricted lower IV recommendations, reliable species matching, egg preview and live pheromone market price
+// @version      2.7.0
+// @description  Optimized breeding planner with limited recommendations, unrestricted lower IVs, egg preview and live pheromone market price
 // @author       Phoslead
 // @match        https://poke.idleworld.online/*
 // @grant        none
@@ -20,6 +20,7 @@
     const WILD_MAX_QUALITY = 1.80; // Cap for wild pokémon quality
     const PHEROMONE_MARKET_REFRESH_MS = 60000;
     const PHEROMONE_MARKET_RETRY_MS = 15000;
+    const RECOMMENDATION_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
 
     // Growth Rates: Average vs Minimum
     const GROWTH_RATES = {
@@ -127,7 +128,7 @@
             justify-content: space-between;
             background: rgba(216, 184, 113, 0.08);
             border: 1px solid rgba(216, 184, 113, 0.85);
-            box-shadow: 0 0 8px rgba(216, 184, 113, 0.4), inset 0 0 6px rgba(216, 184, 113, 0.15);
+            box-shadow: none;
             border-radius: 3px;
             padding: 5px 8px;
             flex-shrink: 0;
@@ -573,7 +574,7 @@
         .brd-helper-refresh:hover { background:#173743; color:#fff; }.brd-helper-refresh:disabled { opacity:.55; cursor:wait; }
         .brd-inheritance-flow { display:grid; grid-template-columns:1fr 20px 1fr 20px 1fr; align-items:stretch; gap:5px; }
         .brd-parent-card,.brd-child-card,.brd-advisor-card { min-width:0; padding:7px; border:1px solid #3a4e5b; border-radius:7px; background:rgba(4,10,14,.7); }
-        .brd-parent-card.is-keeper,.brd-child-card { border-color:#d7b85e; box-shadow:0 0 0 1px #d7b85e33; }
+        .brd-parent-card.is-keeper,.brd-child-card { border-color:#d7b85e; box-shadow:none; }
         .brd-card-role { display:block; margin-bottom:3px; color:#86a8b7; font-size:8px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }.is-keeper .brd-card-role,.brd-child-card .brd-card-role { color:#f3d681; }
         .brd-card-name { display:block; overflow:hidden; color:#f5f7f8; font-size:12px; font-weight:900; text-overflow:ellipsis; white-space:nowrap; }
         .brd-card-data { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }.brd-mini-chip { padding:2px 5px; border:1px solid #3b5968; border-radius:4px; background:#0b151b; font-size:9px; font-weight:800; }
@@ -581,8 +582,8 @@
         .brd-advisor-summary { margin-bottom:7px; padding:6px 7px; border:1px solid #326a6a; border-radius:6px; background:#0d2022; color:#a9f5d7; font-size:10px; font-weight:700; line-height:1.35; }
         .brd-advisor-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; max-height:240px; overflow:auto; padding-right:2px; }.brd-advisor-card { display:grid; grid-template-columns:34px minmax(0,1fr); gap:6px; align-items:center; }
         .brd-advisor-card.recommended { border-color:#64da93; background:linear-gradient(145deg,#10271d,#0b1414); }.brd-advisor-sprite { width:34px; height:34px; object-fit:contain; image-rendering:pixelated; }.brd-advisor-name { overflow:hidden; color:#f5f7f8; font-size:10px; font-weight:900; text-overflow:ellipsis; white-space:nowrap; }.brd-advisor-meta { margin-top:3px; color:#9db2bd; font-size:9px; }.brd-advisor-tag { display:inline-block; margin-top:4px; padding:1px 4px; border:1px solid #49bb76; border-radius:3px; color:#7ff5ac; font-size:8px; font-weight:900; }
-        .brd-native-advisor-bar { display:flex; align-items:center; justify-content:space-between; gap:7px; margin:6px 0; padding:5px 7px; border:1px solid #356b67; border-radius:6px; background:#0d2022; color:#a9f5d7; font-size:9px; font-weight:800; line-height:1.25; }.brd-native-advisor-bar span { min-width:0; }.brd-native-advisor-bar .brd-helper-refresh { flex:none; }
-        .brd-breed-recommended { outline:2px solid #55cfff !important; outline-offset:-2px; box-shadow:0 0 11px #43bfe055 !important; }.brd-breed-recommended.brd-breed-best { outline-color:#ffd35c !important; box-shadow:0 0 14px #ffd35c66 !important; }.brd-breed-hidden { display:none !important; }
+        .brd-native-advisor-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:7px; margin:6px 0; padding:6px 7px; border:1px solid #356b67; border-radius:6px; background:#0d2022; color:#a9f5d7; font-size:9px; font-weight:800; line-height:1.25; }.brd-native-advisor-bar > span { min-width:180px; flex:1 1 260px; }.brd-native-advisor-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex:0 1 auto; }.brd-recommendation-filter { display:inline-flex; align-items:center; gap:5px; color:#9fc0cc; white-space:nowrap; }.brd-recommendation-limit { min-width:74px; height:25px; padding:2px 21px 2px 7px; border:1px solid #426879; border-radius:5px; outline:none; background:#0a171e; color:#dff7ff; font:800 9px system-ui,sans-serif; cursor:pointer; }.brd-recommendation-limit:focus-visible { border-color:#69cbe5; }.brd-native-advisor-bar .brd-helper-refresh { flex:none; }
+        .brd-breed-recommended { outline:1px solid #4fa9c2 !important; outline-offset:-1px; box-shadow:none !important; filter:none !important; animation:none !important; transition:none !important; }.brd-breed-recommended.brd-breed-best { outline:2px solid #d7b647 !important; outline-offset:-2px; box-shadow:none !important; }.brd-breed-hidden { display:none !important; }
         .brd-no-secondary-message { margin:7px 0; padding:9px; border:1px solid #c98b56; border-radius:6px; background:#291b12; color:#ffd1a7; font-size:10px; font-weight:800; line-height:1.35; }
         .brd-egg-helper-info { display:block; margin-top:4px; padding-top:4px; border-top:1px solid #d7b85e44; color:#dfeef2; font-size:9px; font-weight:750; line-height:1.35; }.brd-egg-helper-info b { color:#f3d681; }.brd-egg-helper-info em { color:#86e7bd; font-style:normal; }
         @media (max-width:760px) { .brd-inheritance-flow { grid-template-columns:1fr; }.brd-flow-arrow { height:14px; transform:rotate(90deg); }.brd-advisor-list { grid-template-columns:1fr; max-height:210px; } }
@@ -592,10 +593,12 @@
     document.head.appendChild(advisorStyleEl);
 
     let availablePokemon = [];
+    let availablePokemonSignature = '';
     let availablePokemonVersion = 0;
     let pokemonRefreshPromise = null;
     let advisorSignature = '';
     let lastStateSignature = '';
+    let recommendationLimit = 10;
     let pheromoneMarketRefreshPromise = null;
     let pheromoneMarket = {
         status: 'loading',
@@ -824,7 +827,23 @@
     async function refreshAvailablePokemon(force = false) {
         if (pokemonRefreshPromise && !force) return pokemonRefreshPromise;
         pokemonRefreshPromise = requestPokemonListFromGameContext().then(list => {
-            if (list.length) { availablePokemon = list.map(normalizePokemon); availablePokemonVersion += 1; lastStateSignature = ''; }
+            if (list.length) {
+                const normalized = list.map(normalizePokemon);
+                const nextSignature = normalized.map(pokemon => [
+                    pokemon.id, pokemon.speciesId, pokemon.name, pokemon.ivVal, pokemon.qVal,
+                    Number(pokemon.team), Number(pokemon.starter), Number(pokemon.shiny),
+                    Number(pokemon.locked), Number(pokemon.market)
+                ].join(':')).join('|');
+                // La API puede repetir la misma colección cada pocos segundos. Evitar
+                // incrementar la versión impide volver a filtrar y repintar cientos de
+                // tarjetas cuando ningún Pokémon cambió realmente.
+                if (nextSignature !== availablePokemonSignature) {
+                    availablePokemon = normalized;
+                    availablePokemonSignature = nextSignature;
+                    availablePokemonVersion += 1;
+                    lastStateSignature = '';
+                }
+            }
             return availablePokemon;
         }).catch(() => availablePokemon).finally(() => { pokemonRefreshPromise = null; });
         return pokemonRefreshPromise;
@@ -931,6 +950,64 @@
         return (!iv || Number(iv) === pokemon.ivVal) && (!q || Math.abs(Number(q.replace(',', '.')) - pokemon.qVal) < 0.011);
     }
 
+    function recommendationStatsKey(iv, quality) {
+        return `${Number(iv)}|${Number(quality).toFixed(4)}`;
+    }
+
+    function createRecommendationLookup(eligible) {
+        const byId = new Map();
+        const byStats = new Map();
+        const byIv = new Map();
+        const byQuality = new Map();
+        eligible.forEach((pokemon, index) => {
+            if (pokemon.id !== '' && pokemon.id != null) byId.set(String(pokemon.id), index);
+            const statsKey = recommendationStatsKey(pokemon.ivVal, pokemon.qVal);
+            if (!byStats.has(statsKey)) byStats.set(statsKey, index);
+            if (!byIv.has(Number(pokemon.ivVal))) byIv.set(Number(pokemon.ivVal), index);
+            const qualityKey = Number(pokemon.qVal).toFixed(4);
+            if (!byQuality.has(qualityKey)) byQuality.set(qualityKey, index);
+        });
+        return { eligible, byId, byStats, byIv, byQuality };
+    }
+
+    function getNativeRecommendationIndex(card, lookup) {
+        const id = card.dataset.pokeId || card.dataset.id || card.dataset.capturedId;
+        if (id && lookup.byId.has(String(id))) return lookup.byId.get(String(id));
+        const text = card.innerText || '';
+        const species = lookup.eligible[0];
+        if (!species || !text.toLocaleLowerCase().includes(String(species.name).toLocaleLowerCase())) return -1;
+        const ivText = text.match(/\bIV\s*(\d+)/i)?.[1];
+        const qualityText = text.match(/\bQ(?:uality)?\s*[×x:]?\s*(\d+(?:[.,]\d+)?)/i)?.[1];
+        const iv = ivText == null ? null : Number(ivText);
+        const quality = qualityText == null ? null : Number(qualityText.replace(',', '.'));
+        if (iv != null && quality != null) {
+            const exact = lookup.byStats.get(recommendationStatsKey(iv, quality));
+            if (exact != null) return exact;
+        }
+        if (iv != null && lookup.byIv.has(iv)) return lookup.byIv.get(iv);
+        if (quality != null) {
+            const qualityMatch = lookup.byQuality.get(quality.toFixed(4));
+            if (qualityMatch != null) return qualityMatch;
+        }
+        // Conserva el comportamiento tolerante anterior para tarjetas cuyo juego
+        // todavía no haya montado todos los atributos o textos estadísticos.
+        return nativeCardMatchesPokemon(card, lookup.eligible[0]) ? 0 : -1;
+    }
+
+    function getRecommendationLimit() {
+        if (recommendationLimit === 'all') return Infinity;
+        const numeric = Number(recommendationLimit);
+        return Number.isFinite(numeric) && numeric > 0 ? numeric : 10;
+    }
+
+    function recommendationLimitOptionsHTML() {
+        return RECOMMENDATION_LIMIT_OPTIONS.map(value => {
+            const selected = String(value) === String(recommendationLimit) ? ' selected' : '';
+            const label = value === 'all' ? 'Todos' : `Top ${value}`;
+            return `<option value="${value}"${selected}>${label}</option>`;
+        }).join('');
+    }
+
     function decorateNativePokemonBox(keeper, pairSection) {
         const boxArea = getPokemonBoxArea(pairSection);
         if (!boxArea) return;
@@ -947,11 +1024,16 @@
             if (searchInput) (searchInput.parentElement || searchInput).after(bar);
             else if (nativeCards[0]) nativeCards[0].before(bar); else boxArea.appendChild(bar);
         };
-        const bindRefresh = bar => {
+        const bindControls = bar => {
             bar.querySelector('.brd-helper-refresh')?.addEventListener('click', async event => {
                 const button = event.currentTarget; button.disabled = true; button.textContent = 'Leyendo…';
                 await refreshBreedingWorkspace();
                 button.disabled = false; button.textContent = '↻ Releer';
+            });
+            bar.querySelector('.brd-recommendation-limit')?.addEventListener('change', event => {
+                recommendationLimit = event.currentTarget.value === 'all' ? 'all' : Number(event.currentTarget.value) || 10;
+                advisorSignature = '';
+                runCalculatorLoop();
             });
         };
         if (!keeper) {
@@ -959,23 +1041,26 @@
             readyBar.className = 'brd-native-advisor-bar';
             readyBar.innerHTML = `<span>Colección de crianza: <b>${availablePokemon.length || '…'}</b> Pokémon leídos. Selecciona el primer padre para filtrar compatibles.</span><button type="button" class="brd-helper-refresh">↻ Releer</button>`;
             placeAdvisorBar(readyBar);
-            bindRefresh(readyBar);
+            bindControls(readyBar);
             return;
         }
 
         const eligible = getValidSecondParents(keeper);
+        const visibleLimit = getRecommendationLimit();
+        const visibleRecommendationCount = Math.min(eligible.length, Number.isFinite(visibleLimit) ? visibleLimit : eligible.length);
         const minQ = Math.max(0, keeper.qVal - MAX_QUALITY_DIFF);
         const maxQ = Math.max(0, keeper.qVal);
         const bar = document.createElement('div');
         bar.className = 'brd-native-advisor-bar';
-        bar.innerHTML = `<span>Segundo padre de <b>${escapeHTML(keeper.name)}</b>: ${eligible.length} válido(s) · misma especie · Q ${minQ.toFixed(2)}–&lt;${maxQ.toFixed(2)} · cualquier IV hasta ${keeper.ivVal}</span><button type="button" class="brd-helper-refresh">↻ Releer</button>`;
+        bar.innerHTML = `<span>Segundo padre de <b>${escapeHTML(keeper.name)}</b>: mostrando ${visibleRecommendationCount} de ${eligible.length} válido(s) · Q ${minQ.toFixed(2)}–&lt;${maxQ.toFixed(2)} · cualquier IV hasta ${keeper.ivVal}</span><div class="brd-native-advisor-actions"><label class="brd-recommendation-filter">Mostrar <select class="brd-recommendation-limit" aria-label="Cantidad de padres recomendados">${recommendationLimitOptionsHTML()}</select></label><button type="button" class="brd-helper-refresh">↻ Releer</button></div>`;
         placeAdvisorBar(bar);
-        bindRefresh(bar);
+        bindControls(bar);
 
         const matchingCards = [];
+        const recommendationLookup = createRecommendationLookup(eligible);
         nativeCards.forEach(card => {
-            const index = eligible.findIndex(pokemon => nativeCardMatchesPokemon(card, pokemon));
-            if (index < 0) {
+            const index = getNativeRecommendationIndex(card, recommendationLookup);
+            if (index < 0 || index >= visibleLimit) {
                 // Tras elegir el primer padre, la lista nativa solo conserva candidatos válidos de la misma especie.
                 if (availablePokemon.length) card.classList.add('brd-breed-hidden');
                 return;
