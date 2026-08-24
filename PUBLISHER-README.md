@@ -1,4 +1,4 @@
-# PokeGrid Shop Publisher 1.1 para Windows
+# PokeGrid Shop Publisher 1.1.2 para Windows
 
 La interfaz adaptable organiza la publicación en tres pasos, detecta automáticamente si el archivo corresponde a una actualización existente y muestra una vista previa de la tarjeta antes de publicarla.
 
@@ -31,3 +31,14 @@ gh auth setup-git
 La aplicación sincronizará el repositorio, copiará el script, normalizará la versión si es necesario, calculará SHA-256, actualizará el catálogo, creará el commit, hará `git push` y comprobará que la versión ya sea visible online.
 
 GitHub Actions validará nuevamente el catálogo. Si el proceso termina correctamente, los usuarios podrán verlo con **Scripts → Shop online → Verificar**.
+
+## Corrección 1.1.1
+
+- Corrige el desbordamiento de profundidad causado por la función interna que ocultaba a `git.exe`.
+- Ejecuta siempre la ruta real de Git y evita solicitudes de credenciales ocultas detrás de la interfaz.
+- Incluye `tools\test-git-workflow.ps1`, que valida pull, add, commit y push contra un remoto temporal.
+- Incluye `tools\test-publication-pipeline.ps1`, que valida catálogo, versión y SHA-256 sin publicar nada.
+
+## Corrección 1.1.2
+
+- Guarda `catalog.json` en UTF-8 sin BOM para que el launcher pueda leerlo con `JSON.parse()`.

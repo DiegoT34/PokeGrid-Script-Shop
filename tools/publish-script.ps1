@@ -77,7 +77,8 @@ $entry = [ordered]@{
 $remaining = @($catalog.scripts | Where-Object { $_.id -ne $Id })
 $catalog.scripts = @([pscustomobject]$entry) + $remaining
 $catalog.updatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$catalog | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+$catalogJson = $catalog | ConvertTo-Json -Depth 12
+[IO.File]::WriteAllText($catalogPath, $catalogJson, [Text.UTF8Encoding]::new($false))
 
 Write-Host "Preparado: $targetName" -ForegroundColor Green
 Write-Host "Versión: $version"

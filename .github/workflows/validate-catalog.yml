@@ -13,6 +13,10 @@ jobs:
       - name: Comprobar catálogo, metadatos y SHA-256
         shell: pwsh
         run: |
+          $catalogBytes = [IO.File]::ReadAllBytes((Resolve-Path catalog.json))
+          if ($catalogBytes.Length -ge 3 -and $catalogBytes[0] -eq 0xEF -and $catalogBytes[1] -eq 0xBB -and $catalogBytes[2] -eq 0xBF) {
+            throw 'catalog.json debe guardarse como UTF-8 sin BOM.'
+          }
           $catalog = Get-Content catalog.json -Raw | ConvertFrom-Json
           if ($catalog.schemaVersion -ne 1) { throw 'schemaVersion debe ser 1.' }
           $ids = @{}

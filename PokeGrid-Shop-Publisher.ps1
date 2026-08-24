@@ -11,10 +11,13 @@ Add-Type -AssemblyName System.Drawing
 $programRoot = $PSScriptRoot
 $repoRoot = $programRoot
 $cliPublisher = Join-Path $programRoot 'tools\publish-script.ps1'
+$gitHelper = Join-Path $programRoot 'tools\git-helper.ps1'
 $ghPath = (Get-Command gh -ErrorAction SilentlyContinue).Source
 if (-not $ghPath -and (Test-Path -LiteralPath 'C:\Program Files\GitHub CLI\gh.exe')) { $ghPath = 'C:\Program Files\GitHub CLI\gh.exe' }
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Instala Git antes de abrir PokeGrid Shop Publisher.' }
 if (-not (Test-Path -LiteralPath $cliPublisher -PathType Leaf)) { throw 'No se encontró tools\publish-script.ps1.' }
+if (-not (Test-Path -LiteralPath $gitHelper -PathType Leaf)) { throw 'No se encontró tools\git-helper.ps1.' }
+. $gitHelper
+$gitPath = Resolve-PokeGridGitPath
 
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.git'))) {
   $repoRoot = Join-Path $env:LOCALAPPDATA 'PokeGrid-Shop-Publisher\repository'
@@ -146,12 +149,6 @@ function Slug([string]$value) {
   return ($builder.ToString().ToLowerInvariant() -replace '[^a-z0-9]+', '-' -replace '(^-|-$)', '')
 }
 
-function Git([string[]]$arguments, [switch]$AllowFailure) {
-  $output = & git -C $repoRoot @arguments 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0 -and -not $AllowFailure) { throw $output.Trim() }
-  return $output.Trim()
-}
-
 function Read-Script([string]$path) {
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Selecciona un archivo existente.' }
   $file = Get-Item -LiteralPath $path
@@ -239,7 +236,7 @@ function Verify-OnlinePublication([string]$id,[string]$version){
 }
 
 $workingArea=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$form=[Windows.Forms.Form]::new();$form.Text='PokeGrid Shop Publisher 1.1';$form.StartPosition='CenterScreen'
+$form=[Windows.Forms.Form]::new();$form.Text='PokeGrid Shop Publisher 1.1.2';$form.StartPosition='CenterScreen'
 $form.ClientSize=[Drawing.Size]::new([Math]::Min(1280,[Math]::Max(900,$workingArea.Width-90)),[Math]::Min(860,[Math]::Max(660,$workingArea.Height-80)))
 $form.MinimumSize=[Drawing.Size]::new(880,650);$form.BackColor=$palette.Background;$form.ForeColor=$palette.Text;$form.Font=[Drawing.Font]::new('Segoe UI',9);$form.AutoScaleMode='Dpi';$form.KeyPreview=$true;$form.AllowDrop=$true
 
@@ -254,7 +251,7 @@ $footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.He
 $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',18))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',330))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',90))|Out-Null
 $statusDot=New-Label '●' 9 $palette.Primary ([Drawing.FontStyle]::Bold);$statusDot.Dock='Fill';$statusLabel=New-Label 'Preparando interfaz…' 8 $palette.Primary;$statusLabel.Dock='Fill'
 $repoFooter=New-Label ("Repositorio: "+$repoRoot) 7.5 $palette.Dim;$repoFooter.Dock='Fill';$repoFooter.TextAlign='MiddleRight';$repoFooter.AutoEllipsis=$true
-$versionFooter=New-Label 'v1.1.0' 7.5 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
+$versionFooter=New-Label 'v1.1.2' 7.5 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
 $footer.Controls.Add($statusDot,0,0);$footer.Controls.Add($statusLabel,1,0);$footer.Controls.Add($repoFooter,2,0);$footer.Controls.Add($versionFooter,3,0)
 
 $sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Color '#091523'
@@ -340,13 +337,13 @@ $publishButton.Add_Click({
     if(-not(Test-Path -LiteralPath (Join-Path $repoRoot '.git'))){throw 'No se encontró el repositorio Git de la Shop.'}
     $question="¿Publicar $($script:loaded.Name) v$($script:loaded.Version)?`r`n`r`nID: $($idBox.Text)`r`nCategoría: $($categoryBox.Text)"
     if([Windows.Forms.MessageBox]::Show($question,'Confirmar publicación','YesNo','Question') -ne 'Yes'){Log 'Publicación cancelada por el usuario.';return}
-    Log 'Sincronizando el repositorio…';[void](Git @('pull','--ff-only'))
+    Log 'Sincronizando el repositorio…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('pull','--ff-only'))
     $tags=@($tagsBox.Text -split ','|ForEach-Object{$_.Trim()}|Where-Object{$_});$permissions=@($permissionsBox.Lines|ForEach-Object{$_.Trim()}|Where-Object{$_})
     $parameters=@{Path=$script:loaded.Path;Id=$idBox.Text;Category=$categoryBox.Text;Tags=$tags;Permissions=$permissions;Summary=$summaryBox.Text;Description=$descriptionBox.Text;Changelog=$changelogBox.Text;Author=$authorBox.Text;MinLauncherVersion=$minLauncherBox.Text;Icon=$iconBox.Text;Featured=$featuredBox.Checked;RepositoryRoot=$repoRoot}
     Log 'Generando archivo publicado, catálogo y SHA-256…';$publisherOutput=& $cliPublisher @parameters 2>&1|Out-String;Log $publisherOutput.Trim()
-    $target="scripts/$($idBox.Text).user.js";[void](Git @('add','--','catalog.json',$target));& git -C $repoRoot diff --cached --quiet
-    if($LASTEXITCODE -eq 0){Log 'No hay cambios nuevos para publicar.' 'ok';return}
-    $message="Publicar $($script:loaded.Name) $($script:loaded.Version)";Log 'Creando commit local…';[void](Git @('commit','-m',$message,'--','catalog.json',$target));Log 'Subiendo la publicación a GitHub…';[void](Git @('push'))
+    $target="scripts/$($idBox.Text).user.js";[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target));$diffResult=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('diff','--cached','--quiet') -AllowFailure
+    if($diffResult.ExitCode -eq 0){Log 'No hay cambios nuevos para publicar.' 'ok';return};if($diffResult.ExitCode -ne 1){throw $(if($diffResult.Output){$diffResult.Output}else{'No se pudieron comprobar los cambios preparados.'})}
+    $message="Publicar $($script:loaded.Name) $($script:loaded.Version)";Log 'Creando commit local…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$message,'--','catalog.json',$target));Log 'Subiendo la publicación a GitHub…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('push'))
     Log 'Verificando que el catálogo ya sea visible online…'
     if(Verify-OnlinePublication $idBox.Text $script:loaded.Version){Log "$($script:loaded.Name) v$($script:loaded.Version) está visible en la Shop." 'ok';[Windows.Forms.MessageBox]::Show('El script fue publicado y ya aparece en el catálogo online.','Publicación completada','OK','Information')|Out-Null}else{Log 'GitHub recibió la publicación; la propagación del catálogo aún está en curso.' 'ok';[Windows.Forms.MessageBox]::Show('La publicación fue subida correctamente. GitHub puede tardar unos segundos en reflejarla en el catálogo.','Publicación enviada','OK','Information')|Out-Null}
   }catch{Log $_.Exception.Message 'error';[Windows.Forms.MessageBox]::Show($_.Exception.Message,'No se pudo publicar','OK','Error')|Out-Null}finally{Set-Busy $false}
@@ -359,7 +356,8 @@ if($SmokeTest){
   if(-not $publishButton -or -not $pathBox -or -not $contentStack.AutoScroll -or -not(Test-Path -LiteralPath $cliPublisher)){throw 'La interfaz adaptable del publicador no pudo inicializarse.'}
   $largeWidth=$sourceCard.Width;$form.ClientSize=[Drawing.Size]::new(900,680);Apply-ResponsiveLayout
   if($sidebar.Visible -or $sourceCard.Width -ge $largeWidth){throw 'La respuesta compacta del layout no funciona.'}
-  Write-Output 'PokeGrid Shop Publisher 1.1 responsive GUI smoke passed.';$form.Dispose();exit 0
+  [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('status','--porcelain=v1'))
+  Write-Output 'PokeGrid Shop Publisher 1.1.2 responsive GUI and Git smoke passed.';$form.Dispose();exit 0
 }
 
 if($ScreenshotPath){
