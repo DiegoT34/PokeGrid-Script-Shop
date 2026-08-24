@@ -1,7 +1,31 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-24T20:52:32Z",
+    "updatedAt":  "2026-08-24T22:06:13Z",
     "scripts":  [
+                    {
+                        "id":  "pokeidle-combat-log-1-16-colorful-moves",
+                        "name":  "PokeIdle Combat Log 1.16 (Colorful Moves)",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "1.16.0",
+                        "author":  "Phoslead (UI Mod)",
+                        "summary":  "Combat Log minimalista con fijación, registros top-down y colores dinámicos para los movimientos.",
+                        "description":  "Combat Log minimalista con fijación, registros top-down y colores dinámicos para los movimientos.",
+                        "category":  "Utilidades",
+                        "tags":  [
+
+                                 ],
+                        "permissions":  [
+
+                                        ],
+                        "minLauncherVersion":  "0.22.3",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/pokeidle-combat-log-1-16-colorful-moves.user.js",
+                        "sha256":  "2c6a0c7bd067b1bc44c1c89ad5174556168b7228cf219e0c036d4ecc45269d74",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación 1.16.0",
+                        "icon":  "🧩",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T22:06:13Z"
+                    },
                     {
                         "id":  "better-market-and-more",
                         "name":  "Better Market and More",
