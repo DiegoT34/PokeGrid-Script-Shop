@@ -8,6 +8,10 @@ El launcher consulta `catalog.json` cuando el usuario abre **Scripts → Shop on
 
 Ejecuta `Abrir-PokeGrid-Shop-Publisher.cmd` para abrir la aplicación gráfica. Permite:
 
+- trabajar en una interfaz flat adaptable a la resolución y al escalado DPI;
+- publicar mediante un flujo guiado de tres pasos con vista previa y estados claros;
+- arrastrar scripts directamente sobre la ventana;
+- detectar automáticamente si el script corresponde a una actualización existente;
 - seleccionar cualquier `.js` o `.user.js` con cabecera userscript;
 - leer automáticamente nombre, namespace, versión, autor y descripción;
 - completar categoría, etiquetas, permisos, icono y changelog;
@@ -16,6 +20,7 @@ Ejecuta `Abrir-PokeGrid-Shop-Publisher.cmd` para abrir la aplicación gráfica. 
 - calcular y guardar el SHA-256;
 - actualizar `catalog.json`;
 - crear el commit y ejecutar `git push`.
+- confirmar que la nueva versión ya sea visible en el catálogo online.
 
 Si la aplicación se ejecuta desde el ZIP portátil del publicador, preparará una copia Git de la Shop en `%LOCALAPPDATA%\PokeGrid-Shop-Publisher\repository`. Git y GitHub CLI deben estar instalados y GitHub CLI debe estar autorizado con la cuenta `DiegoT34`.
 

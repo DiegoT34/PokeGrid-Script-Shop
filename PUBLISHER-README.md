@@ -1,4 +1,6 @@
-# PokeGrid Shop Publisher para Windows
+# PokeGrid Shop Publisher 1.1 para Windows
+
+La interfaz adaptable organiza la publicación en tres pasos, detecta automáticamente si el archivo corresponde a una actualización existente y muestra una vista previa de la tarjeta antes de publicarla.
 
 ## Abrir
 
@@ -19,13 +21,13 @@ gh auth setup-git
 
 ## Publicar o actualizar
 
-1. Pulsa **Examinar** y selecciona el script.
+1. Arrastra el userscript sobre la ventana o pulsa **Examinar**.
 2. La aplicación leerá los metadatos automáticamente.
 3. Conserva el mismo **ID estable** cuando sea una actualización.
 4. Completa categoría, etiquetas, resumen, descripción, permisos y changelog.
-5. Pulsa **Validar**.
-6. Pulsa **Publicar / Actualizar**.
+5. Revisa la vista previa y pulsa **Validar**.
+6. Pulsa **Publicar en la Shop** o **Publicar actualización**.
 
-La aplicación sincronizará el repositorio, copiará el script, normalizará la versión si es necesario, calculará SHA-256, actualizará el catálogo, creará el commit y hará `git push`.
+La aplicación sincronizará el repositorio, copiará el script, normalizará la versión si es necesario, calculará SHA-256, actualizará el catálogo, creará el commit, hará `git push` y comprobará que la versión ya sea visible online.
 
 GitHub Actions validará nuevamente el catálogo. Si el proceso termina correctamente, los usuarios podrán verlo con **Scripts → Shop online → Verificar**.
