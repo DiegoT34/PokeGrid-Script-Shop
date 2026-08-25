@@ -1,7 +1,34 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-25T02:46:04Z",
+    "updatedAt":  "2026-08-25T03:46:38Z",
     "scripts":  [
+                    {
+                        "id":  "poke-idle-world-custom-card-ultimate-v3-92-carga-optimizada",
+                        "name":  "Poke Idle World - Custom Card Ultimate v3.92 (Carga optimizada)",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "3.92.0",
+                        "author":  "DiegoT34",
+                        "summary":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
+                        "description":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
+                        "category":  "Interfaz",
+                        "tags":  [
+
+                                 ],
+                        "games":  [
+                                      "Poke Idle World"
+                                  ],
+                        "permissions":  [
+
+                                        ],
+                        "minLauncherVersion":  "0.22.3",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/poke-idle-world-custom-card-ultimate-v3-92-carga-optimizada.user.js",
+                        "sha256":  "93267a3c78655eeca8bb0e617296ab28f92f4d76929d7cec13492d0120a1048b",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación 3.92.0",
+                        "icon":  "🧩",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-25T03:46:38Z"
+                    },
                     {
                         "id":  "poke-idle-world-chat-translator",
                         "name":  "Poke Idle World - Chat Translator",
