@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-24T22:19:40Z",
+    "updatedAt":  "2026-08-25T01:50:14Z",
     "scripts":  [
                     {
                         "id":  "pokeidle-combat-log-1-16-colorful-moves",
@@ -137,35 +137,6 @@
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
                         "changelog":  "Publicación inicial de la versión con carga optimizada.",
                         "icon":  "🎨",
-                        "featured":  true,
-                        "publishedAt":  "2026-08-24T10:08:35Z"
-                    },
-                    {
-                        "id":  "chat-translator",
-                        "name":  "Poke Idle World - Chat Translator",
-                        "namespace":  "pokegrid.launcher",
-                        "version":  "1.6.0",
-                        "author":  "PokeGrid",
-                        "summary":  "Traducción selectiva para chats públicos y mensajes privados.",
-                        "description":  "Permite seleccionar mensajes de texto para traducir, traducir mensajes salientes y abrir conversaciones privadas desde el nombre del usuario sin alterar nombres, enlaces, Pokémon, objetos o emojis.",
-                        "category":  "Comunicación",
-                        "tags":  [
-                                     "chat",
-                                     "traduccion",
-                                     "mensajes",
-                                     "idiomas"
-                                 ],
-                        "permissions":  [
-                                            "Modifica la interfaz mediante GM_addStyle",
-                                            "Guarda preferencias mediante GM_getValue y GM_setValue",
-                                            "Solicita traducciones a servicios declarados mediante GM_xmlhttpRequest"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/chat-translator.user.js",
-                        "sha256":  "bab6bb427e1f3d5c67c64826dbe6994a05057bedcb3a77508b57ea994ee5c7f6",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación inicial de la interfaz compacta y traducción privada.",
-                        "icon":  "🌐",
                         "featured":  true,
                         "publishedAt":  "2026-08-24T10:08:35Z"
                     },
