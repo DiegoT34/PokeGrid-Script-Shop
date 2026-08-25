@@ -1,7 +1,34 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-25T01:50:14Z",
+    "updatedAt":  "2026-08-25T02:46:04Z",
     "scripts":  [
+                    {
+                        "id":  "poke-idle-world-chat-translator",
+                        "name":  "Poke Idle World - Chat Translator",
+                        "namespace":  "pokegrid.launcher",
+                        "version":  "1.6.0",
+                        "author":  "PokeGrid",
+                        "summary":  "Traduce mensajes entrantes del chat y permite traducir o traducir y enviar mensajes salientes.",
+                        "description":  "Traduce mensajes entrantes del chat y permite traducir o traducir y enviar mensajes salientes.",
+                        "category":  "Utilidades",
+                        "tags":  [
+
+                                 ],
+                        "games":  [
+                                      "Poke Idle World"
+                                  ],
+                        "permissions":  [
+
+                                        ],
+                        "minLauncherVersion":  "0.22.3",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/poke-idle-world-chat-translator.user.js",
+                        "sha256":  "bab6bb427e1f3d5c67c64826dbe6994a05057bedcb3a77508b57ea994ee5c7f6",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación 1.6.0",
+                        "icon":  "🧩",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-25T02:46:04Z"
+                    },
                     {
                         "id":  "pokeidle-combat-log-1-16-colorful-moves",
                         "name":  "PokeIdle Combat Log 1.16 (Colorful Moves)",
