@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-25T03:46:38Z",
+    "updatedAt":  "2026-08-25T03:46:56Z",
     "scripts":  [
                     {
                         "id":  "poke-idle-world-custom-card-ultimate-v3-92-carga-optimizada",
@@ -164,34 +164,6 @@
                         "changelog":  "Publicación inicial de la versión 1.12.1.",
                         "icon":  "✈️",
                         "featured":  false,
-                        "publishedAt":  "2026-08-24T10:08:35Z"
-                    },
-                    {
-                        "id":  "custom-card-ultimate",
-                        "name":  "Poke Idle World - Custom Card Ultimate v3.91 (Carga optimizada)",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "3.91.0",
-                        "author":  "DiegoT34",
-                        "summary":  "Rediseño configurable y responsivo de batalla, navegación y paneles.",
-                        "description":  "Rediseña cards de batalla, dock, Capture Bar, equipo, perfil, enemigos, eventos y notificaciones. Incluye tamaños configurables, autoajuste y paneles plegables.",
-                        "category":  "Interfaz",
-                        "tags":  [
-                                     "interfaz",
-                                     "batalla",
-                                     "dock",
-                                     "responsive"
-                                 ],
-                        "permissions":  [
-                                            "Modifica la interfaz del juego mediante GM_addStyle",
-                                            "Lee eventos visibles de batalla, navegación y perfil"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-card-ultimate.user.js",
-                        "sha256":  "c339987c262314050acba4fadf31d0b3049dd49facb1cb753dbe123c7e876d8f",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación inicial de la versión con carga optimizada.",
-                        "icon":  "🎨",
-                        "featured":  true,
                         "publishedAt":  "2026-08-24T10:08:35Z"
                     },
                     {
