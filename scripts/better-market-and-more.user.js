@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Better Market and More
 // @namespace    http://tampermonkey.net/
-// @version      10.8.0
-// @description  Mercado Global rediseñado, con cards Pokémon compactas, tipos visibles y Exact IV Scanner completo.
+// @version      10.13.1
+// @description  Mercado Global rediseñado, Cassino portátil de Marlon, vendedor portátil de Stones y Exact IV Scanner completo.
 // @match        https://poke.idleworld.online/play
 // @grant        none
 // @run-at       document-start
@@ -694,6 +694,15 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotMoveVisible:'Transferir visibles', depotMoveAllShort:'Todo', depotMoveVisibleConfirm:'¿Transferir todos los elementos visibles de este lado?', depotVisibleMoved:'Elementos visibles transferidos', depotNothingMovable:'No hay elementos visibles que se puedan transferir', depotFamilyFrozen:'El depósito familiar está congelado', depotMoveLimit:'Se alcanzó el límite diario de movimientos familiares' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotMoveVisible:'Transferir visíveis', depotMoveAllShort:'Tudo', depotMoveVisibleConfirm:'Transferir todos os elementos visíveis deste lado?', depotVisibleMoved:'Elementos visíveis transferidos', depotNothingMovable:'Não há elementos visíveis que possam ser transferidos', depotFamilyFrozen:'O depósito da família está congelado', depotMoveLimit:'O limite diário de movimentos familiares foi atingido' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotMoveVisible:'Move visible', depotMoveAllShort:'All', depotMoveVisibleConfirm:'Move every visible entry from this side?', depotVisibleMoved:'Visible entries moved', depotNothingMovable:'There are no visible entries that can be moved', depotFamilyFrozen:'The family depot is frozen', depotMoveLimit:'The daily family movement limit has been reached' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros y evoluciones especiales de Eevee, disponibles desde cualquier zona.', casinoRefresh:'Actualizar', casinoLoading:'Consultando las ofertas de Marlon…', casinoEmpty:'Marlon no tiene ofertas disponibles en este momento.', casinoLoadError:'No se pudo consultar a Marlon.', casinoTeam:'Equipo', casinoTeamFull:'Tu equipo está lleno. Libera un espacio antes de recibir otro Pokémon.', casinoEvolution:'EVOLUCIÓN', casinoBuy:'Comprar', casinoTrade:'Intercambiar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Necesitas un Eevee', casinoNeedStone:'Falta la Stone requerida', casinoNoRoom:'Equipo lleno', casinoUnavailable:'No disponible', casinoEeveeRequirement:'Eevee disponible', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar intercambio', casinoConfirmBuyText:'¿Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'¿Intercambiar tu Eevee{stone} y pagar 💲 {gold} para recibir {name}?', casinoBought:'Compraste {name} por 💲 {gold}.', casinoTraded:'Intercambio completado: recibiste {name} y pagaste 💲 {gold}.', casinoActionError:'No se pudo completar la operación con Marlon.', casinoClose:'Cerrar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros e evoluções especiais do Eevee, disponíveis de qualquer área.', casinoRefresh:'Atualizar', casinoLoading:'Consultando as ofertas de Marlon…', casinoEmpty:'Marlon não possui ofertas disponíveis neste momento.', casinoLoadError:'Não foi possível consultar Marlon.', casinoTeam:'Equipe', casinoTeamFull:'Sua equipe está cheia. Libere um espaço antes de receber outro Pokémon.', casinoEvolution:'EVOLUÇÃO', casinoBuy:'Comprar', casinoTrade:'Trocar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Você precisa de um Eevee', casinoNeedStone:'Falta a Stone necessária', casinoNoRoom:'Equipe cheia', casinoUnavailable:'Indisponível', casinoEeveeRequirement:'Eevee disponível', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar troca', casinoConfirmBuyText:'Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'Trocar seu Eevee{stone} e pagar 💲 {gold} para receber {name}?', casinoBought:'Você comprou {name} por 💲 {gold}.', casinoTraded:'Troca concluída: você recebeu {name} e pagou 💲 {gold}.', casinoActionError:'Não foi possível concluir a operação com Marlon.', casinoClose:'Fechar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casino:'Casino', casinoTitle:'Casino · Marlon', casinoSubtitle:'Rare Pokémon and special Eevee evolutions, available from any area.', casinoRefresh:'Refresh', casinoLoading:'Checking Marlon’s offers…', casinoEmpty:'Marlon has no offers available right now.', casinoLoadError:'Marlon could not be reached.', casinoTeam:'Team', casinoTeamFull:'Your team is full. Free a slot before receiving another Pokémon.', casinoEvolution:'EVOLUTION', casinoBuy:'Buy', casinoTrade:'Trade', casinoNeedGold:'Not enough gold', casinoNeedEevee:'You need an Eevee', casinoNeedStone:'Required Stone missing', casinoNoRoom:'Team full', casinoUnavailable:'Unavailable', casinoEeveeRequirement:'Eevee available', casinoConfirmBuy:'Confirm purchase', casinoConfirmTrade:'Confirm trade', casinoConfirmBuyText:'Buy {name} for 💲 {gold}?', casinoConfirmTradeText:'Trade your Eevee{stone} and pay 💲 {gold} to receive {name}?', casinoBought:'You bought {name} for 💲 {gold}.', casinoTraded:'Trade completed: you received {name} and paid 💲 {gold}.', casinoActionError:'The operation with Marlon could not be completed.', casinoClose:'Close Casino' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon en el equipo', casinoTeamSubtitle:'Administra inmediatamente los Pokémon comprados o evolucionados.', casinoTeamEmpty:'No hay Pokémon comprados en el equipo.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar en el Box', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon na equipe', casinoTeamSubtitle:'Gerencie imediatamente os Pokémon comprados ou evoluídos.', casinoTeamEmpty:'Não há Pokémon comprados na equipe.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar no Box', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Team Pokémon', casinoTeamSubtitle:'Immediately manage purchased or evolved Pokémon.', casinoTeamEmpty:'There are no purchased Pokémon on the team.', casinoNewPokemon:'NEWLY OBTAINED', casinoStore:'Store', casinoStoreTitle:'Store in Box', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
     function tr(key) {
         const language = getGameLanguage();
         return SCRIPT_I18N[language]?.[key] || SCRIPT_SETTINGS_I18N[language]?.[key]
@@ -2494,7 +2503,173 @@
         #dock-btn-quick-tp { color: #ffcc00; font-size: 16px; font-weight: bold; }
         #dock-btn-shops { color: #9ae6b4; font-size: 15px; }
         #dock-btn-depot { color: #90cdf4; font-size: 15px; }
+        #dock-btn-shops .script-dock-emoji,#dock-btn-depot .script-dock-emoji { display:block;font-size:19px;line-height:1;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
+        #dock-btn-shops:hover .script-dock-emoji,#dock-btn-depot:hover .script-dock-emoji { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
+        .script-shop-menu .poke-menu-item { display:flex !important;align-items:center;gap:7px; }
+        .script-shop-menu-icon { width:25px;height:25px;flex:none;display:grid;place-items:center;background:#ffffff08;border:1px solid #ffffff12;border-radius:6px;font-size:16px;line-height:1;filter:drop-shadow(0 2px 2px #0008);transition:transform .16s ease,background .16s ease,border-color .16s ease,filter .16s ease; }
+        .script-shop-menu .poke-menu-item:hover .script-shop-menu-icon { background:#ffffff12;border-color:#b6924660;filter:drop-shadow(0 3px 3px #000a) saturate(1.2);transform:translateY(-1px) scale(1.06); }
         .script-shop-wrap .poke-menu[hidden] { display: none !important; }
+        .script-casino-backdrop {
+            position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;
+            box-sizing:border-box;padding:14px;background:rgba(2,7,12,.78);backdrop-filter:blur(4px);
+        }
+        .script-marlon-window {
+            width:min(1120px,96vw) !important;max-width:96vw !important;height:min(690px,90dvh) !important;max-height:90dvh !important;
+            display:flex;flex-direction:column;overflow:hidden;color:#edf5fb;background:#0b1722 !important;
+            border:1px solid #2b6680 !important;border-radius:12px !important;box-shadow:0 22px 60px #000d !important;
+        }
+        .script-casino-head { flex:none;display:flex;align-items:center;gap:10px;min-height:58px;padding:10px 13px;background:#11283a;border-bottom:1px solid #28546a; }
+        .script-casino-head-copy { min-width:0;display:flex;flex-direction:column;gap:2px; }
+        .script-casino-kicker { color:#55c8ee;font-size:8px;font-weight:900;letter-spacing:1.5px; }
+        .script-casino-title { margin:0;color:#f5f8fb;font-size:18px;font-weight:900;line-height:1.1; }
+        .script-casino-balance { margin-left:auto;flex:none;padding:7px 10px;color:#58e28c;background:#091923;border:1px solid #2a596b;border-radius:7px;font-size:12px;font-weight:900; }
+        .script-casino-refresh,.script-casino-close { flex:none;min-height:34px;color:#dbe8f1;background:#172b3a;border:1px solid #36566a;border-radius:7px;font-size:12.7px;font-weight:800;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease; }
+        .script-casino-refresh { padding:0 10px; }
+        .script-casino-close { width:34px;font-size:19px; }
+        .script-casino-refresh:hover,.script-casino-close:hover { color:#fff;background:#203b4e;border-color:#4d829c;box-shadow:0 4px 9px #0006;transform:translateY(-1px); }
+        .script-casino-refresh:disabled { opacity:.5;cursor:wait; }
+        .script-casino-layout { flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.85fr);overflow:hidden; }
+        .script-casino-catalog { min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid #294657; }
+        .script-casino-summary { flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;color:#91a9b9;background:#0c1b27;border-bottom:1px solid #203d4e;font-size:9px; }
+        .script-casino-team { flex:none;color:#d9c788;font-weight:800;white-space:nowrap; }
+        .script-casino-warning { flex:none;margin:7px 9px 0;padding:7px 9px;color:#ffd5a1;background:#332315;border:1px solid #805b2e;border-radius:6px;font-size:8px;font-weight:750; }
+        .script-casino-status { flex:none;min-height:16px;padding:5px 10px;color:#9bc7d8;background:#091722;border-bottom:1px solid #1d3847;font-size:8px; }
+        .script-casino-status.is-error { color:#ff9b9b; }
+        .script-casino-status.is-success { color:#63e69b; }
+        .script-casino-list { min-height:150px;overflow:auto;padding:8px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-content:start; }
+        .script-casino-empty { grid-column:1/-1;min-height:170px;display:grid;place-items:center;padding:20px;color:#8098a9;text-align:center;font-size:11px; }
+        .script-casino-card { min-width:0;display:grid;grid-template-columns:50px minmax(0,1fr);gap:5px 7px;padding:7px;background:#122538;border:1px solid #31546c;border-radius:7px; }
+        .script-casino-card.is-disabled { opacity:.68;background:#101d29;border-color:#2a3c49; }
+        .script-casino-art { grid-row:1/3;width:48px;height:48px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:#081522;border:1px solid #2c5369;border-radius:6px;overflow:hidden; }
+        .script-casino-art img { width:45px;height:45px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-info { min-width:0; }
+        .script-casino-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f4f7fa;font-size:11px;font-weight:900; }
+        .script-casino-evolution { flex:none;padding:1px 4px;color:#d8b8ff;background:#33234c;border:1px solid #7652a4;border-radius:3px;font-size:6px;font-weight:900;letter-spacing:.45px; }
+        .script-casino-price { margin-top:2px;color:#58e28c;font-size:10px;font-weight:900; }
+        .script-casino-requirements { margin-top:3px;display:flex;flex-wrap:wrap;gap:3px; }
+        .script-casino-requirement { min-height:19px;display:inline-flex;align-items:center;gap:3px;padding:1px 4px;color:#a9e8c1;background:#102c23;border:1px solid #2f7055;border-radius:4px;font-size:6.5px;font-weight:750; }
+        .script-casino-requirement.is-missing { color:#ffb0aa;background:#321d20;border-color:#774048; }
+        .script-casino-requirement img { width:15px;height:15px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-action-row { grid-column:2;display:flex;align-items:center;gap:7px;min-width:0; }
+        .script-casino-reason { min-width:0;flex:1;color:#98adba;font-size:7px;line-height:1.15; }
+        .script-casino-buy { flex:none;min-width:70px;min-height:27px;padding:0 8px;color:#16200c;background:linear-gradient(180deg,#f1d571,#d9b84d);border:1px solid #ffe290;border-radius:5px;font-size:9.2px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0005;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-buy:hover:not(:disabled) { filter:brightness(1.08);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
+        .script-casino-buy:disabled { color:#71808a;background:#1a2a35;border-color:#344b59;cursor:not-allowed; }
+        .script-casino-team-panel { min-width:0;min-height:0;display:flex;flex-direction:column;background:#091621; }
+        .script-casino-team-head { flex:none;padding:10px 11px;background:#102334;border-bottom:1px solid #294657; }
+        .script-casino-team-head-line { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+        .script-casino-team-head h3 { margin:0;color:#f2f6f9;font-size:13px;font-weight:900; }
+        .script-casino-team-count { padding:3px 7px;color:#d7c47c;background:#211d10;border:1px solid #62572d;border-radius:999px;font-size:8px;font-weight:900; }
+        .script-casino-team-head p { margin:4px 0 0;color:#7892a4;font-size:8px;line-height:1.3; }
+        .script-casino-team-tools { margin-top:8px;display:grid;grid-template-columns:minmax(105px,.7fr) 1fr 1fr;gap:5px; }
+        .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9edff5;background:#081722;border:1px solid #2b5268;border-radius:5px;font-size:8px;font-weight:900; }
+        .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:24px;padding:2px 5px;color:#f7fbfd;background:#102638;border:1px solid #3a657c;border-radius:4px;font:inherit;text-align:center;outline:none; }
+        .script-casino-iv-goal input:focus { border-color:#66d9ff;box-shadow:0 0 0 2px #31bfe62c; }
+        .script-casino-bulk-action { min-width:0;min-height:32px;padding:4px 6px;border-radius:5px;font-size:8px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-bulk-store { color:#d8f4ff;background:linear-gradient(180deg,#1b445c,#143247);border:1px solid #4380a1; }
+        .script-casino-bulk-sell { color:#ffe2e2;background:linear-gradient(180deg,#572833,#3b1b23);border:1px solid #a34e5f; }
+        .script-casino-bulk-action:hover:not(:disabled) { filter:brightness(1.14);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
+        .script-casino-bulk-action:disabled { opacity:.42;cursor:not-allowed;box-shadow:none; }
+        .script-casino-team-list { min-height:0;overflow:auto;padding:7px;display:flex;flex-direction:column;gap:6px; }
+        .script-casino-team-empty { min-height:150px;display:grid;place-items:center;color:#708999;text-align:center;font-size:9px; }
+        .script-casino-team-card { --casino-tier:#64748b;position:relative;display:grid;grid-template-columns:50px minmax(0,1fr);gap:5px 7px;padding:7px;background:color-mix(in srgb,var(--casino-tier) 7%,#102233);border:1px solid color-mix(in srgb,var(--casino-tier) 45%,#2b4c60);border-left:3px solid var(--casino-tier);border-radius:7px; }
+        .script-casino-team-card.is-new { background:color-mix(in srgb,var(--casino-tier) 12%,#12263a); }
+        .script-casino-team-card.is-iv-goal { border-color:#ffe071;border-left-color:#ffe071;background:linear-gradient(135deg,#3a3218 0%,color-mix(in srgb,var(--casino-tier) 13%,#112538) 58%);box-shadow:0 0 0 1px #ffdb5d99,0 0 16px #ffd44752;animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite; }
+        .script-casino-team-card.is-iv-goal::after { content:'★ IV';position:absolute;right:6px;top:-1px;padding:2px 5px;color:#1b1605;background:#ffe071;border-radius:0 0 4px 4px;font-size:6px;font-weight:1000;letter-spacing:.4px; }
+        @keyframes scriptCasinoGoalPulse { 0%,100%{box-shadow:0 0 0 1px #ffdb5d80,0 0 10px #ffd44738} 50%{box-shadow:0 0 0 1px #fff0a8,0 0 20px #ffd44770} }
+        .script-casino-team-art { grid-row:1/3;width:48px;height:48px;display:grid;place-items:center;background:#07131e;border:1px solid #29495c;border-radius:6px;overflow:hidden; }
+        .script-casino-team-art img { width:45px;height:45px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-team-info { min-width:0; }
+        .script-casino-team-name-line { display:flex;align-items:center;gap:5px;min-width:0; }
+        .script-casino-team-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f5f7f9;font-size:11px;font-weight:900; }
+        .script-casino-team-tier { flex:none;padding:1px 4px;color:var(--casino-tier);background:color-mix(in srgb,var(--casino-tier) 12%,#0a1722);border:1px solid color-mix(in srgb,var(--casino-tier) 65%,#263c4a);border-radius:3px;font-size:6.3px;font-weight:950;text-transform:uppercase;letter-spacing:.25px; }
+        .script-casino-new-tag { flex:none;padding:1px 4px;color:#10170c;background:#6be394;border-radius:3px;font-size:5.5px;font-weight:1000;letter-spacing:.4px; }
+        .script-casino-team-meta { margin-top:2px;display:flex;flex-wrap:wrap;gap:3px 7px;color:#a8bbc7;font-size:7px; }
+        .script-casino-team-meta b { color:#e5edf2; }
+        .script-casino-team-types { display:flex;flex-wrap:wrap;gap:3px;margin-top:3px; }
+        .script-casino-team-type { --casino-type:#91a3b7;padding:1px 4px;color:#fff;background:color-mix(in srgb,var(--casino-type) 25%,#0b1925);border:1px solid color-mix(in srgb,var(--casino-type) 72%,#294657);border-radius:3px;font-size:5.5px;font-weight:900;text-transform:uppercase; }
+        .script-casino-team-stats { grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px; }
+        .script-casino-team-stat { min-width:0;padding:2px;color:#91a8b7;background:#081722;border:1px solid #223f50;border-radius:3px;text-align:center;font-size:5.5px; }
+        .script-casino-team-stat b { display:block;margin-top:1px;color:#e6eef3;font-size:7px; }
+        .script-casino-team-actions { grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:5px;padding-top:2px; }
+        .script-casino-team-action { min-height:26px;border-radius:5px;font-size:9.2px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-store { color:#d7f3ff;background:linear-gradient(180deg,#1d425a,#153246);border:1px solid #4380a1; }
+        .script-casino-sell { color:#ffe0e0;background:linear-gradient(180deg,#512530,#391a22);border:1px solid #9b4a5a; }
+        .script-casino-team-action:hover:not(:disabled) { filter:brightness(1.14);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
+        .script-casino-team-action:disabled { opacity:.45;cursor:not-allowed; }
+        .script-casino-team-value { grid-column:1/-1;color:#62dd91;text-align:right;font-size:7px;font-weight:850; }
+        .script-casino-goal-alert { position:fixed;z-index:2147483550;left:50%;top:18px;transform:translateX(-50%);width:min(420px,calc(100vw - 24px));box-sizing:border-box;display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 11px;color:#fff5c7;background:#182532;border:1px solid #ffe071;border-radius:8px;box-shadow:0 12px 36px #000c,0 0 18px #ffd44745;animation:scriptCasinoGoalEnter .22s ease-out; }
+        .script-casino-goal-alert img { width:40px;height:40px;object-fit:contain;image-rendering:pixelated;background:#09141d;border:1px solid #5b604e;border-radius:6px; }
+        .script-casino-goal-alert b { display:block;color:#ffe071;font-size:13px; }
+        .script-casino-goal-alert span { display:block;margin-top:2px;color:#e7eef2;font-size:10px; }
+        .script-casino-goal-alert button { align-self:start;width:25px;height:25px;color:#e8eef2;background:#243746;border:1px solid #496275;border-radius:5px;cursor:pointer; }
+        @keyframes scriptCasinoGoalEnter { from{opacity:0;transform:translate(-50%,-12px)} to{opacity:1;transform:translate(-50%,0)} }
+        .script-casino-kicker { font-size:9.2px; }
+        .script-casino-title { font-size:20.7px; }
+        .script-casino-balance { font-size:13.8px; }
+        .script-casino-summary { font-size:10.4px; }
+        .script-casino-warning,.script-casino-status { font-size:9.2px; }
+        .script-casino-empty { font-size:12.7px; }
+        .script-casino-name { font-size:12.7px; }
+        .script-casino-evolution { font-size:6.9px; }
+        .script-casino-price { font-size:11.5px; }
+        .script-casino-requirement { font-size:7.5px; }
+        .script-casino-reason { font-size:8.1px; }
+        .script-casino-team-head h3 { font-size:15px; }
+        .script-casino-team-count,.script-casino-team-head p { font-size:9.2px; }
+        .script-casino-iv-goal,.script-casino-bulk-action { font-size:9.2px; }
+        .script-casino-team-empty { font-size:10.4px; }
+        .script-casino-team-name { font-size:12.7px; }
+        .script-casino-new-tag { font-size:6.3px; }
+        .script-casino-team-meta { font-size:8.1px; }
+        .script-casino-team-type { font-size:6.3px; }
+        .script-casino-team-stat { font-size:6.3px; }
+        .script-casino-team-stat b { font-size:8.1px; }
+        .script-casino-team-value { font-size:8.1px; }
+        .script-flint-backdrop { position:fixed;inset:0;z-index:2147483200;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(2,7,12,.78);backdrop-filter:blur(4px); }
+        .script-flint-window { width:min(860px,95vw) !important;max-width:95vw !important;height:min(650px,88dvh) !important;max-height:88dvh !important;display:flex;flex-direction:column;overflow:hidden;color:#edf5fb;background:#0b1722 !important;border:1px solid #527b91 !important;border-radius:11px !important;box-shadow:0 22px 60px #000d !important; }
+        .script-flint-head { flex:none;display:flex;align-items:center;gap:9px;min-height:58px;padding:10px 13px;background:#11283a;border-bottom:1px solid #31586d; }
+        .script-flint-head-copy { min-width:0;display:flex;flex-direction:column;gap:2px; }
+        .script-flint-kicker { color:#74d2f2;font-size:9px;font-weight:950;letter-spacing:1.35px; }
+        .script-flint-title { margin:0;color:#f4f8fb;font-size:19px;font-weight:950;line-height:1.1; }
+        .script-flint-balance { margin-left:auto;flex:none;padding:7px 10px;color:#65e595;background:#081922;border:1px solid #31586d;border-radius:6px;font-size:12px;font-weight:950; }
+        .script-flint-refresh,.script-flint-close { flex:none;min-height:34px;color:#dce9f1;background:#172c3a;border:1px solid #3b5d70;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .15s ease,background .15s ease,border-color .15s ease; }
+        .script-flint-refresh { padding:0 10px; }
+        .script-flint-close { width:34px;font-size:19px; }
+        .script-flint-refresh:hover:not(:disabled),.script-flint-close:hover { color:#fff;background:#203d4f;border-color:#5b8aa3;transform:translateY(-1px); }
+        .script-flint-refresh:disabled { opacity:.45;cursor:wait; }
+        .script-flint-summary { flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;color:#9ab1bf;background:#0c1b27;border-bottom:1px solid #203d4e;font-size:10px; }
+        .script-flint-status { flex:none;min-height:17px;padding:6px 12px;color:#8ebfd1;background:#091722;border-bottom:1px solid #1d3847;font-size:9px; }
+        .script-flint-status:empty { display:none; }
+        .script-flint-status.is-success { color:#64e39a; }
+        .script-flint-status.is-error { color:#ff9d9d; }
+        .script-flint-list { min-height:0;overflow:auto;padding:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-content:start; }
+        .script-flint-empty { grid-column:1/-1;min-height:180px;display:grid;place-items:center;padding:20px;color:#7891a1;text-align:center;font-size:12px; }
+        .script-flint-card { min-width:0;display:grid;grid-template-columns:60px minmax(0,1fr);gap:8px;padding:9px;background:#112538;border:1px solid #31546b;border-left:3px solid #56b7d8;border-radius:7px;box-shadow:inset 0 1px #ffffff08;transition:border-color .15s ease,background .15s ease,transform .15s ease; }
+        .script-flint-card:hover { background:#142b40;border-color:#5990aa;transform:translateY(-1px); }
+        .script-flint-art { grid-row:1/3;width:58px;height:58px;display:grid;place-items:center;background:#07141f;border:1px solid #2b4d60;border-radius:7px;overflow:hidden; }
+        .script-flint-art img { width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 3px 4px #0009); }
+        .script-flint-info { min-width:0; }
+        .script-flint-name { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f4f8fa;font-size:13px;font-weight:950; }
+        .script-flint-meta { margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:4px; }
+        .script-flint-meta span { min-width:0;padding:4px 5px;color:#8fa8b8;background:#091824;border:1px solid #264556;border-radius:4px;font-size:8px; }
+        .script-flint-meta b { display:block;margin-top:1px;color:#e9f0f4;font-size:10px; }
+        .script-flint-controls { grid-column:1/-1;display:grid;gap:6px;padding-top:2px; }
+        .script-flint-presets { display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px; }
+        .script-flint-preset { min-width:0;min-height:25px;padding:2px;color:#c8d8e1;background:#142938;border:1px solid #34566a;border-radius:4px;font-size:8px;font-weight:900;cursor:pointer;transition:transform .14s ease,background .14s ease,border-color .14s ease; }
+        .script-flint-preset:hover:not(:disabled),.script-flint-preset.is-active { color:#10202a;background:#74d2f2;border-color:#b7edff;transform:translateY(-1px); }
+        .script-flint-preset:disabled { opacity:.3;cursor:not-allowed; }
+        .script-flint-sale-row { display:grid;grid-template-columns:minmax(92px,.65fr) minmax(120px,1fr) minmax(110px,.72fr);gap:5px;align-items:stretch; }
+        .script-flint-qty-wrap { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9eb8c7;background:#081722;border:1px solid #2b4c5e;border-radius:5px;font-size:8px;font-weight:850; }
+        .script-flint-qty { box-sizing:border-box;width:100%;min-width:0;height:26px;padding:2px 5px;color:#fff;background:#10283a;border:1px solid #3d6a81;border-radius:4px;font-size:10px;font-weight:900;text-align:center;outline:none; }
+        .script-flint-qty:focus { border-color:#6ed9fc;box-shadow:0 0 0 2px #31bfe62b; }
+        .script-flint-estimate { min-width:0;display:flex;flex-direction:column;justify-content:center;padding:4px 7px;color:#8ea8b7;background:#081722;border:1px solid #2b4c5e;border-radius:5px;font-size:8px; }
+        .script-flint-estimate b { margin-top:1px;color:#68e498;font-size:11px; }
+        .script-flint-sell { min-width:0;color:#172009;background:linear-gradient(180deg,#f1d574,#d8b64b);border:1px solid #ffe396;border-radius:5px;font-size:10px;font-weight:950;cursor:pointer;box-shadow:0 2px 5px #0005;transition:transform .15s ease,filter .15s ease,box-shadow .15s ease; }
+        .script-flint-sell:hover:not(:disabled) { filter:brightness(1.08);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
+        .script-flint-sell:disabled { color:#73828c;background:#1b2a34;border-color:#344b59;box-shadow:none;cursor:not-allowed; }
+        @media (min-width:721px) and (max-width:980px) { .script-casino-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
         @media (max-width: 720px) {
             #custom-hunts-filter-bar { grid-template-columns: 1fr !important; }
             .script-shop-menu { box-sizing:border-box !important;z-index:2147483646 !important;width:min(260px,calc(100vw - 12px)) !important;max-width:calc(100vw - 12px) !important;max-height:min(360px,calc(100dvh - 16px)) !important;padding:6px !important;overflow-y:auto !important;background:#081017 !important;border:1px solid #8a682d !important;border-radius:9px !important;box-shadow:0 14px 36px #000f,inset 0 1px #ffffff0b !important; }
@@ -2502,6 +2677,34 @@
             .script-shop-menu .poke-menu-item { box-sizing:border-box;width:100%;min-height:42px;padding:9px 11px !important;color:#e9dfca !important;background:#101b22 !important;border:1px solid #29404d !important;border-radius:6px !important;text-align:left;font-size:11px !important;touch-action:manipulation; }
             .script-shop-menu .poke-menu-item + .poke-menu-item { margin-top:5px; }
             .script-shop-menu .poke-menu-item:active { color:#171006 !important;background:linear-gradient(#e2c77f,#b58b39) !important;border-color:#806126 !important; }
+            .script-casino-backdrop { padding:6px;align-items:stretch; }
+            .script-marlon-window { width:100% !important;max-width:100% !important;height:calc(100dvh - 12px) !important;max-height:calc(100dvh - 12px) !important;margin:auto; }
+            .script-casino-head { min-height:52px;padding:8px;gap:6px;flex-wrap:wrap; }
+            .script-casino-head-copy { flex:1 1 calc(100% - 48px); }
+            .script-casino-balance { order:3;margin-left:0; }
+            .script-casino-refresh { order:3;flex:1; }
+            .script-casino-summary { align-items:flex-start;flex-direction:column;padding:8px; }
+            .script-casino-layout { grid-template-columns:1fr;grid-template-rows:minmax(250px,1fr) minmax(220px,.85fr);overflow:auto; }
+            .script-casino-catalog { border-right:0;border-bottom:1px solid #294657; }
+            .script-casino-list { grid-template-columns:1fr;padding:8px;gap:7px; }
+            .script-casino-card { grid-template-columns:50px minmax(0,1fr);padding:7px; }
+            .script-casino-art { width:48px;height:48px; }
+            .script-casino-art img { width:45px;height:45px; }
+            .script-casino-action-row { grid-column:1/-1; }
+            .script-casino-team-list { max-height:42dvh; }
+            .script-casino-team-tools { grid-template-columns:1fr 1fr; }
+            .script-casino-iv-goal { grid-column:1/-1; }
+            .script-flint-backdrop { padding:6px;align-items:stretch; }
+            .script-flint-window { width:100% !important;max-width:100% !important;height:calc(100dvh - 12px) !important;max-height:calc(100dvh - 12px) !important;margin:auto; }
+            .script-flint-head { min-height:52px;padding:8px;gap:6px;flex-wrap:wrap; }
+            .script-flint-head-copy { flex:1 1 calc(100% - 48px); }
+            .script-flint-balance { order:3;margin-left:0; }
+            .script-flint-refresh { order:3;flex:1; }
+            .script-flint-summary { align-items:flex-start;flex-direction:column; }
+            .script-flint-list { grid-template-columns:1fr;padding:8px; }
+            .script-flint-presets { grid-template-columns:repeat(4,minmax(0,1fr)); }
+            .script-flint-sale-row { grid-template-columns:1fr 1fr; }
+            .script-flint-sell { grid-column:1/-1;min-height:34px; }
         }
 
         .win-window, .cfg-window, .mk-window, .ball-window, .ha-window, .inv-window, .dex-window,
@@ -5433,6 +5636,715 @@
         tpBtn.title = 'Teleportar para Última Hunt';
     }
 
+    function formatCasinoText(template, values = {}) {
+        return Object.entries(values).reduce(
+            (text, [key, value]) => text.replaceAll(`{${key}}`, String(value ?? '')),
+            String(template || '')
+        );
+    }
+
+    function getMarlonOfferReason(offer, payload) {
+        if (offer?.canBuy) return '';
+        const gold = Number(payload?.gold || 0);
+        const price = Number(offer?.price || 0);
+        if (gold < price) return tr('casinoNeedGold');
+        if (offer?.isTrade && !offer?.hasEevee) return tr('casinoNeedEevee');
+        if (offer?.stoneItemId != null && Number(offer?.stoneHave || 0) < Number(offer?.stoneQty || 0)) return tr('casinoNeedStone');
+        if (payload && payload.hasRoom === false) return tr('casinoNoRoom');
+        return tr('casinoUnavailable');
+    }
+
+    function getMarlonPokemonSprite(offer) {
+        return getPokemonIconUrl(offer?.speciesId)
+            || getPokeApiSpriteUrl({ speciesId: offer?.speciesId })
+            || '/assets/pokeitems/36699.png';
+    }
+
+    async function showPortableCasino() {
+        document.querySelector('.script-casino-backdrop')?.remove();
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-casino-backdrop';
+        backdrop.innerHTML = `
+            <section class="win-window script-marlon-window" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoTitle'))}">
+                <header class="script-casino-head">
+                    <div class="script-casino-head-copy">
+                        <span class="script-casino-kicker">CASINO SERVICE</span>
+                        <h2 class="script-casino-title">🎰 ${escapeHTML(tr('casinoTitle'))}</h2>
+                    </div>
+                    <span class="script-casino-balance">💲 —</span>
+                    <button class="script-casino-refresh" type="button">↻ ${escapeHTML(tr('casinoRefresh'))}</button>
+                    <button class="script-casino-close" type="button" aria-label="${escapeHTML(tr('casinoClose'))}">×</button>
+                </header>
+                <div class="script-casino-layout">
+                    <div class="script-casino-catalog">
+                        <div class="script-casino-summary">
+                            <span>${escapeHTML(tr('casinoSubtitle'))}</span>
+                            <b class="script-casino-team">${escapeHTML(tr('casinoTeam'))}: —/—</b>
+                        </div>
+                        <div class="script-casino-warning" hidden>${escapeHTML(tr('casinoTeamFull'))}</div>
+                        <div class="script-casino-status" aria-live="polite">${escapeHTML(tr('casinoLoading'))}</div>
+                        <div class="script-casino-list"><div class="script-casino-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
+                    </div>
+                    <aside class="script-casino-team-panel">
+                        <div class="script-casino-team-head">
+                            <div class="script-casino-team-head-line">
+                                <h3>⚔ ${escapeHTML(tr('casinoTeamTitle'))}</h3>
+                                <span class="script-casino-team-count">0/0</span>
+                            </div>
+                            <p>${escapeHTML(tr('casinoTeamSubtitle'))}</p>
+                            <div class="script-casino-team-tools">
+                                <label class="script-casino-iv-goal"><span>${escapeHTML(tr('casinoIvGoal'))}</span><input class="script-casino-iv-goal-input" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoIvGoalHint'))}"></label>
+                                <button class="script-casino-bulk-action script-casino-bulk-store" type="button">📦 ${escapeHTML(tr('casinoStoreAll'))}</button>
+                                <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">💲 ${escapeHTML(tr('casinoSellAll'))}</button>
+                            </div>
+                        </div>
+                        <div class="script-casino-team-list"><div class="script-casino-team-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
+                    </aside>
+                </div>
+            </section>`;
+        document.body.appendChild(backdrop);
+
+        const windowElement = backdrop.querySelector('.script-marlon-window');
+        const list = backdrop.querySelector('.script-casino-list');
+        const status = backdrop.querySelector('.script-casino-status');
+        const balance = backdrop.querySelector('.script-casino-balance');
+        const team = backdrop.querySelector('.script-casino-team');
+        const warning = backdrop.querySelector('.script-casino-warning');
+        const refreshButton = backdrop.querySelector('.script-casino-refresh');
+        const teamList = backdrop.querySelector('.script-casino-team-list');
+        const teamCount = backdrop.querySelector('.script-casino-team-count');
+        const ivGoalInput = backdrop.querySelector('.script-casino-iv-goal-input');
+        const bulkStoreButton = backdrop.querySelector('.script-casino-bulk-store');
+        const bulkSellButton = backdrop.querySelector('.script-casino-bulk-sell');
+        let payload = null;
+        let teamPokemon = [];
+        const recentTeamIds = new Set();
+        const alertedGoalPokeIds = new Set();
+        const ivGoalStorageKey = 'script_casino_iv_goal_v1';
+        let ivGoal = Math.max(0, Math.min(192, Number(localStorage.getItem(ivGoalStorageKey)) || 0));
+        let busySpeciesId = null;
+        let busyPokeId = null;
+        let closed = false;
+        ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+        };
+        const onKeydown = event => { if (event.key === 'Escape') close(); };
+        const setStatus = (message, kind = '') => {
+            status.textContent = message || '';
+            status.classList.toggle('is-error', kind === 'error');
+            status.classList.toggle('is-success', kind === 'success');
+        };
+        const getPokeId = poke => String(poke?.id ?? poke?.capturedId ?? poke?.pokeId ?? '');
+        const loadTeamPokemon = async () => {
+            let pokemon = [];
+            if (await waitForGameSocket(900)) {
+                pokemon = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs:2200, attempts:1 });
+            }
+            if (!pokemon.length) pokemon = await requestPokemonTeamFromGameContext(1800);
+            if (pokemon.length) latestPokemon = pokemon;
+            return pokemon.filter(poke => poke?.team)
+                .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
+        };
+        const refreshCasinoData = async () => {
+            const [nextPayload, nextTeam] = await Promise.all([
+                gameApiRequest('/api/game/marlon'),
+                loadTeamPokemon().catch(error => {
+                    console.warn('No se pudo refrescar el equipo dentro del Cassino.', error);
+                    return teamPokemon;
+                })
+            ]);
+            payload = nextPayload;
+            teamPokemon = nextTeam;
+        };
+        const getTeamPower = poke => {
+            const direct = Number(poke?.power);
+            if (Number.isFinite(direct)) return direct;
+            const stats = poke?.stats || {};
+            return ['hp','atk','def','spAtk','spatk','spDef','spdef','speed','spd']
+                .reduce((total, key) => total + (Number(stats[key]) || 0), 0);
+        };
+        const getTeamStats = poke => {
+            const stats = poke?.stats || {};
+            return [
+                ['HP', stats.hp], ['ATK', stats.atk], ['DEF', stats.def],
+                ['SP.ATK', stats.spAtk ?? stats.spatk], ['SP.DEF', stats.spDef ?? stats.spdef],
+                ['VEL', stats.speed ?? stats.spd]
+            ];
+        };
+        const getTeamTypesHTML = poke => getMarketPokemonTypes(poke).map(type => {
+            const color = TYPE_COLORS[type.key] || '#91a3b7';
+            return `<span class="script-casino-team-type" style="--casino-type:${escapeHTML(color)}">${escapeHTML(type.label)}</span>`;
+        }).join('');
+        const isTeamPokemonProtected = poke => Boolean(
+            poke?.starter || isNativeLocked(poke) || poke?.shiny || poke?.market || poke?.listed
+        );
+        const getTeamViews = () => {
+            const ordered = [...teamPokemon].sort((a, b) => Number(a?.slot ?? 99) - Number(b?.slot ?? 99));
+            const principal = ordered.find(poke => poke?.leader) || ordered[0] || null;
+            const principalId = principal ? getPokeId(principal) : '';
+            return { ordered, principal, visible:ordered.filter(poke => getPokeId(poke) !== principalId) };
+        };
+        const showIvGoalAlert = matches => {
+            if (closed || !matches.length || ivGoal <= 0) return;
+            backdrop.querySelector('.script-casino-goal-alert')?.remove();
+            const poke = matches[0];
+            const iv = Number(poke?.ivTotal || 0);
+            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const extra = matches.length > 1 ? ` (+${matches.length - 1})` : '';
+            const alert = document.createElement('div');
+            alert.className = 'script-casino-goal-alert';
+            alert.setAttribute('role', 'alert');
+            alert.innerHTML = `
+                <img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}">
+                <div><b>★ ${escapeHTML(tr('casinoIvGoalReached'))}${extra}</b><span>${escapeHTML(formatCasinoText(tr('casinoIvGoalDetail'), { name:poke?.name || 'Pokémon', iv, goal:ivGoal }))}</span></div>
+                <button type="button" aria-label="${escapeHTML(tr('close'))}">×</button>`;
+            alert.querySelector('img')?.addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
+            }, { once:true });
+            alert.querySelector('button')?.addEventListener('click', () => alert.remove());
+            backdrop.appendChild(alert);
+            setTimeout(() => alert.remove(), 6500);
+        };
+        const announceIvGoalMatches = visibleTeam => {
+            if (ivGoal <= 0) return;
+            const matches = visibleTeam.filter(poke => recentTeamIds.has(getPokeId(poke))
+                && Number(poke?.ivTotal || 0) >= ivGoal
+                && !alertedGoalPokeIds.has(getPokeId(poke)));
+            if (!matches.length) return;
+            matches.forEach(poke => alertedGoalPokeIds.add(getPokeId(poke)));
+            showIvGoalAlert(matches);
+        };
+
+        const storeTeamPokemon = async (poke, { silent = false } = {}) => {
+            const rawPokeId = poke?.id ?? poke?.capturedId ?? poke?.pokeId;
+            const pokeId = String(rawPokeId ?? '');
+            if (!pokeId) throw new Error('Pokémon sem identificador.');
+            if (!await waitForGameSocket(2200)) throw new Error('A conexão do jogo não está disponível.');
+            let updated = await requestGameEvent('pokes', { type:'poke-store', pokeId:rawPokeId }, null, 3200);
+            if (!updated.length) {
+                updated = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs:2200, attempts:1 });
+            }
+            const stored = updated.find(entry => getPokeId(entry) === pokeId);
+            if (!updated.length || stored?.team) throw new Error(tr('casinoStoreError'));
+            latestPokemon = updated;
+            teamPokemon = updated.filter(entry => entry?.team)
+                .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
+            recentTeamIds.delete(pokeId);
+            try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
+            render();
+            renderTeam();
+            if (!silent) setStatus(formatCasinoText(tr('casinoStored'), { name:poke.name || 'Pokémon' }), 'success');
+            return true;
+        };
+
+        const sellTeamPokemon = async poke => {
+            const pokeId = getPokeId(poke);
+            const sellValue = Number(poke?.sellValue || 0);
+            if (!pokeId || sellValue <= 0 || isTeamPokemonProtected(poke)) return;
+            busyPokeId = pokeId;
+            refreshButton.disabled = true;
+            renderTeam();
+            try {
+                await storeTeamPokemon(poke, { silent:true });
+                const result = await gameApiRequest('/api/game/pokemon/sell', {
+                    method:'POST', body:JSON.stringify({ pokeIds:[pokeId] })
+                });
+                recentTeamIds.delete(pokeId);
+                const successMessage = formatCasinoText(tr('casinoSold'), {
+                    name:poke.name || 'Pokémon',
+                    gold:Number(result?.goldGained ?? sellValue).toLocaleString('pt-BR')
+                });
+                try {
+                    await refreshCasinoData();
+                } catch (refreshError) {
+                    console.warn('La venta se completó, pero el Cassino no pudo refrescar sus datos.', refreshError);
+                }
+                setStatus(successMessage, 'success');
+                sendGameMessage({ type:'pokes-get' });
+            } catch (error) {
+                setStatus(`${tr('casinoSellError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        const storeAllPurchasedPokemon = async () => {
+            const candidates = getTeamViews().visible.filter(poke => recentTeamIds.has(getPokeId(poke)));
+            if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
+            busyPokeId = '__bulk_store__';
+            refreshButton.disabled = true;
+            renderTeam();
+            let stored = 0;
+            try {
+                for (const poke of candidates) {
+                    try {
+                        await storeTeamPokemon(poke, { silent:true });
+                        stored += 1;
+                    } catch (error) {
+                        console.warn(`No se pudo guardar ${poke?.name || 'Pokémon'} durante la acción masiva.`, error);
+                    }
+                }
+                setStatus(stored === candidates.length
+                    ? formatCasinoText(tr('casinoBulkStored'), { count:stored })
+                    : formatCasinoText(tr('casinoBulkPartial'), { done:stored, total:candidates.length }), stored ? 'success' : 'error');
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        const sellAllPurchasedPokemon = async () => {
+            const candidates = getTeamViews().visible.filter(poke => recentTeamIds.has(getPokeId(poke))
+                && !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
+            if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
+            busyPokeId = '__bulk_sell__';
+            refreshButton.disabled = true;
+            renderTeam();
+            const storedIds = [];
+            try {
+                for (const poke of candidates) {
+                    try {
+                        await storeTeamPokemon(poke, { silent:true });
+                        storedIds.push(getPokeId(poke));
+                    } catch (error) {
+                        console.warn(`No se pudo preparar ${poke?.name || 'Pokémon'} para la venta masiva.`, error);
+                    }
+                }
+                if (!storedIds.length) throw new Error(tr('casinoSellError'));
+                const result = await gameApiRequest('/api/game/pokemon/sell', {
+                    method:'POST', body:JSON.stringify({ pokeIds:storedIds })
+                });
+                storedIds.forEach(id => {
+                    recentTeamIds.delete(id);
+                    alertedGoalPokeIds.delete(id);
+                });
+                const totalGold = Number(result?.goldGained ?? candidates
+                    .filter(poke => storedIds.includes(getPokeId(poke)))
+                    .reduce((sum, poke) => sum + Number(poke?.sellValue || 0), 0));
+                try { await refreshCasinoData(); } catch (_) {}
+                setStatus(formatCasinoText(tr('casinoBulkSold'), {
+                    count:storedIds.length, gold:totalGold.toLocaleString('pt-BR')
+                }), 'success');
+                sendGameMessage({ type:'pokes-get' });
+            } catch (error) {
+                setStatus(`${tr('casinoSellError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        const renderTeam = () => {
+            teamCount.textContent = `${teamPokemon.length}/${Number(payload?.maxTeam || 6)}`;
+            teamList.replaceChildren();
+            const visibleTeam = getTeamViews().visible;
+            const purchasedTeam = visibleTeam.filter(poke => recentTeamIds.has(getPokeId(poke)));
+            const sellablePurchased = purchasedTeam.filter(poke => !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
+            bulkStoreButton.disabled = busyPokeId != null || purchasedTeam.length === 0;
+            bulkSellButton.disabled = busyPokeId != null || sellablePurchased.length === 0;
+            bulkStoreButton.textContent = `📦 ${tr('casinoStoreAll')} (${purchasedTeam.length})`;
+            bulkSellButton.textContent = `💲 ${tr('casinoSellAll')} (${sellablePurchased.length})`;
+            announceIvGoalMatches(visibleTeam);
+            if (!visibleTeam.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-team-empty';
+                empty.textContent = tr('casinoTeamEmpty');
+                teamList.appendChild(empty);
+                return;
+            }
+            visibleTeam.forEach(poke => {
+                const pokeId = getPokeId(poke);
+                const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
+                const protectedPoke = isTeamPokemonProtected(poke);
+                const sellValue = Number(poke?.sellValue || 0);
+                const card = document.createElement('article');
+                const reachedIvGoal = ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal;
+                card.className = `script-casino-team-card${recentTeamIds.has(pokeId) ? ' is-new' : ''}${reachedIvGoal ? ' is-iv-goal' : ''}`;
+                card.style.setProperty('--casino-tier', qualityTheme.color);
+                const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+                const stats = getTeamStats(poke);
+                card.innerHTML = `
+                    <div class="script-casino-team-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}"></div>
+                    <div class="script-casino-team-info">
+                        <div class="script-casino-team-name-line">
+                            <b class="script-casino-team-name">${escapeHTML(poke?.shiny ? `✨ ${poke.name || 'Pokémon'}` : poke?.name || 'Pokémon')}</b>
+                            <span class="script-casino-team-tier">${escapeHTML(qualityTheme.label)}</span>
+                            ${recentTeamIds.has(pokeId) ? `<span class="script-casino-new-tag">${escapeHTML(tr('casinoNewPokemon'))}</span>` : ''}
+                        </div>
+                        <div class="script-casino-team-meta">
+                            <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(poke?.level || 1)}</b></span>
+                            <span>${escapeHTML(tr('casinoPower'))} <b>${getTeamPower(poke).toLocaleString('pt-BR')}</b></span>
+                            <span>${escapeHTML(tr('casinoIv'))} <b>${Number(poke?.ivTotal || 0)}/192</b></span>
+                            <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(poke?.quality || 0).toFixed(2)}</b></span>
+                            ${poke?.nature ? `<span>${escapeHTML(tr('casinoNature'))} <b>${escapeHTML(poke.nature)}</b></span>` : ''}
+                        </div>
+                        <div class="script-casino-team-types">${getTeamTypesHTML(poke)}</div>
+                    </div>
+                    <div class="script-casino-team-stats">${stats.map(([label, value]) => `<span class="script-casino-team-stat">${label}<b>${Number(value || 0).toLocaleString('pt-BR')}</b></span>`).join('')}</div>
+                    <div class="script-casino-team-value">${escapeHTML(tr('casinoSellValue'))}: 💲 ${sellValue.toLocaleString('pt-BR')}${protectedPoke ? ` · ${escapeHTML(tr('casinoProtected'))}` : ''}</div>
+                    <div class="script-casino-team-actions">
+                        <button class="script-casino-team-action script-casino-store" type="button" ${busyPokeId != null ? 'disabled' : ''}>📦 ${escapeHTML(tr('casinoStore'))}</button>
+                        <button class="script-casino-team-action script-casino-sell" type="button" ${busyPokeId != null || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>💲 ${escapeHTML(tr('casinoSellPokemon'))}</button>
+                    </div>`;
+                card.querySelector('.script-casino-team-art img')?.addEventListener('error', event => {
+                    event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
+                }, { once:true });
+                card.querySelector('.script-casino-store').addEventListener('click', async () => {
+                    if (busyPokeId != null) return;
+                    busyPokeId = pokeId;
+                    refreshButton.disabled = true;
+                    renderTeam();
+                    try {
+                        await storeTeamPokemon(poke);
+                    } catch (error) {
+                        setStatus(`${tr('casinoStoreError')} ${error.message || ''}`.trim(), 'error');
+                    } finally {
+                        busyPokeId = null;
+                        refreshButton.disabled = false;
+                        if (!closed) { render(); renderTeam(); }
+                    }
+                });
+                card.querySelector('.script-casino-sell').addEventListener('click', () => sellTeamPokemon(poke));
+                teamList.appendChild(card);
+            });
+        };
+        const render = () => {
+            const offers = Array.isArray(payload?.offers) ? payload.offers : [];
+            balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
+            team.textContent = `${tr('casinoTeam')}: ${Number(payload?.teamCount || 0).toLocaleString('pt-BR')}/${Number(payload?.maxTeam || 0).toLocaleString('pt-BR')}`;
+            warning.hidden = payload?.hasRoom !== false;
+            list.replaceChildren();
+            if (!offers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-empty';
+                empty.textContent = tr('casinoEmpty');
+                list.appendChild(empty);
+                return;
+            }
+
+            offers.forEach(offer => {
+                const reason = getMarlonOfferReason(offer, payload);
+                const card = document.createElement('article');
+                card.className = `script-casino-card${offer.canBuy ? '' : ' is-disabled'}`;
+                const stoneRequired = offer.stoneItemId != null;
+                const stoneHave = Number(offer.stoneHave || 0);
+                const stoneQty = Number(offer.stoneQty || 0);
+                const stoneIcon = normalizeGameItemIcon(offer.stoneIconUrl || '');
+                card.innerHTML = `
+                    <div class="script-casino-art"><img src="${escapeHTML(getMarlonPokemonSprite(offer))}" alt="${escapeHTML(offer.name || 'Pokémon')}"></div>
+                    <div class="script-casino-info">
+                        <div class="script-casino-name-line">
+                            <b class="script-casino-name">${escapeHTML(offer.name || `Pokémon #${offer.speciesId || '—'}`)}</b>
+                            ${offer.isTrade ? `<span class="script-casino-evolution">${escapeHTML(tr('casinoEvolution'))}</span>` : ''}
+                        </div>
+                        <div class="script-casino-price">💲 ${Number(offer.price || 0).toLocaleString('pt-BR')}</div>
+                        ${offer.isTrade ? `<div class="script-casino-requirements">
+                            <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getPokemonIconUrl(133) || getPokeApiSpriteUrl({ speciesId:133 }))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
+                            ${stoneRequired ? `<span class="script-casino-requirement${stoneHave >= stoneQty ? '' : ' is-missing'}">${stoneIcon ? `<img src="${escapeHTML(stoneIcon)}" alt="${escapeHTML(offer.stoneName || 'Stone')}">` : ''}${stoneHave.toLocaleString('pt-BR')}/${stoneQty.toLocaleString('pt-BR')} ${escapeHTML(offer.stoneName || 'Stone')}</span>` : ''}
+                        </div>` : ''}
+                    </div>
+                    <div class="script-casino-action-row">
+                        <span class="script-casino-reason">${escapeHTML(reason)}</span>
+                        <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
+                    </div>`;
+                card.querySelector('.script-casino-art img').addEventListener('error', event => {
+                    event.currentTarget.src = getPokeApiSpriteUrl({ speciesId: offer.speciesId });
+                }, { once:true });
+                card.querySelector('.script-casino-buy').addEventListener('click', async () => {
+                    if (!offer.canBuy || busySpeciesId != null) return;
+                    const previousTeam = new Map(teamPokemon.map(poke => [
+                        getPokeId(poke), Number(poke?.speciesId || 0)
+                    ]));
+                    busySpeciesId = offer.speciesId;
+                    refreshButton.disabled = true;
+                    render();
+                    setStatus(`${offer.isTrade ? tr('casinoTrade') : tr('casinoBuy')} ${offer.name || ''}…`);
+                    try {
+                        const result = await gameApiRequest('/api/game/marlon/buy', {
+                            method:'POST',
+                            body:JSON.stringify({ speciesId:offer.speciesId })
+                        });
+                        sendGameMessage({ type:'inv-get' });
+                        const successKey = (result?.isTrade ?? offer.isTrade) ? 'casinoTraded' : 'casinoBought';
+                        const successMessage = formatCasinoText(tr(successKey), {
+                            name:result?.name || offer.name || 'Pokémon',
+                            gold:Number(result?.goldSpent ?? offer.price ?? 0).toLocaleString('pt-BR')
+                        });
+                        try {
+                            await refreshCasinoData();
+                            teamPokemon.forEach(poke => {
+                                const pokeId = getPokeId(poke);
+                                if (!previousTeam.has(pokeId) || previousTeam.get(pokeId) !== Number(poke?.speciesId || 0)) {
+                                    recentTeamIds.add(pokeId);
+                                }
+                            });
+                            setStatus(successMessage, 'success');
+                        } catch (refreshError) {
+                            console.warn('La operación de Marlon se completó, pero no se pudo refrescar el catálogo.', refreshError);
+                            setStatus(successMessage, 'success');
+                        }
+                    } catch (error) {
+                        setStatus(`${tr('casinoActionError')} ${error.message || ''}`.trim(), 'error');
+                    } finally {
+                        busySpeciesId = null;
+                        refreshButton.disabled = false;
+                        if (!closed) { render(); renderTeam(); }
+                    }
+                });
+                list.appendChild(card);
+            });
+        };
+        const load = async () => {
+            if (busySpeciesId != null) return;
+            refreshButton.disabled = true;
+            setStatus(tr('casinoLoading'));
+            try {
+                await refreshCasinoData();
+                if (closed) return;
+                render();
+                renderTeam();
+                setStatus('');
+            } catch (error) {
+                if (closed) return;
+                payload = null;
+                teamPokemon = [];
+                render();
+                renderTeam();
+                setStatus(`${tr('casinoLoadError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                if (!closed) refreshButton.disabled = false;
+            }
+        };
+
+        backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+        windowElement.addEventListener('click', event => event.stopPropagation());
+        backdrop.querySelector('.script-casino-close').addEventListener('click', close);
+        refreshButton.addEventListener('click', load);
+        bulkStoreButton.addEventListener('click', storeAllPurchasedPokemon);
+        bulkSellButton.addEventListener('click', sellAllPurchasedPokemon);
+        ivGoalInput.addEventListener('change', () => {
+            const parsed = Math.round(Number(ivGoalInput.value) || 0);
+            ivGoal = Math.max(0, Math.min(192, parsed));
+            ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+            alertedGoalPokeIds.clear();
+            if (ivGoal > 0) localStorage.setItem(ivGoalStorageKey, String(ivGoal));
+            else localStorage.removeItem(ivGoalStorageKey);
+            renderTeam();
+        });
+        document.addEventListener('keydown', onKeydown);
+        applyBetterWindowScales();
+        await load();
+    }
+
+    async function showPortableStoneSeller() {
+        document.querySelector('.script-flint-backdrop')?.remove();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-flint-backdrop';
+        backdrop.innerHTML = `
+            <section class="win-window script-flint-window" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('stoneSellerTitle'))}">
+                <header class="script-flint-head">
+                    <div class="script-flint-head-copy">
+                        <span class="script-flint-kicker">PEWTER STONE SERVICE</span>
+                        <h2 class="script-flint-title">💎 ${escapeHTML(tr('stoneSellerTitle'))}</h2>
+                    </div>
+                    <span class="script-flint-balance">💲 —</span>
+                    <button class="script-flint-refresh" type="button">↻ ${escapeHTML(tr('stoneSellerRefresh'))}</button>
+                    <button class="script-flint-close" type="button" aria-label="${escapeHTML(tr('stoneSellerClose'))}">×</button>
+                </header>
+                <div class="script-flint-summary"><span>${escapeHTML(tr('stoneSellerSubtitle'))}</span><b>Lavender (Pewter) · Flint</b></div>
+                <div class="script-flint-status" aria-live="polite">${escapeHTML(tr('stoneSellerLoading'))}</div>
+                <div class="script-flint-list"><div class="script-flint-empty">${escapeHTML(tr('stoneSellerLoading'))}</div></div>
+            </section>`;
+        document.body.appendChild(backdrop);
+
+        const windowElement = backdrop.querySelector('.script-flint-window');
+        const list = backdrop.querySelector('.script-flint-list');
+        const status = backdrop.querySelector('.script-flint-status');
+        const balance = backdrop.querySelector('.script-flint-balance');
+        const refreshButton = backdrop.querySelector('.script-flint-refresh');
+        let payload = null;
+        let busyItemId = null;
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+        };
+        const onKeydown = event => { if (event.key === 'Escape') close(); };
+        const setStatus = (message, kind = '') => {
+            status.textContent = message || '';
+            status.classList.toggle('is-success', kind === 'success');
+            status.classList.toggle('is-error', kind === 'error');
+        };
+        const clampQuantity = (value, max) => Math.max(1, Math.min(Math.max(1, Number(max) || 1), Math.floor(Number(value) || 1)));
+
+        const render = () => {
+            if (closed) return;
+            const stones = Array.isArray(payload?.stones) ? payload.stones.filter(stone => Number(stone?.quantity) > 0) : [];
+            balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
+            list.replaceChildren();
+            if (!stones.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-flint-empty';
+                empty.textContent = tr('stoneSellerEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            stones.forEach(stone => {
+                const maxQuantity = Math.max(1, Number(stone?.quantity) || 1);
+                const unitPrice = Math.max(0, Number(stone?.unitPrice) || 0);
+                const card = document.createElement('article');
+                card.className = 'script-flint-card';
+                const presets = [1, 5, 10, 25, 50, 100];
+                card.innerHTML = `
+                    <div class="script-flint-art"><img src="${escapeHTML(normalizeGameItemIcon(stone?.icon || ''))}" alt="${escapeHTML(stone?.name || 'Stone')}"></div>
+                    <div class="script-flint-info">
+                        <b class="script-flint-name">${escapeHTML(stone?.name || 'Stone')}</b>
+                        <div class="script-flint-meta">
+                            <span>${escapeHTML(tr('stoneSellerAvailable'))}<b>${maxQuantity.toLocaleString('pt-BR')}</b></span>
+                            <span>${escapeHTML(tr('stoneSellerUnitPrice'))}<b>💲 ${unitPrice.toLocaleString('pt-BR')}</b></span>
+                        </div>
+                    </div>
+                    <div class="script-flint-controls">
+                        <div class="script-flint-presets">
+                            ${presets.map(quantity => `<button class="script-flint-preset" type="button" data-qty="${quantity}" ${quantity > maxQuantity ? 'disabled' : ''}>${quantity}</button>`).join('')}
+                            <button class="script-flint-preset" type="button" data-mode="half">${escapeHTML(tr('stoneSellerHalf'))}</button>
+                            <button class="script-flint-preset" type="button" data-mode="all">${escapeHTML(tr('stoneSellerAll'))}</button>
+                        </div>
+                        <div class="script-flint-sale-row">
+                            <label class="script-flint-qty-wrap"><span>${escapeHTML(tr('stoneSellerQuantity'))}</span><input class="script-flint-qty" type="number" min="1" max="${maxQuantity}" step="1" inputmode="numeric" value="1"></label>
+                            <span class="script-flint-estimate">${escapeHTML(tr('stoneSellerEstimated'))}<b>💲 ${unitPrice.toLocaleString('pt-BR')}</b></span>
+                            <button class="script-flint-sell" type="button">💰 ${escapeHTML(tr('stoneSellerSell'))} 1</button>
+                        </div>
+                    </div>`;
+                const quantityInput = card.querySelector('.script-flint-qty');
+                const estimate = card.querySelector('.script-flint-estimate b');
+                const sellButton = card.querySelector('.script-flint-sell');
+                const presetButtons = Array.from(card.querySelectorAll('.script-flint-preset'));
+                const updateQuantity = value => {
+                    const quantity = clampQuantity(value, maxQuantity);
+                    quantityInput.value = String(quantity);
+                    estimate.textContent = `💲 ${(quantity * unitPrice).toLocaleString('pt-BR')}`;
+                    sellButton.textContent = `💰 ${tr('stoneSellerSell')} ${quantity.toLocaleString('pt-BR')}`;
+                    sellButton.disabled = busyItemId != null;
+                    presetButtons.forEach(button => {
+                        const target = button.dataset.mode === 'all' ? maxQuantity
+                            : button.dataset.mode === 'half' ? Math.max(1, Math.floor(maxQuantity / 2))
+                            : Number(button.dataset.qty);
+                        button.classList.toggle('is-active', target === quantity);
+                    });
+                    return quantity;
+                };
+                quantityInput.addEventListener('input', () => {
+                    if (quantityInput.value === '') {
+                        estimate.textContent = '💲 0';
+                        sellButton.disabled = true;
+                        presetButtons.forEach(button => button.classList.remove('is-active'));
+                        return;
+                    }
+                    updateQuantity(quantityInput.value);
+                });
+                quantityInput.addEventListener('change', () => updateQuantity(quantityInput.value));
+                presetButtons.forEach(button => button.addEventListener('click', () => {
+                    const target = button.dataset.mode === 'all' ? maxQuantity
+                        : button.dataset.mode === 'half' ? Math.max(1, Math.floor(maxQuantity / 2))
+                        : Number(button.dataset.qty);
+                    updateQuantity(target);
+                }));
+                sellButton.addEventListener('click', async () => {
+                    const quantity = Math.floor(Number(quantityInput.value));
+                    if (!Number.isFinite(quantity) || quantity < 1 || quantity > maxQuantity || busyItemId != null) {
+                        setStatus(tr('stoneSellerInvalidQty'), 'error');
+                        return;
+                    }
+                    busyItemId = String(stone.id);
+                    refreshButton.disabled = true;
+                    list.querySelectorAll('button,input').forEach(control => { control.disabled = true; });
+                    sellButton.textContent = tr('stoneSellerSelling');
+                    try {
+                        const result = await gameApiRequest('/api/game/flint/sell', {
+                            method:'POST', body:JSON.stringify({ itemId:stone.id, qty:quantity })
+                        });
+                        sendGameMessage({ type:'inv-get' });
+                        const soldQuantity = Number(result?.sold ?? quantity);
+                        const goldGained = Number(result?.goldGained ?? soldQuantity * unitPrice);
+                        payload = {
+                            ...payload,
+                            gold:Number(payload?.gold || 0) + goldGained,
+                            stones:(Array.isArray(payload?.stones) ? payload.stones : []).map(entry =>
+                                String(entry?.id) === String(stone.id)
+                                    ? { ...entry, quantity:Math.max(0, Number(entry?.quantity || 0) - soldQuantity) }
+                                    : entry)
+                        };
+                        try { payload = await gameApiRequest('/api/game/flint'); }
+                        catch (refreshError) { console.warn('La venta se completó, pero no se pudo refrescar Flint.', refreshError); }
+                        render();
+                        setStatus(formatCasinoText(tr('stoneSellerSold'), {
+                            count:soldQuantity.toLocaleString('pt-BR'),
+                            item:result?.item || stone.name || 'Stone',
+                            gold:goldGained.toLocaleString('pt-BR')
+                        }), 'success');
+                    } catch (error) {
+                        setStatus(`${tr('stoneSellerSellError')} ${error.message || ''}`.trim(), 'error');
+                    } finally {
+                        busyItemId = null;
+                        refreshButton.disabled = false;
+                        if (!closed) render();
+                    }
+                });
+                updateQuantity(1);
+                list.appendChild(card);
+            });
+        };
+        const load = async () => {
+            if (busyItemId != null) return;
+            refreshButton.disabled = true;
+            setStatus(tr('stoneSellerLoading'));
+            try {
+                payload = await gameApiRequest('/api/game/flint');
+                render();
+                setStatus('');
+            } catch (error) {
+                payload = null;
+                list.innerHTML = `<div class="script-flint-empty">${escapeHTML(tr('stoneSellerLoadError'))}</div>`;
+                setStatus(`${tr('stoneSellerLoadError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                refreshButton.disabled = false;
+            }
+        };
+
+        backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+        windowElement.addEventListener('click', event => event.stopPropagation());
+        backdrop.querySelector('.script-flint-close').addEventListener('click', close);
+        refreshButton.addEventListener('click', load);
+        document.addEventListener('keydown', onKeydown);
+        applyBetterWindowScales();
+        await load();
+    }
+
+    const SCRIPT_DOCK_ICONS = Object.freeze({
+        shops: '<span class="script-dock-emoji" aria-hidden="true">🛍️</span>',
+        depot: '<span class="script-dock-emoji" aria-hidden="true">📦</span>'
+    });
+    const SCRIPT_SHOP_MENU_ICONS = Object.freeze({
+        market: '🌐',
+        casino: '🎰',
+        balls: '🔴',
+        sell: '💰',
+        stones: '💎'
+    });
+
     function injectQuickTPButton() {
         const gameDock = document.querySelector('nav.game-dock');
         if (gameDock) {
@@ -5456,7 +6368,7 @@
                 shopsButton.id = 'dock-btn-shops';
                 shopsButton.className = 'dock-btn';
                 shopsButton.type = 'button';
-                shopsButton.textContent = '🏪';
+                shopsButton.innerHTML = SCRIPT_DOCK_ICONS.shops;
                 shopsButton.title = tr('shops');
 
                 const menu = document.createElement('div');
@@ -5503,12 +6415,12 @@
                 };
                 const rebuildMenu = () => {
                     menu.innerHTML = '';
-                    const addItem = (label, handler) => {
+                    const addItem = (label, icon, handler) => {
                         const item = document.createElement('button');
                         item.type = 'button';
                         item.className = 'poke-menu-item';
                         item.setAttribute('role', 'menuitem');
-                        item.textContent = label;
+                        item.innerHTML = `<span class="script-shop-menu-icon">${icon}</span><span>${escapeHTML(label)}</span>`;
                         item.addEventListener('click', event => {
                             event.stopPropagation();
                             menu.hidden = true;
@@ -5516,9 +6428,11 @@
                         });
                         menu.appendChild(item);
                     };
-                    addItem(`🌐 ${tr('globalMarket')}`, showGlobalMarketWindow);
-                    addItem(`🔴 ${tr('ballShop')}`, showPortableBallShop);
-                    addItem(`💰 ${tr('sellItems')}`, showHuntSellWindow);
+                    addItem(tr('globalMarket'), SCRIPT_SHOP_MENU_ICONS.market, showGlobalMarketWindow);
+                    addItem(tr('casino'), SCRIPT_SHOP_MENU_ICONS.casino, showPortableCasino);
+                    addItem(tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller);
+                    addItem(tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop);
+                    addItem(tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow);
                 };
                 shopsButton.addEventListener('click', event => {
                     event.stopPropagation();
@@ -5546,7 +6460,7 @@
                 depotButton.id = 'dock-btn-depot';
                 depotButton.className = 'dock-btn';
                 depotButton.type = 'button';
-                depotButton.textContent = '📦';
+                depotButton.innerHTML = SCRIPT_DOCK_ICONS.depot;
                 depotButton.title = 'Depot';
                 depotButton.addEventListener('click', showPortableDepot);
                 document.getElementById('dock-btn-shops')?.closest('.script-shop-wrap')?.after(depotButton);
