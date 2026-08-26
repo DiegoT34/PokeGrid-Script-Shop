@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-26T04:26:55Z",
+    "updatedAt":  "2026-08-26T07:13:40Z",
     "scripts":  [
                     {
                         "id":  "better-market-and-more",
                         "name":  "Better Market and More",
                         "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.13.1",
+                        "version":  "10.14.0",
                         "author":  "DiegoT34",
                         "summary":  "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
                         "description":  "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
@@ -26,9 +26,9 @@
                                         ],
                         "minLauncherVersion":  "0.22.1",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
-                        "sha256":  "d8479a809626d7deb7966904000ce2602f70071ada39917edc29fa45cd4c2b94",
+                        "sha256":  "e7a84d3681c2de9cca739b907c28a12a9fe647c7aceb0c0b0851271bd5ac8a8e",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 10.13.1",
+                        "changelog":  "Actualización 10.14.0",
                         "icon":  "🛒",
                         "featured":  true,
                         "publishedAt":  "2026-08-24T20:52:32Z"

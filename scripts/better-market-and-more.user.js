@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better Market and More
 // @namespace    http://tampermonkey.net/
-// @version      10.13.1
+// @version      10.14.0
 // @description  Mercado Global rediseñado, Cassino portátil de Marlon, vendedor portátil de Stones y Exact IV Scanner completo.
 // @match        https://poke.idleworld.online/play
 // @grant        none
@@ -700,9 +700,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon en el equipo', casinoTeamSubtitle:'Administra inmediatamente los Pokémon comprados o evolucionados.', casinoTeamEmpty:'No hay Pokémon comprados en el equipo.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar en el Box', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon na equipe', casinoTeamSubtitle:'Gerencie imediatamente os Pokémon comprados ou evoluídos.', casinoTeamEmpty:'Não há Pokémon comprados na equipe.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar no Box', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Team Pokémon', casinoTeamSubtitle:'Immediately manage purchased or evolved Pokémon.', casinoTeamEmpty:'There are no purchased Pokémon on the team.', casinoNewPokemon:'NEWLY OBTAINED', casinoStore:'Store', casinoStoreTitle:'Store in Box', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'Lavender (Pewter) · Stones', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'VENDER STONE', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'VENDER STONES', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'SELL STONES', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
     function tr(key) {
         const language = getGameLanguage();
         return SCRIPT_I18N[language]?.[key] || SCRIPT_SETTINGS_I18N[language]?.[key]
@@ -2503,10 +2503,14 @@
         #dock-btn-quick-tp { color: #ffcc00; font-size: 16px; font-weight: bold; }
         #dock-btn-shops { color: #9ae6b4; font-size: 15px; }
         #dock-btn-depot { color: #90cdf4; font-size: 15px; }
-        #dock-btn-shops .script-dock-emoji,#dock-btn-depot .script-dock-emoji { display:block;font-size:19px;line-height:1;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
-        #dock-btn-shops:hover .script-dock-emoji,#dock-btn-depot:hover .script-dock-emoji { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
+        #dock-btn-shops .script-dock-emoji { display:block;font-size:19px;line-height:1;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
+        #dock-btn-depot .script-dock-sprite { display:block;width:24px;height:24px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
+        #dock-btn-shops:hover .script-dock-emoji,#dock-btn-depot:hover .script-dock-sprite { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
         .script-shop-menu .poke-menu-item { display:flex !important;align-items:center;gap:7px; }
         .script-shop-menu-icon { width:25px;height:25px;flex:none;display:grid;place-items:center;background:#ffffff08;border:1px solid #ffffff12;border-radius:6px;font-size:16px;line-height:1;filter:drop-shadow(0 2px 2px #0008);transition:transform .16s ease,background .16s ease,border-color .16s ease,filter .16s ease; }
+        .script-menu-sprite-rotator { width:22px;height:22px;display:grid;place-items:center;overflow:hidden; }
+        .script-menu-sprite-img { display:block;width:22px;height:22px;object-fit:contain;image-rendering:pixelated;opacity:1;transform:scale(1);transition:opacity .16s ease,transform .16s ease,filter .16s ease; }
+        .script-menu-sprite-img.is-switching { opacity:0;transform:scale(.72) rotate(-8deg);filter:brightness(1.35); }
         .script-shop-menu .poke-menu-item:hover .script-shop-menu-icon { background:#ffffff12;border-color:#b6924660;filter:drop-shadow(0 3px 3px #000a) saturate(1.2);transform:translateY(-1px) scale(1.06); }
         .script-shop-wrap .poke-menu[hidden] { display: none !important; }
         .script-casino-backdrop {
@@ -6335,15 +6339,95 @@
 
     const SCRIPT_DOCK_ICONS = Object.freeze({
         shops: '<span class="script-dock-emoji" aria-hidden="true">🛍️</span>',
-        depot: '<span class="script-dock-emoji" aria-hidden="true">📦</span>'
+        depot: '<img class="script-dock-sprite" src="/assets/items/electric_box.png" alt="" aria-hidden="true">'
     });
     const SCRIPT_SHOP_MENU_ICONS = Object.freeze({
         market: '🌐',
         casino: '🎰',
-        balls: '🔴',
-        sell: '💰',
-        stones: '💎'
+        balls: '<span class="script-menu-sprite-rotator" data-menu-sprite="balls"><img class="script-menu-sprite-img" src="/assets/items/cute_ball.png" alt=""></span>',
+        sell: '<span class="script-menu-sprite-rotator" data-menu-sprite="sell"><img class="script-menu-sprite-img" src="/assets/pokeitems/36639.png" alt=""></span>',
+        stones: '<span class="script-menu-sprite-rotator" data-menu-sprite="stones"><img class="script-menu-sprite-img" src="/assets/items/fire_stone.gif" alt=""></span>'
     });
+
+    function getScriptMenuEntrySprite(entry) {
+        const raw = entry?.iconUrl || entry?.imageUrl || entry?.icon || entry?.image || entry?.sprite || entry?.img || '';
+        return raw ? normalizeGameItemIcon(String(raw)) : '';
+    }
+
+    function uniqueScriptMenuSprites(entries) {
+        return [...new Set(entries.filter(Boolean))];
+    }
+
+    async function loadScriptShopMenuSpritePools() {
+        const [ballResult, flintResult] = await Promise.allSettled([
+            loadBallCatalog(),
+            gameApiRequest('/api/game/flint')
+        ]);
+        await Promise.resolve(itemDataLoadPromise).catch(() => null);
+        const knownItems = [...new Set(globalItemApiData.values())];
+        const ballsPayload = ballResult.status === 'fulfilled' ? ballResult.value : {};
+        const ballEntries = Array.isArray(ballsPayload?.catalog) ? ballsPayload.catalog
+            : Array.isArray(ballsPayload?.catalog?.balls) ? ballsPayload.catalog.balls
+                : Array.isArray(ballsPayload?.balls) ? ballsPayload.balls
+                    : Array.isArray(ballsPayload) ? ballsPayload : [];
+        const flintStones = flintResult.status === 'fulfilled' && Array.isArray(flintResult.value?.stones)
+            ? flintResult.value.stones : [];
+        const catalogStones = knownItems.filter(entry => {
+            const category = String(entry?.category || entry?.kind || entry?.type || '').toLowerCase();
+            const name = String(entry?.name || entry?.title || '').toLowerCase();
+            return category === 'stone' || /\bstone\b/.test(name);
+        });
+        const preferredSellItem = knownItems.find(entry => /bag of pollen/i.test(String(entry?.name || entry?.title || '')))
+            || knownItems.find(entry => getScriptMenuEntrySprite(entry) && String(entry?.category || '').toLowerCase() !== 'stone');
+        return {
+            balls: uniqueScriptMenuSprites([
+                ...ballEntries.map(getScriptMenuEntrySprite),
+                '/assets/items/cute_ball.png'
+            ]),
+            stones: uniqueScriptMenuSprites([
+                ...flintStones.map(getScriptMenuEntrySprite),
+                ...catalogStones.map(getScriptMenuEntrySprite),
+                '/assets/items/fire_stone.gif'
+            ]),
+            sell: uniqueScriptMenuSprites([
+                getPokemonIconUrl(25),
+                getScriptMenuEntrySprite(preferredSellItem),
+                '/assets/items/bag_of_pollen.png'
+            ])
+        };
+    }
+
+    function animateScriptMenuSprite(menu, role, pool) {
+        const host = menu.querySelector(`[data-menu-sprite="${role}"]`);
+        const image = host?.querySelector('.script-menu-sprite-img');
+        if (!image || !pool.length) return;
+        let currentIndex = Math.max(0, pool.indexOf(image.getAttribute('src')));
+        const schedule = () => window.setTimeout(rotate, 2450);
+        const rotate = () => {
+            if (!image.isConnected || menu.hidden) return;
+            let nextIndex = Math.floor(Math.random() * pool.length);
+            if (pool.length > 1 && nextIndex === currentIndex) nextIndex = (nextIndex + 1) % pool.length;
+            currentIndex = nextIndex;
+            image.classList.add('is-switching');
+            window.setTimeout(() => {
+                if (!image.isConnected || menu.hidden) return;
+                image.src = pool[currentIndex];
+                requestAnimationFrame(() => image.classList.remove('is-switching'));
+                schedule();
+            }, 160);
+        };
+        schedule();
+    }
+
+    async function startScriptShopMenuSprites(menu) {
+        const runId = Symbol('script-shop-menu-sprites');
+        menu._scriptSpriteRunId = runId;
+        const pools = await loadScriptShopMenuSpritePools();
+        if (!menu.isConnected || menu.hidden || menu._scriptSpriteRunId !== runId) return;
+        animateScriptMenuSprite(menu, 'balls', pools.balls);
+        animateScriptMenuSprite(menu, 'stones', pools.stones);
+        animateScriptMenuSprite(menu, 'sell', pools.sell);
+    }
 
     function injectQuickTPButton() {
         const gameDock = document.querySelector('nav.game-dock');
@@ -6433,6 +6517,7 @@
                     addItem(tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller);
                     addItem(tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop);
                     addItem(tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow);
+                    void startScriptShopMenuSprites(menu);
                 };
                 shopsButton.addEventListener('click', event => {
                     event.stopPropagation();
