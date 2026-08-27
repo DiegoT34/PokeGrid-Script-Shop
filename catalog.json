@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-27T22:39:01Z",
+    "updatedAt":  "2026-08-27T23:01:33Z",
     "scripts":  [
                     {
                         "id":  "poke-idle-world-profesiones-es-y-asistente-botanica",
                         "name":  "Poke Idle World - Profesiones ES y Asistente Botánica",
                         "namespace":  "pokegrid.professions.es",
-                        "version":  "1.4.0",
+                        "version":  "1.5.0",
                         "author":  "DiegoT34 / PokeGrid",
                         "summary":  "Traduce al español el sistema de profesiones y añade un asistente de crafteo para Botánica.",
                         "description":  "Traduce al español el sistema de profesiones y añade un asistente de crafteo para Botánica.",
@@ -22,9 +22,9 @@
                                         ],
                         "minLauncherVersion":  "0.22.3",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/poke-idle-world-profesiones-es-y-asistente-botanica.user.js",
-                        "sha256":  "9397295f517832fd94bf3bd334c7da2d45c50d80e15f9248bd3028ca8020a04d",
+                        "sha256":  "3a1da358afca833505ac987fc2cdf78e323f23a363661eecae48221fd1b00410",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación 1.4.0",
+                        "changelog":  "Actualización 1.5.0",
                         "icon":  "🧩",
                         "featured":  false,
                         "publishedAt":  "2026-08-27T22:39:01Z"

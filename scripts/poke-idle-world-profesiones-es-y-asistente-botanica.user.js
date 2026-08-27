@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poke Idle World - Profesiones ES y Asistente Botánica
 // @namespace    pokegrid.professions.es
-// @version      1.4.0
+// @version      1.5.0
 // @description  Traduce al español el sistema de profesiones y añade un asistente de crafteo para Botánica.
 // @author       DiegoT34 / PokeGrid
 // @match        https://poke.idleworld.online/*
@@ -23,7 +23,9 @@
     const ITEMS_URL = '/game/items.json';
     const CREATURES_URL = '/game/creatures.json';
     const CRAFT_URL = '/api/game/professions/craft';
+    const MARKET_URL = '/api/game/market?category=All';
     const DROP_REFRESH_DEBOUNCE_MS = 420;
+    const MARKET_CACHE_MS = 20_000;
 
     const TYPE_NAMES = {
         NORMAL: 'Normal', STEEL: 'Acero', DARK: 'Siniestro', DRAGON: 'Dragón',
@@ -311,6 +313,10 @@
         trackerRendering: false,
         translateQueued: false,
         dropCache: new Map(),
+        marketListings: [],
+        marketPrices: new Map(),
+        marketPromise: null,
+        marketFetchedAt: 0,
         trackerMinimized: localStorage.getItem(TRACKER_STATE_KEY) === 'minimized',
         trackerLayout: loadTrackerLayout(),
         lastError: ''
@@ -957,6 +963,95 @@
         return rows;
     }
 
+    function extractMarketListings(payload, depth = 0) {
+        if (Array.isArray(payload)) return payload;
+        if (!payload || typeof payload !== 'object' || depth > 5) return [];
+        for (const key of ['listings', 'items', 'results', 'offers', 'data']) {
+            if (Array.isArray(payload[key])) return payload[key];
+            const nested = extractMarketListings(payload[key], depth + 1);
+            if (nested.length) return nested;
+        }
+        return [];
+    }
+
+    function marketEntryRefId(entry) {
+        const ref = entry?.item || entry?.product || {};
+        return entry?.refId ?? entry?.itemId ?? entry?.ballId ?? ref.refId ?? ref.id ?? ref.itemId ?? null;
+    }
+
+    function marketEntryPrice(entry) {
+        return Number(entry?.price ?? entry?.unitPrice ?? entry?.totalPrice ?? entry?.value ?? 0);
+    }
+
+    function marketEntryCurrency(entry) {
+        const ref = entry?.item || entry?.product || {};
+        const value = String(entry?.currency || entry?.currencyType || ref.currency || ref.currencyType || 'GOLD').toUpperCase();
+        return /DIAM|^DD$/.test(value) ? 'DIAMONDS' : 'GOLD';
+    }
+
+    function isActiveItemListing(entry) {
+        const ref = entry?.item || entry?.product || {};
+        const kind = String(entry?.kind || entry?.itemKind || ref.kind || '').toLowerCase();
+        const pokemon = entry?.pokemon || entry?.pokemonId != null || entry?.speciesId != null || /pokemon|pokémon|creature/.test(kind);
+        const inactive = entry?.bought || entry?.sold || entry?.cancelled || entry?.canceled || entry?.active === false || entry?.offerOnly;
+        return !pokemon && !inactive && marketEntryPrice(entry) > 0;
+    }
+
+    async function loadMarketListings() {
+        if (state.marketFetchedAt && Date.now() - state.marketFetchedAt < MARKET_CACHE_MS) return state.marketListings;
+        if (!state.marketPromise) {
+            state.marketPromise = apiGet(MARKET_URL).then(payload => {
+                state.marketListings = extractMarketListings(payload);
+                state.marketPrices = indexMarketPrices(state.marketListings);
+                state.marketFetchedAt = Date.now();
+                return state.marketListings;
+            }).finally(() => { state.marketPromise = null; });
+        }
+        return state.marketPromise;
+    }
+
+    function indexMarketPrices(listings) {
+        const index = new Map();
+        for (const entry of listings) {
+            if (!isActiveItemListing(entry)) continue;
+            const refId = marketEntryRefId(entry);
+            if (refId == null) continue;
+            const key = String(refId);
+            const current = index.get(key) || { gold: null, diamonds: null, count: 0 };
+            const field = marketEntryCurrency(entry) === 'DIAMONDS' ? 'diamonds' : 'gold';
+            const price = marketEntryPrice(entry);
+            current[field] = current[field] == null ? price : Math.min(current[field], price);
+            current.count += 1;
+            index.set(key, current);
+        }
+        return index;
+    }
+
+    async function hydrateMarketPrice(itemId, popover) {
+        const output = popover.querySelector('[data-market-price]');
+        if (!output) return;
+        try {
+            await loadMarketListings();
+            const prices = state.marketPrices.get(String(itemId)) || { gold: null, diamonds: null, count: 0 };
+            if (!popover.isConnected || popover.dataset.marketItemId !== String(itemId)) return;
+            if (prices.gold == null && prices.diamonds == null) {
+                output.innerHTML = '<strong>Sin precio</strong><small>No hay anuncios activos para este objeto.</small>';
+                output.classList.add('empty');
+                return;
+            }
+            const values = [
+                prices.gold != null ? `<b class="gold">💲 ${formatNumber(prices.gold)}</b>` : '',
+                prices.diamonds != null ? `<b class="diamonds">💎 ${formatNumber(prices.diamonds)}</b>` : ''
+            ].filter(Boolean).join('');
+            output.innerHTML = `<span>${values}</span><small>Precio unitario más bajo · ${formatNumber(prices.count)} anuncio${prices.count === 1 ? '' : 's'}</small>`;
+            output.classList.remove('empty');
+        } catch {
+            if (!popover.isConnected || popover.dataset.marketItemId !== String(itemId)) return;
+            output.innerHTML = '<strong>No disponible</strong><small>No se pudo consultar el mercado en este momento.</small>';
+            output.classList.add('empty');
+        }
+    }
+
     function getInfoPopover() {
         let popover = document.getElementById(POPOVER_ID);
         if (!popover) {
@@ -988,6 +1083,7 @@
         const unlocked = isUnlocked(berryId);
         const possible = craftableCount(berryId);
         const popover = getInfoPopover();
+        delete popover.dataset.marketItemId;
         const materials = recipe.map(([itemId, amount]) => {
             const item = state.items.get(itemId) || { name: `Item #${itemId}`, icon: '' };
             return `<span class="pgp-berry-material" data-pg-no-translate>${itemIcon(item) ? `<img src="${escapeHtml(itemIcon(item))}" alt="">` : '◆'}<b>${escapeHtml(item.name)}</b><em>×${formatNumber(amount)}</em></span>`;
@@ -1009,11 +1105,14 @@
         const item = state.items.get(itemId) || { name: `Item #${itemId}` };
         const rows = droppersFor(itemId);
         const popover = getInfoPopover();
+        popover.dataset.marketItemId = String(itemId);
         popover.innerHTML = `<header><span>${itemIcon(item) ? `<img src="${escapeHtml(itemIcon(item))}" alt="">` : '◆'}</span><div data-pg-no-translate><small>DROPS · POKÉDEX</small><strong>${escapeHtml(item.name)}</strong></div></header>
+            <div class="pgp-market-price" data-market-price><span class="pgp-market-loading">Consultando mercado…</span></div>
             ${rows.length ? `<div class="pgp-drop-list">${rows.map((row, index) => `<div class="pgp-drop-row"><b>${index + 1}</b><canvas class="pgp-poke-sprite" width="42" height="42" data-poke-id="${row.pokeId}" aria-label="${escapeHtml(row.name)}"></canvas><span data-pg-no-translate>${escapeHtml(row.name)}<small>#${row.pokeId}</small></span><em>${row.min === row.max ? `×${row.min}` : `×${row.min}–${row.max}`}</em><strong>${formatChance(row.chance)}</strong></div>`).join('')}</div>` : '<p class="pgp-no-drop">La Pokédex no registra ningún Pokémon que suelte este objeto.</p>'}
             <footer>Ordenado de mayor a menor porcentaje de caída.</footer>`;
         placeInfoPopover(popover, anchor, 340);
         hydratePokemonSprites(popover);
+        hydrateMarketPrice(itemId, popover);
     }
 
     async function loadOutfitMetadata() {
@@ -1327,6 +1426,7 @@
             .pgp-layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:0;flex:1}.pgp-catalog{min-width:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#37637a transparent}.pgp-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.pgp-berry-card{position:relative;display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:67px;padding:8px 10px;border:1px solid #29475c;border-left:3px solid var(--type);border-radius:9px;background:#102237;color:#edf6ff;text-align:left;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}.pgp-berry-card:hover{background:#142c43;border-color:var(--type);transform:translateY(-1px)}.pgp-berry-card.selected{box-shadow:inset 0 0 0 1px var(--type);background:#173047}.pgp-berry-card.goal:after{content:'';position:absolute;inset:3px;border:1px dashed #ffd15c;border-radius:6px;pointer-events:none}.pgp-berry-icon{display:grid;place-items:center;width:46px;height:46px;border:1px solid #33546c;border-radius:8px;background:#091624}.pgp-berry-icon img{width:38px;height:38px;object-fit:contain;image-rendering:auto}.pgp-berry-copy{min-width:0}.pgp-berry-copy strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.pgp-berry-copy small{display:block;margin-top:4px;color:#86a4b8;font-size:9px}.pgp-badge{justify-self:end;padding:4px 6px;border:1px solid;border-radius:5px;font-size:8px;font-weight:900;white-space:nowrap}.pgp-badge.ready{border-color:#2ea56f;background:#113829;color:#72e7a9}.pgp-badge.missing{border-color:#506578;background:#182838;color:#a9b8c5}.pgp-badge.locked{border-color:#6b4d5e;background:#2d1c27;color:#e4a7c1}.pgp-goal-dot{position:absolute;top:4px;right:4px;display:grid;place-items:center;width:15px;height:15px;border-radius:50%;background:#ffd15c;color:#18202b;font-size:9px;font-weight:900}
             .pgp-detail{overflow:auto;border-left:1px solid #294052;background:#0d1d2d;padding:13px;scrollbar-width:thin;scrollbar-color:#37637a transparent}.pgp-detail-head{display:grid;grid-template-columns:56px minmax(0,1fr) auto;align-items:center;gap:10px}.pgp-detail-icon{display:grid;place-items:center;width:54px;height:54px;border:1px solid #3d627a;border-radius:9px;background:#081522}.pgp-detail-icon img{width:46px;height:46px;object-fit:contain}.pgp-detail-head small,.pgp-section-label span,.pgp-goal-title small{color:#58d9ee;font-size:8px;font-weight:900;letter-spacing:1.1px}.pgp-detail-head h3{margin:3px 0 0;font-size:16px}.pgp-max{padding:6px 7px;border:1px solid #35536b;border-radius:6px;color:#91a8b9;font-size:9px}.pgp-max b{color:#74e7ab;font-size:14px}.pgp-unlock{margin:11px 0;padding:7px 9px;border-radius:6px;font-size:9px;font-weight:700}.pgp-unlock.open{background:#103629;color:#6ee2a7;border:1px solid #286c51}.pgp-unlock.locked{background:#321e28;color:#f1a8c3;border:1px solid #704157}.pgp-section-label{display:flex;justify-content:space-between;gap:8px;align-items:center;margin:14px 0 7px}.pgp-section-label small{color:#7e98ab;font-size:8px}.pgp-ingredients{display:grid;gap:6px}.pgp-ingredient{display:grid;grid-template-columns:39px minmax(0,1fr) auto auto;align-items:center;gap:7px;padding:7px;border:1px solid #29475b;border-radius:7px;background:#102336;cursor:help;outline:none;transition:.15s}.pgp-ingredient:hover,.pgp-ingredient:focus{border-color:#55cce4;background:#142b40}.pgp-ingredient.enough{border-left:3px solid #36c980}.pgp-ingredient.tracked{border-color:#ffd15c;background:#292817}.pgp-ing-icon{display:grid;place-items:center;width:37px;height:37px;border-radius:6px;background:#081522}.pgp-ing-icon img{width:31px;height:31px;object-fit:contain}.pgp-ing-main{position:relative;min-width:0;padding-bottom:5px}.pgp-ing-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.pgp-ing-main small{display:block;color:#829caf;font-size:8px}.pgp-ing-main i{position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:2px;background:linear-gradient(90deg,#47d8ef var(--progress),#243d50 var(--progress))}.pgp-ing-count{text-align:right}.pgp-ing-count b{display:block;font-size:11px}.pgp-ing-count b.ok{color:#65e7a4}.pgp-ing-count b.bad{color:#ff8b86}.pgp-ing-count small{color:#90a6b6;font-size:8px}.pgp-track-one{min-width:58px;padding:5px 6px;border:1px solid #3b5b70;border-radius:5px;background:#142b3c;color:#a9c2d3;font-size:7px;font-weight:900;cursor:pointer}.pgp-track-one:hover,.pgp-track-one.active{border-color:#ffd15c;background:#3a3217;color:#ffe59b}.pgp-goal-box{margin-top:12px;padding:11px;border:1px solid #645a2c;border-radius:9px;background:#242617}.pgp-goal-title{display:flex;justify-content:space-between;align-items:center;gap:10px}.pgp-goal-title strong{display:block;margin-top:2px;font-size:11px}.pgp-goal-title button{border:1px solid #d8ad3c;border-radius:6px;background:#ffc84f;color:#202116;padding:6px 10px;font-size:9px;font-weight:900;cursor:pointer}.pgp-goal-actions{display:flex;align-items:center;gap:8px;margin-top:9px}.pgp-goal-actions button{padding:6px 8px;border:1px solid #5c613b;border-radius:6px;background:#1b2825;color:#dce6d7;font-size:8px;font-weight:900;cursor:pointer}.pgp-goal-actions button:hover,.pgp-goal-actions button.active{border-color:#ffd15c;background:#3b3318;color:#ffe79c}.pgp-goal-actions span{color:#9da48d;font-size:8px}.pgp-goal-box p{margin:8px 0 0;color:#a9ac96;font-size:9px;line-height:1.4}.pgp-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:#d8dfc3;font-size:9px}.pgp-qty input{width:104px;height:30px;border:1px solid #7a6934;border-radius:6px;background:#111a18;color:#fff;padding:0 8px;font-weight:800}.pgp-goal-progress{height:5px;margin-top:9px;border-radius:4px;background:#3b3b26;overflow:hidden}.pgp-goal-progress span{display:block;height:100%;background:#ffd15c}.pgp-loading,.pgp-empty{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:9px;min-height:150px;border:1px dashed #345269;border-radius:9px;color:#829caf;font-size:11px}.pgp-loading span{width:17px;height:17px;border:2px solid #315367;border-top-color:#58d9ee;border-radius:50%;animation:pgp-spin .7s linear infinite}
             #${POPOVER_ID}{position:fixed;z-index:2147483600;display:none;overflow:hidden;border:1px solid #3b6178;border-radius:10px;background:#0b1825;color:#edf7ff;box-shadow:0 16px 45px rgba(0,0,0,.58);font-family:Inter,Segoe UI,system-ui,sans-serif;pointer-events:auto}#${POPOVER_ID}.open{display:block}#${POPOVER_ID} header{display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:1px solid #294255;background:#10263a}#${POPOVER_ID} header>span{display:grid;place-items:center;width:35px;height:35px;border-radius:6px;background:#081522}#${POPOVER_ID} header img{width:31px;height:31px;object-fit:contain}#${POPOVER_ID} header small{display:block;color:#56d9ef;font-size:7px;font-weight:900;letter-spacing:1px}#${POPOVER_ID} header strong{font-size:11px}.pgp-drop-list{max-height:300px;overflow:auto;padding:5px;scrollbar-width:thin}.pgp-drop-row{display:grid;grid-template-columns:19px 42px minmax(0,1fr) auto 53px;align-items:center;gap:6px;min-height:48px;padding:4px 6px;border-bottom:1px solid #1e3546;font-size:9px}.pgp-drop-row>b{display:grid;place-items:center;width:18px;height:18px;border-radius:4px;background:#183047;color:#68dff1;font-size:8px}.pgp-poke-sprite{display:block;width:42px;height:42px;border:1px solid #27475c;border-radius:6px;background:#081522;image-rendering:pixelated}.pgp-drop-row span{font-weight:750}.pgp-drop-row span small{margin-left:4px;color:#718da1;font-size:7px}.pgp-drop-row em{color:#9eb2c1;font-style:normal}.pgp-drop-row>strong{color:#6ce0a4;text-align:right}.pgp-no-drop{padding:18px 12px;color:#91a7b7;font-size:10px;line-height:1.45}#${POPOVER_ID} footer{padding:6px 9px;border-top:1px solid #294255;color:#718da1;font-size:7px;text-align:center}
+            .pgp-market-price{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:37px;margin:7px 7px 2px;padding:6px 8px;border:1px solid #3d5737;border-radius:7px;background:#142718}.pgp-market-price>span:not(.pgp-market-loading){display:flex;gap:5px;flex-wrap:wrap}.pgp-market-price b{display:inline-flex;align-items:center;padding:4px 6px;border-radius:5px;font-size:10px}.pgp-market-price b.gold{border:1px solid #39764e;background:#113a27;color:#65e59c}.pgp-market-price b.diamonds{border:1px solid #2d718e;background:#102f40;color:#64d9ff}.pgp-market-price small{color:#8fa78f;font-size:7px;text-align:right}.pgp-market-price.empty strong{color:#e8c46d;font-size:10px}.pgp-market-loading{color:#9eb39e;font-size:8px}.pgp-market-loading:before{content:'◌';display:inline-block;margin-right:5px;color:#66dca4;animation:pgp-spin .8s linear infinite}
             .pgp-berry-pop-body{display:grid;gap:9px;padding:10px}.pgp-berry-pop-tags{display:flex;gap:6px}.pgp-berry-pop-tags span{padding:4px 7px;border:1px solid #3d5264;border-radius:5px;background:#152838;color:#c9dae6;font-size:8px;font-weight:850}.pgp-berry-pop-tags span:first-child{border-color:var(--berry-type);color:var(--berry-type);background:color-mix(in srgb,var(--berry-type) 12%,#102131)}.pgp-berry-effect{margin:0;padding:8px;border:1px solid #2b4659;border-radius:7px;background:#0d2030;color:#d8e6ef;font-size:10px;line-height:1.45}.pgp-berry-pop-status{display:grid;grid-template-columns:1fr auto;align-items:center;gap:7px;color:#8ba5b7;font-size:8px}.pgp-berry-pop-status b{color:#72e6aa;font-size:11px}.pgp-berry-pop-status .ready{color:#66dda3}.pgp-berry-pop-status .locked{color:#f09bb8}.pgp-berry-recipe-title{color:#58d9ee;font-size:7px;font-weight:900;letter-spacing:1px}.pgp-berry-materials{display:grid;grid-template-columns:1fr 1fr;gap:5px}.pgp-berry-material{display:grid;grid-template-columns:25px minmax(0,1fr) auto;align-items:center;gap:5px;padding:5px;border:1px solid #263f50;border-radius:6px;background:#0f2130}.pgp-berry-material img{width:23px;height:23px;object-fit:contain}.pgp-berry-material b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px}.pgp-berry-material em{color:#91a9b9;font-size:7px;font-style:normal;font-weight:800}
             #${TRACKER_ID}{position:fixed;left:14px;bottom:72px;z-index:2147481800;font-family:Inter,Segoe UI,system-ui,sans-serif;color:#edf7ff}#${TRACKER_ID}.expanded{display:flex;flex-direction:column;width:min(318px,calc(100vw - 28px));min-width:min(270px,calc(100vw - 16px));min-height:210px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:hidden;resize:both;border:1px solid #3d6951;border-radius:11px;background:#0b1825;box-shadow:0 12px 38px rgba(0,0,0,.5)}#${TRACKER_ID}.expanded:after{content:'⋰';position:absolute;right:2px;bottom:0;color:#70cfa2;font-size:13px;line-height:1;pointer-events:none;opacity:.8}#${TRACKER_ID}.complete{border-color:#62e29f;box-shadow:0 0 0 1px rgba(98,226,159,.28),0 12px 38px rgba(0,0,0,.5)}#${TRACKER_ID}>header{display:grid;grid-template-columns:42px minmax(0,1fr) 29px;align-items:center;flex:0 0 auto;gap:7px;padding:8px;border-bottom:1px solid #29493a;background:#112a24;cursor:grab;touch-action:none;user-select:none}#${TRACKER_ID}.dragging>header{cursor:grabbing}#${TRACKER_ID}>header small{display:block;color:#6de3a7;font-size:7px;font-weight:900;letter-spacing:.8px}#${TRACKER_ID}>header strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}#${TRACKER_ID}>header button{display:grid;place-items:center;width:29px;height:29px;border:1px solid #365947;border-radius:6px;background:#18352d;color:#edf7ff;font-size:14px;cursor:pointer}#${TRACKER_ID}>header button:hover{background:#21483b;border-color:#65dda5}.pgp-track-berry{display:grid;place-items:center;width:40px;height:40px;border:1px solid #3d6951;border-radius:7px;background:#081612}.pgp-track-berry img{width:34px;height:34px;object-fit:contain}.pgp-track-progress{position:relative;flex:0 0 13px;height:13px;margin:8px;border-radius:5px;background:#1d3540;overflow:hidden}.pgp-track-progress span{display:block;height:100%;background:linear-gradient(90deg,#39c982,#78e9ad)}.pgp-track-progress b{position:absolute;inset:0;display:grid;place-items:center;color:#f5fff9;font-size:7px;text-shadow:0 1px 2px #000}.pgp-track-list{display:grid;align-content:start;flex:1 1 auto;gap:4px;min-height:0;overflow:auto;padding:0 8px 7px;scrollbar-width:thin}.pgp-track-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:7px;padding:5px;border:1px solid #253f4f;border-radius:6px;background:#0f2130}.pgp-track-row.done{border-color:#275f46;background:#102b24}.pgp-track-row>span{display:grid;place-items:center;width:31px;height:31px;border-radius:5px;background:#07131d}.pgp-track-row img{width:27px;height:27px;object-fit:contain}.pgp-track-row strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px}.pgp-track-row small{display:block;color:#7f9bad;font-size:8px}.pgp-track-row em{color:#ff9a8e;font-size:8px;font-style:normal;font-weight:800;white-space:nowrap}.pgp-track-row.done em{color:#66e3a3}#${TRACKER_ID}>footer{flex:0 0 auto;padding:6px 8px;border-top:1px solid #233d4d;color:#7896a9;font-size:7px;text-align:center}#${TRACKER_ID}.complete>footer{color:#6de3a7}.pgp-tracker-orb{position:relative;display:grid;place-items:center;width:50px;height:50px;border:1px solid #58d296;border-radius:12px;background:#102a24;box-shadow:0 8px 26px rgba(0,0,0,.45);cursor:grab;touch-action:none}.pgp-tracker-orb:active{cursor:grabbing}.pgp-tracker-orb:hover{background:#173b31;transform:translateY(-1px)}.pgp-tracker-orb img{width:39px;height:39px;object-fit:contain;pointer-events:none}.pgp-tracker-orb>span{position:absolute;right:-7px;top:-7px;min-width:23px;padding:3px;border:1px solid #446b58;border-radius:10px;background:#0b1724;color:#75e8ad;font-size:7px;font-weight:900;pointer-events:none}
             @media(max-width:850px){#${PANEL_ID}{padding:6px}.pgp-window{width:100%;height:98vh;border-radius:10px}.pgp-layout{grid-template-columns:1fr}.pgp-catalog{max-height:45vh}.pgp-detail{border-left:0;border-top:1px solid #294052}.pgp-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.pgp-status{overflow-x:auto}.pgp-status span{white-space:nowrap}.pgp-status .warn,.pgp-status .live{margin-left:0}.pgp-detail{padding-bottom:max(13px,env(safe-area-inset-bottom))}}
