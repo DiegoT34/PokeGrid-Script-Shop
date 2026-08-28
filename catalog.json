@@ -1,7 +1,38 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-27T23:01:33Z",
+    "updatedAt":  "2026-08-28T06:58:47Z",
     "scripts":  [
+                    {
+                        "id":  "breeding-center-calculator",
+                        "name":  "Breeding Center - Breeding calculator",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "3.0.1",
+                        "author":  "Phoslead / DiegoT34",
+                        "summary":  "Calculadora y planificador para el centro de crianza.",
+                        "description":  "Analiza los Pokémon disponibles para proponer padres compatibles, calidad, IVs, resultados del huevo y precios relacionados.",
+                        "category":  "Crianza",
+                        "tags":  [
+                                     "breeding",
+                                     "crianza",
+                                     "calculadora",
+                                     "ivs"
+                                 ],
+                        "games":  [
+                                      "Poke Idle World"
+                                  ],
+                        "permissions":  [
+                                            "Lee Pokémon visibles del centro de crianza",
+                                            "Calcula combinaciones y recomendaciones de padres"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/breeding-center-calculator.user.js",
+                        "sha256":  "084d3479810a08028c802da4642302f33e15c01dbc0648f892b6c77ff5e9cbcb",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Actualización 3.0.1",
+                        "icon":  "🥚",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T17:55:40Z"
+                    },
                     {
                         "id":  "poke-idle-world-profesiones-es-y-asistente-botanica",
                         "name":  "Poke Idle World - Profesiones ES y Asistente Botánica",
@@ -137,34 +168,6 @@
                         "icon":  "🧩",
                         "featured":  false,
                         "publishedAt":  "2026-08-24T22:08:23Z"
-                    },
-                    {
-                        "id":  "breeding-center-calculator",
-                        "name":  "Breeding Center - Breeding calculator",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "2.7.0",
-                        "author":  "Phoslead / DiegoT34",
-                        "summary":  "Calculadora y planificador para el centro de crianza.",
-                        "description":  "Analiza los Pokémon disponibles para proponer padres compatibles, calidad, IVs, resultados del huevo y precios relacionados.",
-                        "category":  "Crianza",
-                        "tags":  [
-                                     "breeding",
-                                     "crianza",
-                                     "calculadora",
-                                     "ivs"
-                                 ],
-                        "permissions":  [
-                                            "Lee Pokémon visibles del centro de crianza",
-                                            "Calcula combinaciones y recomendaciones de padres"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/breeding-center-calculator.user.js",
-                        "sha256":  "69b133ae480e9e268d311b627604988f4bf700ab1f3ba7b5845912a3724bca32",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 2.7.0",
-                        "icon":  "🥚",
-                        "featured":  false,
-                        "publishedAt":  "2026-08-24T17:55:40Z"
                     },
                     {
                         "id":  "telegram-alerts",

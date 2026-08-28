@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Breeding Center - Breeding calculator
 // @namespace    http://tampermonkey.net/
-// @version      2.7.0
-// @description  Optimized breeding planner with limited recommendations, unrestricted lower IVs, egg preview and live pheromone market price
+// @version      3.0.1
+// @description  Asistente de crianza en español con recomendaciones ordenadas, recarga real, Hunt Analyzer e identificación de huevos
 // @author       Phoslead
 // @match        https://poke.idleworld.online/*
 // @grant        none
@@ -10,6 +10,62 @@
 
 (function() {
     'use strict';
+
+    const BreedingNativeWebSocket = window.WebSocket;
+    const breedingNativeSocketSend = BreedingNativeWebSocket?.prototype?.send;
+    let breedingGameSocket = null;
+    let latestBreedingInventory = [];
+    const breedingSocketWaiters = new Map();
+
+    function handleBreedingSocketMessage(event) {
+        let message;
+        try { message = JSON.parse(event.data); } catch (_) { return; }
+        if (message?.type === 'inventory') latestBreedingInventory = Array.isArray(message.items) ? message.items : [];
+        try { syncIncubationsFromSocketMessage(message); } catch (_) {}
+        const waiters = breedingSocketWaiters.get(message?.type);
+        if (!waiters?.length) return;
+        breedingSocketWaiters.delete(message.type);
+        waiters.forEach(resolve => resolve(message));
+    }
+
+    function trackBreedingGameSocket(socket) {
+        if (!socket || !String(socket.url || '').includes('/ws')) return socket;
+        breedingGameSocket = socket;
+        if (!socket.__breedingCalculatorTracked) {
+            try { Object.defineProperty(socket, '__breedingCalculatorTracked', { value:true }); } catch (_) {}
+            socket.addEventListener('message', handleBreedingSocketMessage);
+            socket.addEventListener('close', () => { if (breedingGameSocket === socket) breedingGameSocket = null; });
+        }
+        return socket;
+    }
+
+    if (typeof breedingNativeSocketSend === 'function') {
+        BreedingNativeWebSocket.prototype.send = function(data) {
+            trackBreedingGameSocket(this);
+            return breedingNativeSocketSend.call(this, data);
+        };
+    }
+
+    function requestBreedingSocketEvent(responseType, request, timeoutMs = 3000) {
+        if (!breedingGameSocket || breedingGameSocket.readyState !== BreedingNativeWebSocket.OPEN) return Promise.resolve(null);
+        return new Promise(resolve => {
+            const pending = breedingSocketWaiters.get(responseType) || [];
+            const finish = message => resolve(message || null);
+            pending.push(finish);
+            breedingSocketWaiters.set(responseType, pending);
+            try { breedingGameSocket.send(JSON.stringify(request)); }
+            catch (_) {
+                breedingSocketWaiters.set(responseType, pending.filter(waiter => waiter !== finish));
+                resolve(null);
+                return;
+            }
+            setTimeout(() => {
+                const current = breedingSocketWaiters.get(responseType) || [];
+                breedingSocketWaiters.set(responseType, current.filter(waiter => waiter !== finish));
+                resolve(null);
+            }, timeoutMs);
+        });
+    }
 
     // Base Configuration
     const COST_PER_BREED_GOLD = 2000000;
@@ -21,6 +77,7 @@
     const PHEROMONE_MARKET_REFRESH_MS = 60000;
     const PHEROMONE_MARKET_RETRY_MS = 15000;
     const RECOMMENDATION_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
+    const HUNT_KILLS_STORAGE_KEY = 'breeding_calculator_hunt_kills_per_hour_v1';
 
     // Growth Rates: Average vs Minimum
     const GROWTH_RATES = {
@@ -30,14 +87,14 @@
 
     // Quality Tiers
     const QUALITY_TIERS = [
-        { label: 'Common', min: 1.0 },
-        { label: 'Uncommon', min: 1.1 },
-        { label: 'Rare', min: 1.3 },
-        { label: 'Epic', min: 1.5 },
-        { label: 'Legendary', min: 1.7 },
-        { label: 'Mythic', min: 2.0 },
-        { label: 'Ancient', min: 3.0 },
-        { label: 'Divine', min: 4.0 }
+        { label: 'Común', min: 1.0 },
+        { label: 'Poco común', min: 1.1 },
+        { label: 'Raro', min: 1.3 },
+        { label: 'Épico', min: 1.5 },
+        { label: 'Legendario', min: 1.7 },
+        { label: 'Mítico', min: 2.0 },
+        { label: 'Ancestral', min: 3.0 },
+        { label: 'Divino', min: 4.0 }
     ];
 
     // Dynamic Color Based on Quality (Q)
@@ -60,7 +117,7 @@
                 return QUALITY_TIERS[i].label;
             }
         }
-        return 'Weak';
+        return 'Débil';
     }
 
     // Dynamic Formatter for Kills
@@ -95,6 +152,52 @@
         simParent2Q: 1.0,
         simParent2QRaw: '1'
     };
+    settings.killsPerHour = Math.max(0, Number(sessionStorage.getItem(HUNT_KILLS_STORAGE_KEY)) || 0);
+
+    let lastHuntAnalyzerReadAt = 0;
+    function parseHuntDurationSeconds(value) {
+        const text = String(value || '').toLocaleLowerCase();
+        const hours = Number(text.match(/(\d+)\s*h/)?.[1] || 0);
+        const minutes = Number(text.match(/(\d+)\s*m/)?.[1] || 0);
+        const seconds = Number(text.match(/(\d+)\s*s/)?.[1] || 0);
+        return hours * 3600 + minutes * 60 + seconds;
+    }
+
+    function readHuntAnalyzerKillsPerHour() {
+        const analyzer = document.querySelector('.ha-window:not(.ha-compare-modal), [data-hunt-analyzer]:not(.ha-compare-modal)');
+        if (!analyzer) return 0;
+        const rates = analyzer.querySelector('.ha-rates');
+        if (rates) {
+            const spans = Array.from(rates.querySelectorAll('span:not(.ha-catch-stats)'));
+            const labelled = spans.find(node => /kills?\s*\/\s*h|derrotad(?:os|as).*hora|abatid(?:os|as).*hora/i.test(node.textContent || ''));
+            const source = labelled || spans[2];
+            const value = Number(String(source?.textContent || '').replace(/[.,\s]/g, '').replace(/[^0-9]/g, ''));
+            if (Number.isFinite(value) && value > 0) return value;
+        }
+        const labelledNode = Array.from(analyzer.querySelectorAll('div,span,b,small')).find(node =>
+            /kills?\s*\/\s*h|derrotad(?:os|as).*hora|abatid(?:os|as).*hora/i.test(node.textContent || '')
+        );
+        if (labelledNode) {
+            const value = Number(String(labelledNode.textContent || '').replace(/[.,\s]/g, '').replace(/[^0-9]/g, ''));
+            if (Number.isFinite(value) && value > 0) return value;
+        }
+        const cards = analyzer.querySelectorAll('.ha-card b');
+        const defeated = Number(String(cards[0]?.textContent || '').replace(/[.,\s]/g, '').replace(/[^0-9]/g, ''));
+        const seconds = parseHuntDurationSeconds(cards[1]?.textContent || '');
+        return defeated > 0 && seconds > 0 ? Math.round(defeated * 3600 / seconds) : 0;
+    }
+
+    function syncHuntAnalyzerKillsPerHour(force = false) {
+        if (!force && Date.now() - lastHuntAnalyzerReadAt < 1000) return settings.killsPerHour;
+        lastHuntAnalyzerReadAt = Date.now();
+        const current = readHuntAnalyzerKillsPerHour();
+        if (current > 0 && current !== settings.killsPerHour) {
+            settings.killsPerHour = current;
+            sessionStorage.setItem(HUNT_KILLS_STORAGE_KEY, String(current));
+            lastStateSignature = '';
+        }
+        return settings.killsPerHour;
+    }
 
     // 1. Custom CSS Injection
     const customStyles = `
@@ -583,9 +686,18 @@
         .brd-advisor-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; max-height:240px; overflow:auto; padding-right:2px; }.brd-advisor-card { display:grid; grid-template-columns:34px minmax(0,1fr); gap:6px; align-items:center; }
         .brd-advisor-card.recommended { border-color:#64da93; background:linear-gradient(145deg,#10271d,#0b1414); }.brd-advisor-sprite { width:34px; height:34px; object-fit:contain; image-rendering:pixelated; }.brd-advisor-name { overflow:hidden; color:#f5f7f8; font-size:10px; font-weight:900; text-overflow:ellipsis; white-space:nowrap; }.brd-advisor-meta { margin-top:3px; color:#9db2bd; font-size:9px; }.brd-advisor-tag { display:inline-block; margin-top:4px; padding:1px 4px; border:1px solid #49bb76; border-radius:3px; color:#7ff5ac; font-size:8px; font-weight:900; }
         .brd-native-advisor-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:7px; margin:6px 0; padding:6px 7px; border:1px solid #356b67; border-radius:6px; background:#0d2022; color:#a9f5d7; font-size:9px; font-weight:800; line-height:1.25; }.brd-native-advisor-bar > span { min-width:180px; flex:1 1 260px; }.brd-native-advisor-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex:0 1 auto; }.brd-recommendation-filter { display:inline-flex; align-items:center; gap:5px; color:#9fc0cc; white-space:nowrap; }.brd-recommendation-limit { min-width:74px; height:25px; padding:2px 21px 2px 7px; border:1px solid #426879; border-radius:5px; outline:none; background:#0a171e; color:#dff7ff; font:800 9px system-ui,sans-serif; cursor:pointer; }.brd-recommendation-limit:focus-visible { border-color:#69cbe5; }.brd-native-advisor-bar .brd-helper-refresh { flex:none; }
-        .brd-breed-recommended { outline:1px solid #4fa9c2 !important; outline-offset:-1px; box-shadow:none !important; filter:none !important; animation:none !important; transition:none !important; }.brd-breed-recommended.brd-breed-best { outline:2px solid #d7b647 !important; outline-offset:-2px; box-shadow:none !important; }.brd-breed-hidden { display:none !important; }
+        .brd-breed-recommended { position:relative !important; outline:2px solid #42d58a !important; outline-offset:-2px; box-shadow:inset 0 0 0 1px #07150d !important; filter:none !important; animation:none !important; transition:border-color .15s ease !important; }.brd-breed-recommended.brd-breed-best { outline:3px solid #ffd45c !important; outline-offset:-3px; box-shadow:inset 0 0 0 1px #5f4a12 !important; }.brd-breed-hidden { display:none !important; }
         .brd-no-secondary-message { margin:7px 0; padding:9px; border:1px solid #c98b56; border-radius:6px; background:#291b12; color:#ffd1a7; font-size:10px; font-weight:800; line-height:1.35; }
         .brd-egg-helper-info { display:block; margin-top:4px; padding-top:4px; border-top:1px solid #d7b85e44; color:#dfeef2; font-size:9px; font-weight:750; line-height:1.35; }.brd-egg-helper-info b { color:#f3d681; }.brd-egg-helper-info em { color:#86e7bd; font-style:normal; }
+        .brd-helper-panel,.brd-native-advisor-bar { border-color:#735b2c; background:linear-gradient(145deg,#132219,#09110d); box-shadow:inset 0 1px #fff8,0 4px 12px #0007; color:#eadfbf; }
+        .brd-native-advisor-bar { border-left:3px solid #c8a24d; }
+        .brd-helper-refresh { color:#f2df9f; background:#1c291e; border-color:#806832; }.brd-helper-refresh:hover { color:#171006; background:#d1af58; }
+        .brd-recommendation-limit { color:#f0e4c8; background:#0a120e; border-color:#65532d; }.brd-recommendation-limit:focus-visible { border-color:#d7b75f; }
+        .brd-breed-recommended { outline-color:#42d58a !important; }.brd-breed-recommended.brd-breed-best { outline-color:#ffd45c !important; }
+        .brd-auto-source { padding:2px 5px; color:#83d9ad; background:#0b2619; border:1px solid #38694d; border-radius:3px; font-size:8px; font-weight:850; }
+        #killsPerHourInput[readonly] { color:#8de0b3; background:#07150e; border-color:#315d43; cursor:default; }
+        .brd-dock-incubation-button { position:relative !important; overflow:visible !important; }
+        .game-dock > * > span.brd-dock-incubation-badge { position:absolute !important; z-index:130 !important; top:-5px !important; right:-5px !important; display:grid !important; place-items:center !important; width:auto !important; min-width:17px !important; max-width:30px !important; height:17px !important; padding:0 4px !important; margin:0 !important; border:2px solid #0a1118 !important; border-radius:9px !important; background:#ffca3a !important; color:#241800 !important; font:900 10px/1 system-ui,sans-serif !important; box-shadow:0 2px 5px #0009 !important; pointer-events:none !important; }
         @media (max-width:760px) { .brd-inheritance-flow { grid-template-columns:1fr; }.brd-flow-arrow { height:14px; transform:rotate(90deg); }.brd-advisor-list { grid-template-columns:1fr; max-height:210px; } }
     `;
     const advisorStyleEl = document.createElement('style');
@@ -599,6 +711,20 @@
     let advisorSignature = '';
     let lastStateSignature = '';
     let recommendationLimit = 10;
+    const EGG_PARENT_STORAGE_KEY = 'breeding_calculator_egg_parents_v1';
+    const INCUBATION_STORAGE_KEY = 'breeding_calculator_incubations_v1';
+    const eggNodeParents = new WeakMap();
+    let lastSelectedParentOne = null;
+    let storedEggParents = (() => {
+        try { return JSON.parse(localStorage.getItem(EGG_PARENT_STORAGE_KEY) || '{}') || {}; }
+        catch (_) { return {}; }
+    })();
+    let trackedIncubations = (() => {
+        try { return JSON.parse(localStorage.getItem(INCUBATION_STORAGE_KEY) || '{}') || {}; }
+        catch (_) { return {}; }
+    })();
+    let lastIncubationDomSyncAt = 0;
+    let rememberedBreedingDockButton = null;
     let pheromoneMarketRefreshPromise = null;
     let pheromoneMarket = {
         status: 'loading',
@@ -806,27 +932,72 @@
         };
     }
 
-    function requestPokemonListFromGameContext(timeoutMs = 2200) {
-        const hud = document.querySelector('.phud-name, .phud');
-        const fiberKey = hud && Object.keys(hud).find(key => key.startsWith('__reactFiber$'));
-        let fiber = fiberKey ? hud[fiberKey] : null;
-        let context = null;
-        for (let depth = 0; fiber && depth < 40; depth += 1, fiber = fiber.return) {
-            const value = fiber.memoizedProps?.value;
-            if (value && typeof value.subscribe === 'function' && typeof value.requestPokes === 'function') { context = value; break; }
+    function getBreedingGameContext() {
+        const roots = Array.from(document.querySelectorAll('.phud-name, .phud, [data-guide="player-hud"], #root'));
+        for (const root of roots) {
+            const fiberKey = Object.keys(root).find(key => key.startsWith('__reactFiber$'));
+            let fiber = fiberKey ? root[fiberKey] : null;
+            for (let depth = 0; fiber && depth < 80; depth += 1, fiber = fiber.return) {
+                const candidates = [fiber.memoizedProps?.value, fiber.memoizedProps, fiber.memoizedState?.memoizedState];
+                const context = candidates.find(value => value && typeof value.subscribe === 'function'
+                    && (typeof value.requestPokes === 'function' || typeof value.requestInventory === 'function'));
+                if (context) return context;
+            }
         }
-        if (!context) return Promise.resolve([]);
+        return null;
+    }
+
+    function requestPokemonListFromGameContext(timeoutMs = 2600) {
+        const context = getBreedingGameContext();
+        if (!context || typeof context.requestPokes !== 'function') return Promise.resolve([]);
         return new Promise(resolve => {
             let settled = false; let unsubscribe = null;
             const finish = list => { if (settled) return; settled = true; clearTimeout(timeout); try { unsubscribe?.(); } catch (_) {} resolve(Array.isArray(list) ? list : []); };
             const timeout = setTimeout(() => finish([]), timeoutMs);
-            try { unsubscribe = context.subscribe('pokes', message => finish(message?.list)); context.requestPokes(); } catch (_) { finish([]); }
+            try { unsubscribe = context.subscribe('pokes', message => finish(message?.list ?? message)); context.requestPokes(); } catch (_) { finish([]); }
+        });
+    }
+
+    async function requestFreshPokemonList() {
+        const socketMessage = await requestBreedingSocketEvent('pokes', { type:'pokes-get' }, 2800);
+        const socketList = socketMessage?.list;
+        if (Array.isArray(socketList) && socketList.length) return socketList;
+        return requestPokemonListFromGameContext(3000);
+    }
+
+    async function refreshBreedingInventory() {
+        const socketMessage = await requestBreedingSocketEvent('inventory', { type:'inv-get' }, 2600);
+        if (Array.isArray(socketMessage?.items)) {
+            latestBreedingInventory = socketMessage.items;
+            return latestBreedingInventory;
+        }
+        const context = getBreedingGameContext();
+        const requestInventory = context?.requestInventory || context?.requestInv || context?.requestItems;
+        if (!context || typeof requestInventory !== 'function') return latestBreedingInventory;
+        return new Promise(resolve => {
+            let settled = false; let unsubscribe = null;
+            const finish = list => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                try { unsubscribe?.(); } catch (_) {}
+                if (Array.isArray(list)) latestBreedingInventory = list;
+                resolve(latestBreedingInventory);
+            };
+            const timeout = setTimeout(() => finish([]), 2800);
+            try {
+                unsubscribe = context.subscribe('inventory', message => finish(message?.items ?? message));
+                requestInventory.call(context);
+            } catch (_) { finish([]); }
         });
     }
 
     async function refreshAvailablePokemon(force = false) {
-        if (pokemonRefreshPromise && !force) return pokemonRefreshPromise;
-        pokemonRefreshPromise = requestPokemonListFromGameContext().then(list => {
+        if (pokemonRefreshPromise) {
+            if (!force) return pokemonRefreshPromise;
+            await pokemonRefreshPromise;
+        }
+        pokemonRefreshPromise = requestFreshPokemonList().then(list => {
             if (list.length) {
                 const normalized = list.map(normalizePokemon);
                 const nextSignature = normalized.map(pokemon => [
@@ -843,9 +1014,10 @@
                     availablePokemonVersion += 1;
                     lastStateSignature = '';
                 }
+                return { pokemon:availablePokemon, refreshed:true };
             }
-            return availablePokemon;
-        }).catch(() => availablePokemon).finally(() => { pokemonRefreshPromise = null; });
+            return { pokemon:availablePokemon, refreshed:false };
+        }).catch(() => ({ pokemon:availablePokemon, refreshed:false })).finally(() => { pokemonRefreshPromise = null; });
         return pokemonRefreshPromise;
     }
 
@@ -864,6 +1036,95 @@
         const labels = Array.from(document.querySelectorAll('.brd-title, .brd-col-title, .brd-head, h2, h3, b, strong'));
         const found = labels.find(node => node.textContent?.trim().toLowerCase().includes(label.toLowerCase()));
         return found?.closest('.brd-col, .brd-section, .brd-panel, .brd-box') || null;
+    }
+
+    const BREEDING_UI_TRANSLATIONS = [
+        [/\bBreeding Center\b/gi, 'Centro de crianza'], [/\bCentro de Cria(?:ç|c)ão\b/gi, 'Centro de crianza'],
+        [/\bBreeding Pair\b/gi, 'Pareja de crianza'], [/\bPar de Cria(?:ç|c)ão\b/gi, 'Pareja de crianza'],
+        [/\bYour Pok[eé]mon\s*\(Box\)/gi, 'Tus Pokémon (Caja)'], [/\bSeus Pok[eé]mon\s*\(Caixa\)/gi, 'Tus Pokémon (Caja)'],
+        [/\bYour Pok[eé]mon\b/gi, 'Tus Pokémon'], [/\bSeus Pok[eé]mon\b/gi, 'Tus Pokémon'], [/\(BOX\)/g, '(CAJA)'],
+        [/\bPok[eé]mon Box\b/gi, 'Caja de Pokémon'], [/\bCaixa de Pok[eé]mon\b/gi, 'Caja de Pokémon'],
+        [/\bIncubator\b/gi, 'Incubadora'], [/\bMystery Egg\b/gi, 'Huevo misterioso'], [/\bOvo Misterioso\b/gi, 'Huevo misterioso'],
+        [/\bFirst Parent\b/gi, 'Padre 1'], [/\bPrimeiro Pai\b/gi, 'Padre 1'],
+        [/\bSecond Parent\b/gi, 'Padre 2'], [/\bSegundo Pai\b/gi, 'Padre 2'],
+        [/\bParent 1\b/gi, 'Padre 1'], [/\bParent 2\b/gi, 'Padre 2'],
+        [/\bSelect (?:the )?first parent\b/gi, 'Selecciona el Padre 1'], [/\bSelecione (?:o )?primeiro pai\b/gi, 'Selecciona el Padre 1'],
+        [/\bSelect (?:the )?second parent\b/gi, 'Selecciona el Padre 2'], [/\bSelecione (?:o )?segundo pai\b/gi, 'Selecciona el Padre 2'],
+        [/\bSelect (?:a )?Pok[eé]mon\b/gi, 'Selecciona un Pokémon'], [/\bSelecione (?:um )?Pok[eé]mon\b/gi, 'Selecciona un Pokémon'],
+        [/\bSearch Pok[eé]mon\b/gi, 'Buscar Pokémon'], [/\bSearch\.\.\./gi, 'Buscar...'], [/\bBuscar Pok[eé]mon\b/gi, 'Buscar Pokémon'],
+        [/\bStart Breeding\b/gi, 'Iniciar crianza'], [/\bIniciar Cria(?:ç|c)ão\b/gi, 'Iniciar crianza'],
+        [/^\s*Breed\s*$/gi, 'Criar'], [/^\s*Reproduzir\s*$/gi, 'Criar'],
+        [/^\s*Free\s*$/gi, 'Gratuito'], [/^\s*Gr[aá]tis\s*$/gi, 'Gratuito'],
+        [/\bRequired Stones\b/gi, 'Stones necesarias'], [/\bStones Necess[aá]rias\b/gi, 'Stones necesarias'],
+        [/\bDouble Stones\b/gi, 'Stones dobles'], [/\bStones Duplas\b/gi, 'Stones dobles'],
+        [/\bNo eggs? incubating\b/gi, 'No hay huevos incubándose'], [/\bNenhum ovo incubando\b/gi, 'No hay huevos incubándose'],
+        [/^\s*Ready\s*$/gi, 'Listo'], [/^\s*Pronto\s*$/gi, 'Listo'], [/^\s*Hatch\s*$/gi, 'Eclosionar'], [/^\s*Chocar\s*$/gi, 'Eclosionar'],
+        [/\bTime Remaining\b/gi, 'Tiempo restante'], [/\bTempo Restante\b/gi, 'Tiempo restante'],
+        [/\bChoose a path\b/gi, 'Elige una modalidad'], [/\bEscolha um caminho\b/gi, 'Elige una modalidad'],
+        [/\bChance per breed\b/gi, 'Probabilidad por crianza'], [/\bChance por cria(?:ç|c)ão\b/gi, 'Probabilidad por crianza'],
+        [/\bSuccess Chance\b/gi, 'Probabilidad de éxito'], [/\bChance de Sucesso\b/gi, 'Probabilidad de éxito'],
+        [/\bBreeding Mode\b/gi, 'Modalidad de crianza'], [/\bModo de Cria(?:ç|c)ão\b/gi, 'Modalidad de crianza'],
+        [/^\s*Confirm\s*$/gi, 'Confirmar'], [/^\s*Confirmar\s*$/gi, 'Confirmar'],
+        [/^\s*Cancel\s*$/gi, 'Cancelar'], [/^\s*Cancelar\s*$/gi, 'Cancelar'],
+        [/^\s*Close\s*$/gi, 'Cerrar'], [/^\s*Fechar\s*$/gi, 'Cerrar'],
+        [/^\s*Result\s*$/gi, 'Resultado'], [/^\s*Resultado\s*$/gi, 'Resultado'],
+        [/^\s*Duration\s*$/gi, 'Duración'], [/^\s*Dura(?:ç|c)ão\s*$/gi, 'Duración'],
+        [/^\s*Cost\s*$/gi, 'Costo'], [/^\s*Custo\s*$/gi, 'Costo'],
+        [/^\s*Available\s*$/gi, 'Disponible'], [/^\s*Dispon[ií]vel\s*$/gi, 'Disponible'],
+        [/Pick another (.+?) within\s*([\d.,]+)\s*quality\s*\(incompatible pairs are dimmed\)\.?/gi, 'Elige otro $1 con una diferencia máxima de $2 de Quality (las parejas incompatibles aparecen atenuadas).'],
+        [/Escolha outro (.+?) com Quality at[eé]\s*([\d.,]+)\s*menor\s*\(pares incompat[ií]veis ficam esmaecidos\)\.?/gi, 'Elige otro $1 con una diferencia máxima de $2 de Quality (las parejas incompatibles aparecen atenuadas).'],
+        [/\bIncompatible pairs are dimmed\b/gi, 'Las parejas incompatibles aparecen atenuadas'],
+        [/\bHighest Quality\b/gi, 'Mayor Quality'], [/\bLowest Quality\b/gi, 'Menor Quality'],
+        [/\bHighest IV\b/gi, 'Mayor IV'], [/\bLowest IV\b/gi, 'Menor IV'],
+        [/\bNewest first\b/gi, 'Más recientes'], [/\bOldest first\b/gi, 'Más antiguos'],
+        [/\bSort by\b/gi, 'Ordenar por'], [/\bSelected parent\b/gi, 'Padre seleccionado'],
+        [/\bCompatible\b/gi, 'Compatible'], [/\bIncompatible\b/gi, 'Incompatible'],
+        [/\bEgg ready\b/gi, 'Huevo listo'], [/\bIncubation complete\b/gi, 'Incubación finalizada'],
+        [/\bIncubating\b/gi, 'Incubando'], [/\bProgress\b/gi, 'Progreso'],
+        [/\bNo Pok[eé]mon available\b/gi, 'No hay Pokémon disponibles'],
+        [/\bNo compatible Pok[eé]mon\b/gi, 'No hay Pokémon compatibles'],
+        [/\bSelect breeding mode\b/gi, 'Selecciona la modalidad de crianza'],
+        [/\bUse Pheromones\b/gi, 'Usar Pheromones'], [/\bWithout Pheromones\b/gi, 'Sin Pheromones'],
+        [/\bSearch by name\b/gi, 'Buscar por nombre'], [/\bRemove parent\b/gi, 'Quitar padre'],
+        [/\bClear pair\b/gi, 'Limpiar pareja'], [/\bCurrent pair\b/gi, 'Pareja actual'],
+        [/\bBreeding result\b/gi, 'Resultado de la crianza'], [/\bExpected result\b/gi, 'Resultado esperado'],
+        [/\bExpected Quality\b/gi, 'Quality esperada'], [/\bInherited IV\b/gi, 'IV heredado'],
+        [/\bIncubation slots?\b/gi, 'Espacios de incubación'], [/\bEmpty slot\b/gi, 'Espacio vacío'],
+        [/\bOpen egg\b/gi, 'Abrir huevo'], [/\bCollect\b/gi, 'Recoger'], [/\bClaim\b/gi, 'Reclamar'],
+        [/\bReady in\b/gi, 'Listo en'], [/\bBreeding fee\b/gi, 'Tarifa de crianza'],
+        [/\bCost per breed\b/gi, 'Costo por crianza'], [/\bTotal cost\b/gi, 'Costo total'],
+        [/\bNot enough\b/gi, 'No hay suficiente'], [/\bInsufficient\b/gi, 'Insuficiente'],
+        [/^\s*Owned\s*$/gi, 'Disponibles'], [/^\s*Required\s*$/gi, 'Necesarios'],
+        [/\bRemaining\b/gi, 'Restante'], [/\bCompleted\b/gi, 'Finalizado'],
+        [/\bCurrent\b/gi, 'Actual'], [/\bNext\b/gi, 'Siguiente'], [/\bBack\b/gi, 'Volver']
+    ];
+    let lastBreedingTranslationAt = 0;
+    function translateBreedingText(value) {
+        return BREEDING_UI_TRANSLATIONS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), String(value || ''));
+    }
+    function translateBreedingInterface(pairSection, force = false) {
+        if (!force && Date.now() - lastBreedingTranslationAt < 600) return;
+        lastBreedingTranslationAt = Date.now();
+        const root = pairSection?.closest('.brd-window, .brd-modal, [class*="breeding"][role="dialog"], [role="dialog"]')
+            || pairSection?.parentElement?.parentElement || pairSection;
+        if (!root) return;
+        const excluded = '.brd-poke-name,.brd-parent-name,.brd-stone-name,.brd-item-name,.brd-egg-helper-info,[data-pokemon-name],[data-item-name]';
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(node => {
+            if (node.parentElement?.closest(excluded)) return;
+            const translated = translateBreedingText(node.nodeValue);
+            if (translated !== node.nodeValue) node.nodeValue = translated;
+        });
+        root.querySelectorAll('input[placeholder],button[title],[title]').forEach(element => {
+            for (const attribute of ['placeholder', 'title']) {
+                if (!element.hasAttribute(attribute) || element.closest(excluded)) continue;
+                const current = element.getAttribute(attribute);
+                const translated = translateBreedingText(current);
+                if (translated !== current) element.setAttribute(attribute, translated);
+            }
+        });
     }
 
     function pokemonSprite(pokemon) {
@@ -914,9 +1175,21 @@
             return isSamePokemonSpecies(keeper, pokemon)
                 && !pokemon.team && !pokemon.starter && !pokemon.shiny && !pokemon.market && !pokemon.locked
                 && String(pokemon.id) !== String(keeper.id)
+                && !isSameVisibleCapture(keeper, pokemon)
                 && isSecondParentWithinNumericLimits(keeper, pokemon);
-        // El menor Quality válido ahorra material; a igualdad, menor IV primero.
-        }).sort((a, b) => (a.qVal - b.qVal) || (a.ivVal - b.ivVal));
+        // El menor Quality válido ahorra material; a igualdad se prioriza el IV más alto.
+        }).sort((a, b) => (a.qVal - b.qVal) || (b.ivVal - a.ivVal) || String(a.id).localeCompare(String(b.id)));
+    }
+
+    function isSameVisibleCapture(keeper, pokemon) {
+        if (!keeper || !pokemon) return false;
+        if (keeper.id !== '' && keeper.id != null && pokemon.id !== '' && pokemon.id != null
+            && String(keeper.id) === String(pokemon.id)) return true;
+        // El juego redondea Quality en la tarjeta. La captura seleccionada puede llegar
+        // por API con unas decimas adicionales y parecia falsamente "menor" que ella misma.
+        return isSamePokemonSpecies(keeper, pokemon)
+            && Number(keeper.ivVal) === Number(pokemon.ivVal)
+            && Math.abs(Number(keeper.qVal) - Number(pokemon.qVal)) < 0.001;
     }
 
     function isSecondParentWithinNumericLimits(keeper, pokemon) {
@@ -936,12 +1209,15 @@
     }
 
     function getNativePokemonCards(boxArea) {
-        return Array.from(boxArea.querySelectorAll('[data-poke-id], [data-id], .brd-poke, .brd-poke-item, .brd-box-poke, .brd-select-poke, button, li'))
+        const candidates = Array.from(boxArea.querySelectorAll('[data-poke-id], [data-id], .brd-poke, .brd-poke-item, .brd-box-poke, .brd-select-poke, button, li'))
             .filter(node => !node.closest('.brd-native-advisor-bar') && /\bIV\s*\d+/i.test(node.innerText || ''));
+        // React puede exponer a la vez la tarjeta y su botón interno. Conservar solo
+        // el nodo más profundo evita contar y mostrar dos veces al mismo Pokémon.
+        return candidates.filter(node => !candidates.some(other => other !== node && node.contains(other)));
     }
 
     function nativeCardMatchesPokemon(card, pokemon) {
-        const id = card.dataset.pokeId || card.dataset.id || card.dataset.capturedId;
+        const id = getNodePokemonId(card);
         if (id && String(id) === String(pokemon.id)) return true;
         const text = card.innerText || '';
         if (!text.toLocaleLowerCase().includes(String(pokemon.name).toLocaleLowerCase())) return false;
@@ -950,8 +1226,17 @@
         return (!iv || Number(iv) === pokemon.ivVal) && (!q || Math.abs(Number(q.replace(',', '.')) - pokemon.qVal) < 0.011);
     }
 
+    function getNodePokemonId(node) {
+        if (!node || typeof node !== 'object') return '';
+        const direct = node.dataset?.pokeId || node.dataset?.pokemonId || node.dataset?.capturedId || node.dataset?.id || '';
+        if (typeof Element === 'undefined' || !(node instanceof Element)) return direct;
+        const holder = node.matches('[data-poke-id],[data-pokemon-id],[data-captured-id],[data-id]')
+            ? node : node.querySelector('[data-poke-id],[data-pokemon-id],[data-captured-id],[data-id]');
+        return holder?.dataset?.pokeId || holder?.dataset?.pokemonId || holder?.dataset?.capturedId || holder?.dataset?.id || '';
+    }
+
     function recommendationStatsKey(iv, quality) {
-        return `${Number(iv)}|${Number(quality).toFixed(4)}`;
+        return `${Number(iv)}|${Number(quality).toFixed(3)}`;
     }
 
     function createRecommendationLookup(eligible) {
@@ -959,20 +1244,26 @@
         const byStats = new Map();
         const byIv = new Map();
         const byQuality = new Map();
+        const addIndex = (map, key, index) => map.set(key, [...(map.get(key) || []), index]);
         eligible.forEach((pokemon, index) => {
             if (pokemon.id !== '' && pokemon.id != null) byId.set(String(pokemon.id), index);
             const statsKey = recommendationStatsKey(pokemon.ivVal, pokemon.qVal);
-            if (!byStats.has(statsKey)) byStats.set(statsKey, index);
-            if (!byIv.has(Number(pokemon.ivVal))) byIv.set(Number(pokemon.ivVal), index);
-            const qualityKey = Number(pokemon.qVal).toFixed(4);
-            if (!byQuality.has(qualityKey)) byQuality.set(qualityKey, index);
+            addIndex(byStats, statsKey, index);
+            addIndex(byIv, Number(pokemon.ivVal), index);
+            const qualityKey = Number(pokemon.qVal).toFixed(3);
+            addIndex(byQuality, qualityKey, index);
         });
         return { eligible, byId, byStats, byIv, byQuality };
     }
 
-    function getNativeRecommendationIndex(card, lookup) {
-        const id = card.dataset.pokeId || card.dataset.id || card.dataset.capturedId;
-        if (id && lookup.byId.has(String(id))) return lookup.byId.get(String(id));
+    function getNativeRecommendationIndex(card, lookup, usedIndices = new Set()) {
+        const takeAvailable = indexes => (Array.isArray(indexes) ? indexes : [indexes])
+            .find(index => index != null && !usedIndices.has(index));
+        const id = getNodePokemonId(card);
+        if (id && lookup.byId.has(String(id))) {
+            const exactId = takeAvailable(lookup.byId.get(String(id)));
+            if (exactId != null) return exactId;
+        }
         const text = card.innerText || '';
         const species = lookup.eligible[0];
         if (!species || !text.toLocaleLowerCase().includes(String(species.name).toLocaleLowerCase())) return -1;
@@ -981,17 +1272,36 @@
         const iv = ivText == null ? null : Number(ivText);
         const quality = qualityText == null ? null : Number(qualityText.replace(',', '.'));
         if (iv != null && quality != null) {
-            const exact = lookup.byStats.get(recommendationStatsKey(iv, quality));
+            const exact = takeAvailable(lookup.byStats.get(recommendationStatsKey(iv, quality)) || []);
             if (exact != null) return exact;
+            // Si la tarjeta expone ambos valores y esa combinacion no es elegible, es
+            // incompatible. No debe aceptarse solo porque otro candidato comparta su IV.
+            return -1;
         }
-        if (iv != null && lookup.byIv.has(iv)) return lookup.byIv.get(iv);
-        if (quality != null) {
-            const qualityMatch = lookup.byQuality.get(quality.toFixed(4));
+        if (iv != null && quality == null && lookup.byIv.has(iv)) {
+            const ivMatch = takeAvailable(lookup.byIv.get(iv));
+            if (ivMatch != null) return ivMatch;
+        }
+        if (quality != null && iv == null) {
+            const qualityMatch = takeAvailable(lookup.byQuality.get(Number(quality).toFixed(3)) || []);
             if (qualityMatch != null) return qualityMatch;
         }
-        // Conserva el comportamiento tolerante anterior para tarjetas cuyo juego
-        // todavía no haya montado todos los atributos o textos estadísticos.
-        return nativeCardMatchesPokemon(card, lookup.eligible[0]) ? 0 : -1;
+        // Si React todavia no monto los atributos estadisticos, asigna la siguiente
+        // posicion libre de la especie. Nunca reutiliza el indice 0: hacerlo dejaba
+        // visibles todas esas tarjetas y anulaba en la practica el limite Top N.
+        if (nativeCardMatchesPokemon(card, lookup.eligible[0])) {
+            return lookup.eligible.findIndex((_, index) => !usedIndices.has(index));
+        }
+        return -1;
+    }
+
+    function isNativeFirstParentCard(card, keeper) {
+        const cardId = getNodePokemonId(card);
+        if (cardId && keeper?.id && String(cardId) === String(keeper.id)) return true;
+        const marker = card.querySelector('[data-parent-slot="1"],[data-slot="1"],[class*="parent-slot" i],[class*="pick-num" i],[class*="selected-num" i],[class*="slot-badge" i]');
+        if (marker && /^\s*1\s*$/.test(marker.textContent || '')) return true;
+        const stateDescriptor = `${card.className || ''} ${card.getAttribute('aria-selected') || ''}`;
+        return /(?:^|\s)(?:selected-parent|parent-one|parent-1|picked-first)(?:\s|$)/i.test(stateDescriptor);
     }
 
     function getRecommendationLimit() {
@@ -1017,6 +1327,8 @@
         boxArea.querySelectorAll('.brd-breed-recommended, .brd-breed-hidden').forEach(card => {
             card.classList.remove('brd-breed-recommended', 'brd-breed-best', 'brd-breed-hidden');
             card.removeAttribute('title');
+            delete card.dataset.brdRecommendationIndex;
+            card.style.removeProperty('order');
         });
         const nativeCards = getNativePokemonCards(boxArea);
         const searchInput = Array.from(boxArea.querySelectorAll('input')).find(input => /search|buscar|pok[eé]mon/i.test(input.getAttribute('placeholder') || ''));
@@ -1027,8 +1339,9 @@
         const bindControls = bar => {
             bar.querySelector('.brd-helper-refresh')?.addEventListener('click', async event => {
                 const button = event.currentTarget; button.disabled = true; button.textContent = 'Leyendo…';
-                await refreshBreedingWorkspace();
-                button.disabled = false; button.textContent = '↻ Releer';
+                const refreshed = await refreshBreedingWorkspace();
+                button.textContent = refreshed ? '✓ Actualizado' : '⚠ Sin respuesta';
+                setTimeout(() => { if (button.isConnected) { button.disabled = false; button.textContent = '↻ Releer'; } }, 900);
             });
             bar.querySelector('.brd-recommendation-limit')?.addEventListener('change', event => {
                 recommendationLimit = event.currentTarget.value === 'all' ? 'all' : Number(event.currentTarget.value) || 10;
@@ -1058,15 +1371,23 @@
 
         const matchingCards = [];
         const recommendationLookup = createRecommendationLookup(eligible);
+        const usedRecommendationIndices = new Set();
         nativeCards.forEach(card => {
-            const index = getNativeRecommendationIndex(card, recommendationLookup);
+            if (isNativeFirstParentCard(card, keeper)) {
+                card.classList.add('brd-breed-hidden');
+                return;
+            }
+            const index = getNativeRecommendationIndex(card, recommendationLookup, usedRecommendationIndices);
             if (index < 0 || index >= visibleLimit) {
                 // Tras elegir el primer padre, la lista nativa solo conserva candidatos válidos de la misma especie.
                 if (availablePokemon.length) card.classList.add('brd-breed-hidden');
                 return;
             }
+            usedRecommendationIndices.add(index);
             card.classList.add('brd-breed-recommended');
             if (index === 0) card.classList.add('brd-breed-best');
+            card.dataset.brdRecommendationIndex = String(index);
+            card.style.setProperty('order', String(index), 'important');
             matchingCards.push({ card, index });
             card.title = index === 0 ? 'Recomendado: es el Quality válido más bajo y ahorra Pokémon.' : 'Válido como segundo padre; usa la selección nativa.';
         });
@@ -1079,27 +1400,214 @@
             return;
         }
 
-        // Se muestra primero el de menor Quality (y luego IV) dentro del rango: el
+        // Se muestra primero el de menor Quality (y luego mayor IV) dentro del rango: el
         // heredero conserva ambos valores superiores sin gastar material de más.
-        const bestCard = matchingCards.find(entry => entry.index === 0)?.card;
-        const firstDifferentCard = bestCard && nativeCards.find(card => card !== bestCard);
-        if (bestCard && firstDifferentCard && bestCard.parentElement === firstDifferentCard.parentElement) {
-            firstDifferentCard.before(bestCard);
-        }
+        const cardsByParent = new Map();
+        matchingCards.forEach(entry => {
+            const parent = entry.card.parentElement;
+            if (!parent) return;
+            const group = cardsByParent.get(parent) || [];
+            group.push(entry);
+            cardsByParent.set(parent, group);
+        });
+        cardsByParent.forEach((group, parent) => {
+            const firstNativeCard = nativeCards.find(card => card.parentElement === parent);
+            if (!firstNativeCard || group.length < 2) return;
+            const marker = document.createComment('breeding-recommendations');
+            parent.insertBefore(marker, firstNativeCard);
+            const fragment = document.createDocumentFragment();
+            group.sort((a, b) => a.index - b.index).forEach(entry => fragment.appendChild(entry.card));
+            marker.after(fragment);
+            marker.remove();
+        });
     }
 
     async function refreshBreedingWorkspace() {
-        // Actualiza colección y precio de feromonas; en el ciclo siguiente también
-        // se leen otra vez piedras, modo y estado del menú nativo de Breeding.
-        await Promise.all([refreshAvailablePokemon(true), refreshPheromoneMarketPrice()]);
+        // Solicita datos frescos al juego: Pokémon comprados/capturados, inventario
+        // (incluidas Stones) y oferta vigente de feromonas.
+        const [pokemonResult] = await Promise.all([
+            refreshAvailablePokemon(true),
+            refreshBreedingInventory(),
+            refreshPheromoneMarketPrice()
+        ]);
+        await new Promise(resolve => setTimeout(resolve, 80));
+        syncHuntAnalyzerKillsPerHour(true);
         advisorSignature = '';
         lastStateSignature = '';
         runCalculatorLoop();
+        return Boolean(pokemonResult?.refreshed);
     }
 
+    function saveTrackedIncubations() {
+        try { localStorage.setItem(INCUBATION_STORAGE_KEY, JSON.stringify(trackedIncubations)); } catch (_) {}
+    }
+
+    function parseIncubationDurationSeconds(value) {
+        const text = String(value || '').toLocaleLowerCase();
+        const clock = text.match(/\b(\d{1,3}):(\d{2})(?::(\d{2}))?\b/);
+        if (clock) {
+            return clock[3]
+                ? Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3])
+                : Number(clock[1]) * 60 + Number(clock[2]);
+        }
+        const days = Number(text.match(/(\d+)\s*(?:d|d[ií]as?)/)?.[1] || 0);
+        const hours = Number(text.match(/(\d+)\s*(?:h|horas?)/)?.[1] || 0);
+        const minutes = Number(text.match(/(\d+)\s*(?:m|min(?:utos?)?)/)?.[1] || 0);
+        const seconds = Number(text.match(/(\d+)\s*(?:s|seg(?:undos?)?)/)?.[1] || 0);
+        return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+    }
+
+    function normalizeIncubationTimestamp(value) {
+        if (value == null || value === '') return 0;
+        if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+            return numeric < 1e12 ? numeric * 1000 : numeric;
+        }
+        const parsed = Date.parse(String(value));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function syncIncubationsFromSocketMessage(message) {
+        const type = String(message?.type || '');
+        if (!/(?:breed|egg|incubat|hatch|cria|ovo)/i.test(type)) return;
+        const list = [message?.eggs, message?.incubations, message?.list, message?.data?.eggs, message?.data?.incubations]
+            .find(Array.isArray);
+        if (!list) return;
+        const next = {};
+        list.forEach((entry, index) => {
+            if (!entry || typeof entry !== 'object') return;
+            const key = String(entry.id ?? entry.eggId ?? entry.incubatorId ?? entry.slot ?? `socket-${index}`);
+            const status = String(entry.status || entry.state || '').toLocaleLowerCase();
+            const ready = Boolean(entry.ready || entry.completed || entry.canHatch || /ready|complete|done|listo|pronto/i.test(status));
+            const remaining = Number(entry.remainingSeconds ?? entry.secondsRemaining ?? entry.remaining ?? 0);
+            const readyAt = ready ? Date.now() : normalizeIncubationTimestamp(
+                entry.readyAt ?? entry.finishAt ?? entry.endsAt ?? entry.endTime ?? entry.completedAt
+            ) || (remaining > 0 ? Date.now() + remaining * 1000 : trackedIncubations[key]?.readyAt || 0);
+            next[key] = { readyAt, ready };
+        });
+        if (!list.length || Object.keys(next).length) {
+            trackedIncubations = next;
+            saveTrackedIncubations();
+            syncBreedingDockBadge();
+        }
+    }
+
+    function syncIncubationTracking(incubator) {
+        if (!incubator) return;
+        if (Date.now() - lastIncubationDomSyncAt < 900) return;
+        lastIncubationDomSyncAt = Date.now();
+        const previousSignature = JSON.stringify(trackedIncubations);
+        const cards = getIncubatorEggCards(incubator);
+        const activeKeys = new Set();
+        cards.forEach((card, index) => {
+            const key = getEggStableId(card) || `slot-${index}`;
+            activeKeys.add(key);
+            const text = card.innerText || '';
+            const ready = /(?:ready|hatch|listo|eclosionar|pronto|chocar|finalizad|complet)/i.test(text);
+            const remaining = parseIncubationDurationSeconds(text);
+            const previous = trackedIncubations[key] || {};
+            const computedReadyAt = remaining > 0 ? Date.now() + remaining * 1000 : 0;
+            const keepPreviousDeadline = Number(previous.readyAt) > 0 && computedReadyAt > 0
+                && Math.abs(Number(previous.readyAt) - computedReadyAt) < 2500;
+            const readyAt = ready ? Date.now()
+                : keepPreviousDeadline ? Number(previous.readyAt)
+                : computedReadyAt > 0 ? computedReadyAt
+                : previous.readyAt || 0;
+            trackedIncubations[key] = { readyAt, ready };
+        });
+        // Cuando la Incubadora esta montada, su lista es la fuente de verdad. Esto
+        // elimina el contador apenas el usuario abre un huevo ya terminado.
+        if (cards.length || /no hay huevos|no eggs|nenhum ovo/i.test(incubator.innerText || '')) {
+            Object.keys(trackedIncubations).forEach(key => {
+                if (!activeKeys.has(key)) delete trackedIncubations[key];
+            });
+        }
+        if (JSON.stringify(trackedIncubations) !== previousSignature) saveTrackedIncubations();
+        syncBreedingDockBadge();
+    }
+
+    function getReadyIncubationCount() {
+        const now = Date.now();
+        return Object.values(trackedIncubations).filter(entry => entry?.ready || (Number(entry?.readyAt) > 0 && Number(entry.readyAt) <= now)).length;
+    }
+
+    function getBreedingDockDescriptor(node) {
+        if (!(node instanceof Element)) return '';
+        const attrs = ['id', 'class', 'title', 'aria-label', 'data-title', 'data-tooltip', 'data-action', 'data-target', 'href'];
+        const own = attrs.map(name => node.getAttribute(name) || '').join(' ');
+        const media = Array.from(node.querySelectorAll('img,svg,use')).map(icon => [
+            icon.getAttribute('alt'), icon.getAttribute('title'), icon.getAttribute('src'),
+            icon.getAttribute('href'), icon.getAttribute('xlink:href'), icon.getAttribute('aria-label')
+        ].filter(Boolean).join(' ')).join(' ');
+        return `${own} ${media} ${node.textContent || ''}`.replace(/\s+/g, ' ').trim();
+    }
+
+    function findBreedingDockButton() {
+        const dock = document.querySelector('.game-dock');
+        if (!dock) return null;
+        if (rememberedBreedingDockButton?.isConnected && rememberedBreedingDockButton.parentElement === dock) {
+            return rememberedBreedingDockButton;
+        }
+        const explicit = dock.querySelector('#dock-btn-breeding,#dock-btn-breed,[data-action*="breed" i],[data-target*="breed" i],[title*="breed" i],[aria-label*="breed" i],[title*="cria" i],[aria-label*="cria" i]');
+        if (explicit) {
+            let button = explicit;
+            while (button.parentElement && button.parentElement !== dock) button = button.parentElement;
+            return button;
+        }
+        return Array.from(dock.children).find(button => /(?:breed|breeding|cria|incubat|egg|ovo|daycare|nursery)/i.test(getBreedingDockDescriptor(button))) || null;
+    }
+
+    function syncBreedingDockBadge() {
+        const dock = document.querySelector('.game-dock');
+        if (!dock) return;
+        const button = findBreedingDockButton();
+        dock.querySelectorAll('.brd-dock-incubation-button').forEach(candidate => {
+            if (candidate !== button) {
+                candidate.classList.remove('brd-dock-incubation-button');
+                candidate.querySelector(':scope > .brd-dock-incubation-badge')?.remove();
+            }
+        });
+        if (!button) return;
+        button.classList.add('brd-dock-incubation-button');
+        const count = getReadyIncubationCount();
+        let badge = button.querySelector(':scope > .brd-dock-incubation-badge');
+        if (!count) { badge?.remove(); return; }
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'brd-dock-incubation-badge';
+            badge.setAttribute('aria-hidden', 'true');
+            button.appendChild(badge);
+        }
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.title = `${count} incubación${count === 1 ? '' : 'es'} lista${count === 1 ? '' : 's'} para abrir`;
+    }
+
+    document.addEventListener('click', event => {
+        const dockButton = event.target.closest?.('.game-dock > *');
+        if (!dockButton) return;
+        setTimeout(() => {
+            if (!document.querySelector('.brd-col-pair')) return;
+            rememberedBreedingDockButton = dockButton;
+            syncBreedingDockBadge();
+        }, 120);
+    }, true);
+
     function getIncubatorEggCards(incubator) {
-        return Array.from(incubator.querySelectorAll('[data-egg-id], [data-incubator-id], .brd-egg, .brd-egg-card, .brd-incubator-item, button, li'))
-            .filter(card => !card.closest('.brd-incubator-helper') && /egg|huevo/i.test(card.innerText || ''));
+        const candidates = Array.from(incubator.querySelectorAll('[data-egg-id], [data-incubator-id], .brd-egg, .brd-egg-card, .brd-incubator-item, button, li'))
+            .filter(card => {
+                if (card.closest('.brd-incubator-helper')) return false;
+                if (card.matches('[data-egg-id],[data-incubator-id],.brd-egg,.brd-egg-card,.brd-incubator-item')) return true;
+                const media = Array.from(card.querySelectorAll('img')).map(img => `${img.alt || ''} ${img.title || ''} ${img.src || ''}`).join(' ');
+                return /egg|huevo|ovo/i.test(`${card.innerText || ''} ${media}`);
+            });
+        const explicitSelector = '[data-egg-id],[data-incubator-id],.brd-egg,.brd-egg-card,.brd-incubator-item';
+        return candidates.filter(card => {
+            const hasExplicitChild = candidates.some(other => other !== card && card.contains(other) && other.matches(explicitSelector));
+            if (hasExplicitChild) return false;
+            const hasExplicitParent = candidates.some(other => other !== card && other.contains(card) && other.matches(explicitSelector));
+            return card.matches(explicitSelector) || !hasExplicitParent;
+        });
     }
 
     function getEggPokemonName(card, fallbackName) {
@@ -1109,15 +1617,42 @@
         return explicitName && !/mystery|egg|huevo/i.test(explicitName) ? explicitName : fallbackName;
     }
 
-    function decorateIncubatorEggs(incubator, inheritance) {
+    function getEggStableId(card) {
+        return String(card.dataset.eggId || card.dataset.incubatorId || card.dataset.id || card.id || '').trim();
+    }
+
+    function saveEggParent(stableId, parent) {
+        if (!stableId || !parent) return;
+        storedEggParents[stableId] = parent;
+        const entries = Object.entries(storedEggParents).slice(-40);
+        storedEggParents = Object.fromEntries(entries);
+        try { localStorage.setItem(EGG_PARENT_STORAGE_KEY, JSON.stringify(storedEggParents)); } catch (_) {}
+    }
+
+    function decorateIncubatorEggs(incubator, parentOne, inheritance) {
         getIncubatorEggCards(incubator).forEach(card => {
-            card.querySelector('.brd-egg-helper-info')?.remove();
-            if (!inheritance) return;
-            const eggName = getEggPokemonName(card, inheritance.child.name);
-            const color = getQualityColor(inheritance.child.qVal);
+            const stableId = getEggStableId(card);
+            let eggParent = (stableId && storedEggParents[stableId]) || eggNodeParents.get(card) || null;
+            if (!eggParent && (parentOne || lastSelectedParentOne)) {
+                const source = parentOne || lastSelectedParentOne;
+                eggParent = {
+                    name:source.name || 'Pokémon', level:Number(source.level || 0),
+                    ivVal:Number(source.ivVal || 0), qVal:Number(source.qVal || 0)
+                };
+                eggNodeParents.set(card, eggParent);
+                saveEggParent(stableId, eggParent);
+            }
+            if (!eggParent) return;
+            const childQuality = Number(inheritance?.child?.qVal || eggParent.qVal || 0);
+            const color = getQualityColor(childQuality);
+            const signature = JSON.stringify(eggParent);
+            const existing = card.querySelector('.brd-egg-helper-info');
+            if (existing?.dataset.parentSignature === signature) return;
+            existing?.remove();
             const info = document.createElement('small');
             info.className = 'brd-egg-helper-info';
-            info.innerHTML = `<b>Huevo de: ${escapeHTML(eggName)}</b><br><em>Resultado posible: IV ${inheritance.child.ivVal}/192 · <span style="color:${color}">Q ${inheritance.child.qVal.toFixed(4)}</span></em>`;
+            info.dataset.parentSignature = signature;
+            info.innerHTML = `<b>Padre 1: ${escapeHTML(eggParent.name)}</b><br><em>${eggParent.level > 0 ? `Nivel ${eggParent.level} · ` : ''}IV ${eggParent.ivVal}/192 · <span style="color:${color}">Quality ${eggParent.qVal.toFixed(4)}</span></em>`;
             card.appendChild(info);
         });
     }
@@ -1129,7 +1664,7 @@
         // nativas del Incubator, y las recomendaciones dentro de la caja nativa.
         incubator.querySelector(':scope > .brd-incubator-helper')?.remove();
         decorateNativePokemonBox(inheritance?.keeper || null, pairSection);
-        decorateIncubatorEggs(incubator, inheritance);
+        decorateIncubatorEggs(incubator, parents[0] || null, inheritance);
     }
 
     // 2. Extract Data from Breeding Pair
@@ -1150,7 +1685,9 @@
             const qMatch = qStr.match(/[\d.]+/);
             const qVal = qMatch ? parseFloat(qMatch[0]) : 0;
 
-            parents.push({ id: node.dataset.pokeId || node.dataset.id || '', speciesId: speciesMatch?.[1] || '', name, ivVal, qVal });
+            const levelText = node.querySelector('.brd-parent-level, [class*="level"]')?.textContent || node.textContent || '';
+            const levelMatch = levelText.match(/(?:Lv|Level|Nivel|Nv)\.?\s*(\d+)/i);
+            parents.push({ id: getNodePokemonId(node), speciesId: speciesMatch?.[1] || '', name, level:levelMatch ? Number(levelMatch[1]) : 0, ivVal, qVal });
         });
 
         if (settings.simulateParents) {
@@ -1307,7 +1844,7 @@
                     minSecondaryQuality: parseFloat(minSecQ.toFixed(4)),
                     maxSecondaryQuality: parseFloat(maxSecQ.toFixed(4)),
                     childResultingQuality: parseFloat(childQ.toFixed(4)),
-                    secondarySourceType: requiresBreeding ? 'Bred' : 'Wild',
+                    secondarySourceType: requiresBreeding ? 'Criado' : 'Salvaje',
                     targetTierReached: getTierLabelForQ(childQ)
                 });
 
@@ -1324,7 +1861,7 @@
             },
             settings: {
                 calculationMode: mode,
-                growthSystem: settings.growthType === 'avg' ? 'Average' : 'Minimum',
+                growthSystem: settings.growthType === 'avg' ? 'Promedio' : 'Mínimo',
                 growthDeltaPerBreed: avgQDelta,
                 pheromoneUnitPrice: settings.pheromoneUnitPrice,
                 killsPerHour: settings.killsPerHour,
@@ -1348,7 +1885,7 @@
     function convertPayloadToCSV(payload) {
         let csv = '\uFEFF'; // BOM UTF-8
 
-        csv += 'Breed Step,Parent Name,Parent IV,Parent Quality,Min Secondary Quality,Max Secondary Quality,Secondary Source,Child Quality Result,Tier Reached,Mode,Growth System,Total Cost Gold\n';
+        csv += 'Paso de crianza,Nombre del padre,IV del padre,Quality del padre,Quality secundaria mínima,Quality secundaria máxima,Origen secundario,Quality resultante de la cría,Tier alcanzado,Modo,Sistema de crecimiento,Costo total en oro\n';
 
         const pName = payload.parents.inheritedBestParent ? payload.parents.inheritedBestParent.name : '';
         const pIv = payload.parents.inheritedBestParent ? payload.parents.inheritedBestParent.iv : '';
@@ -1372,15 +1909,17 @@
             lastStateSignature = '';
             return;
         }
+        translateBreedingInterface(pairSection);
+        syncHuntAnalyzerKillsPerHour();
 
         if (!document.querySelector('.brd-custom-box')) {
             const customBox = document.createElement('div');
             customBox.className = 'brd-custom-box';
 
             customBox.innerHTML = `
-                <div class="brd-custom-head">CALCULATOR</div>
+                <div class="brd-custom-head">CALCULADORA</div>
                 <div class="brd-custom-content">
-                    <div class="brd-no-poke">Select Pokémon in the Breeding Pair</div>
+                    <div class="brd-no-poke">Selecciona Pokémon en la pareja de crianza</div>
                 </div>
             `;
 
@@ -1392,6 +1931,15 @@
         const mode = getSelectedMode();
         const requiredStones = getRequiredStones();
         const doubleStones = isDoubleStonesChecked();
+        if (!settings.simulateParents && parents[0]) {
+            lastSelectedParentOne = {
+                name:parents[0].name, level:Number(parents[0].level || 0),
+                ivVal:Number(parents[0].ivVal || 0), qVal:Number(parents[0].qVal || 0)
+            };
+        }
+        const incubatorArea = getAreaByLabel('incubator', '.brd-col-incubator, .brd-incubator') || pairSection;
+        decorateIncubatorEggs(incubatorArea, parents[0] || null, getInheritance(parents, mode));
+        syncIncubationTracking(incubatorArea);
 
         if (!availablePokemon.length && !pokemonRefreshPromise) refreshAvailablePokemon();
         const pheromoneRefreshDelay = pheromoneMarket.selected ? PHEROMONE_MARKET_REFRESH_MS : PHEROMONE_MARKET_RETRY_MS;
@@ -1401,7 +1949,18 @@
             refreshPheromoneMarketPrice();
         }
         const nextAdvisorSignature = JSON.stringify({ parents, mode, pokemonVersion: availablePokemonVersion, growthType: settings.growthType });
-        if (nextAdvisorSignature !== advisorSignature) {
+        const nativeBoxArea = getPokemonBoxArea(pairSection);
+        const nativeCardsNow = nativeBoxArea ? getNativePokemonCards(nativeBoxArea) : [];
+        const nativeDecorationMissing = Boolean(parents.length && availablePokemon.length && nativeCardsNow.some(card =>
+            !card.classList.contains('brd-breed-recommended') && !card.classList.contains('brd-breed-hidden')
+        ));
+        const decoratedOrder = nativeCardsNow.filter(card => card.classList.contains('brd-breed-recommended'))
+            .map(card => Number(card.dataset.brdRecommendationIndex));
+        const nativeOrderIncorrect = decoratedOrder.some((index, position) => position > 0 && index < decoratedOrder[position - 1]);
+        if (nextAdvisorSignature !== advisorSignature
+            || !nativeBoxArea?.querySelector('.brd-native-advisor-bar')
+            || nativeDecorationMissing
+            || nativeOrderIncorrect) {
             advisorSignature = nextAdvisorSignature;
             renderBreedingAdvisor(parents, mode, pairSection);
         }
@@ -1416,9 +1975,9 @@
 
         if (parents.length === 0) {
             boxEl.innerHTML = `
-                <div class="brd-custom-head">CALCULATOR</div>
+                <div class="brd-custom-head">CALCULADORA</div>
                 <div class="brd-custom-content">
-                    <div class="brd-no-poke">Select Pokémon in the Breeding Pair</div>
+                    <div class="brd-no-poke">Selecciona Pokémon en la pareja de crianza</div>
                 </div>
             `;
             return;
@@ -1454,7 +2013,7 @@
         // IV Warning Tooltip
         const isLosingIv = otherParent && (otherParent.ivVal >= bestParent.ivVal + 1);
         const warnIconHtml = isLosingIv
-            ? `<img class="brd-iv-warn-ico" alt="Warning" title="Warning: IV loss! The parent with higher quality has lower IV (Other parent: IV ${otherParent.ivVal})" src="/assets/topmenu/playerWarning.png">`
+            ? `<img class="brd-iv-warn-ico" alt="Advertencia" title="¡Advertencia de pérdida de IV! El padre con mayor Quality tiene menor IV (otro padre: IV ${otherParent.ivVal})" src="/assets/topmenu/playerWarning.png">`
             : '';
 
         // Growth Delta
@@ -1463,8 +2022,8 @@
         const projectedQStr = `Q ${projectedQVal.toFixed(4)}`;
 
         const qColor = getQualityColor(projectedQVal);
-        const modeLabel = mode === 'pheromones' ? 'PHEROMONES MODE' : 'FREE MODE';
-        const growthTypeLabel = settings.growthType === 'avg' ? 'AVERAGE' : 'MINIMUM';
+        const modeLabel = mode === 'pheromones' ? 'MODO PHEROMONES' : 'MODO GRATUITO';
+        const growthTypeLabel = settings.growthType === 'avg' ? 'PROMEDIO' : 'MÍNIMO';
 
         const stoneMultiplier = doubleStones ? 2 : 1;
 
@@ -1478,7 +2037,7 @@
 
         // Fixed Top Blocks
         let htmlBox = `
-            <div class="brd-custom-head">CALCULATOR</div>
+            <div class="brd-custom-head">CALCULADORA</div>
         `;
 
         if (settings.simulateParents) {
@@ -1506,11 +2065,11 @@
 
         htmlBox += `
             <div class="brd-poke-info">
-                <span class="brd-poke-tag">Child</span>
+                <span class="brd-poke-tag">Cría</span>
                 <span class="brd-poke-name">${bestParent.name}</span>
                 <div class="brd-poke-stats">
                     <span class="brd-stat-chip iv">${warnIconHtml}IV ${bestParent.ivVal}</span>
-                    <span class="brd-stat-chip q" style="color: ${qColor}; border-color: ${qColor};" title="Best parent Quality (${bestParent.qVal}) + ΔQ (${avgQDelta})">${projectedQStr}</span>
+                    <span class="brd-stat-chip q" style="color: ${qColor}; border-color: ${qColor};" title="Quality del mejor padre (${bestParent.qVal}) + ΔQ (${avgQDelta})">${projectedQStr}</span>
                 </div>
             </div>
             <div class="brd-custom-content">
@@ -1520,7 +2079,7 @@
         if (bestParent.qVal > 0) {
             htmlBox += `
                 <div class="brd-tiers-container">
-                    <div class="brd-tier-title">Estimated Breeds (${modeLabel} - ${growthTypeLabel})</div>
+                    <div class="brd-tier-title">Crianza estimada (${modeLabel} - ${growthTypeLabel})</div>
             `;
 
             QUALITY_TIERS.forEach(tier => {
@@ -1540,7 +2099,7 @@
                     if (doubleStones) {
                         const expectedIvGain = Math.floor(breedsNeeded / 20);
                         if (expectedIvGain >= 1) {
-                            ivGainTagHtml = `<span class="brd-iv-gain-tag" title="Expected IV boost from Double Stones: +${expectedIvGain} IVs across ${breedsNeeded} breeds (5% chance per breed)">+${expectedIvGain} IV</span>`;
+                            ivGainTagHtml = `<span class="brd-iv-gain-tag" title="Aumento esperado de IV con Stones dobles: +${expectedIvGain} IV durante ${breedsNeeded} crianzas (5% por crianza)">+${expectedIvGain} IV</span>`;
                         }
                     }
 
@@ -1564,7 +2123,7 @@
                     const totalCostGold = baseCostTotal + pheroCostTotal + stonesCostTotal + subchainCostTotal;
                     const costInMillions = (totalCostGold / 1000000).toLocaleString(undefined, { maximumFractionDigits: 1 });
 
-                    let costTooltip = `Base Fee: ${formatM(baseCostTotal)}`;
+                    let costTooltip = `Costo base: ${formatM(baseCostTotal)}`;
                     if (mode === 'pheromones') {
                         costTooltip += pheroPriceAvailable
                             ? `\nPheromones: ${formatM(pheroCostTotal)}`
@@ -1574,7 +2133,7 @@
                         costTooltip += `\nStones: ${formatM(stonesCostTotal)}`;
                     }
                     if (settings.includeSubchainCost && subchainCostTotal > 0) {
-                        costTooltip += `\nSub-chain Sec (>1.80Q): ${formatM(subchainCostTotal)}`;
+                        costTooltip += `\nSubcadena secundaria (>1.80Q): ${formatM(subchainCostTotal)}`;
                     }
                     costTooltip += `\n${mode === 'pheromones' && !pheroPriceAvailable ? 'Total parcial' : 'Total'}: ${formatM(totalCostGold)}`;
 
@@ -1590,12 +2149,12 @@
                             </span>
                             <div class="brd-tier-right">
                                 <span class="brd-tier-count">
-                                    ~${breedsNeeded.toLocaleString()} ${breedsNeeded === 1 ? 'breed' : 'breeds'}
+                                    ~${breedsNeeded.toLocaleString()} ${breedsNeeded === 1 ? 'crianza' : 'crianzas'}
                                     ${ivGainTagHtml}
                                 </span>
-                                <span class="brd-tier-kills" title="Total hunt defeats required (${killsNeeded.toLocaleString()} kills)">(${formatKills(killsNeeded)}${timeStr})</span>
+                                <span class="brd-tier-kills" title="Derrotados necesarios en hunt (${killsNeeded.toLocaleString()})">(${formatKills(killsNeeded)}${timeStr})</span>
                                 ${mode === 'pheromones' ? `
-                                    <span class="brd-tier-phero" title="Total pheromones required">
+                                    <span class="brd-tier-phero" title="Total de Pheromones necesarios">
                                         <img alt="Strange Pheromone" width="13" height="13" draggable="false" src="/assets/items/strange_pheromone.png">
                                         ${totalPheromones.toLocaleString()}
                                     </span>
@@ -1612,7 +2171,7 @@
                     if (isExpanded) {
                         htmlBox += `
                             <div class="brd-subtiers-wrap">
-                                <div class="brd-subtiers-head">Step-by-Step Material Range (Reduced -0.01)</div>
+                                <div class="brd-subtiers-head">Materiales paso a paso (reducción de -0.01)</div>
                                 <div class="brd-subtiers-scroll">
                         `;
 
@@ -1629,14 +2188,14 @@
 
                             const isBredSec = minSecQ > WILD_MAX_QUALITY;
                             const secTagHtml = isBredSec 
-                                ? `<span class="brd-subtier-tag bred" title="Secondary material exceeds wild cap (1.80 Q). Must be bred beforehand.">🧬 Bred (>1.80)</span>`
-                                : `<span class="brd-subtier-tag wild" title="Can be caught directly in the wild (≤ 1.80 Q).">🎯 Wild</span>`;
+                                ? `<span class="brd-subtier-tag bred" title="El material secundario supera el límite salvaje (1.80 Q) y debe criarse antes.">🧬 Criado (>1.80)</span>`
+                                : `<span class="brd-subtier-tag wild" title="Puede capturarse directamente en estado salvaje (≤ 1.80 Q).">🎯 Salvaje</span>`;
 
                             htmlBox += `
                                 <div class="brd-subtier-item">
-                                    <span class="brd-subtier-step">Breed #${step}</span>
-                                    <span>Sec: <strong class="brd-subtier-q" style="color: ${minSecColor};">Q ${minSecQ.toFixed(2)}</strong> to <strong class="brd-subtier-q" style="color: ${maxSecColor};">Q ${maxSecQ.toFixed(2)}</strong> ${secTagHtml}</span>
-                                    <span>Child: <strong class="brd-subtier-q" style="color: ${childColor};">Q ${childQ.toFixed(4)}</strong></span>
+                                    <span class="brd-subtier-step">Crianza #${step}</span>
+                                    <span>Sec.: <strong class="brd-subtier-q" style="color: ${minSecColor};">Q ${minSecQ.toFixed(2)}</strong> a <strong class="brd-subtier-q" style="color: ${maxSecColor};">Q ${maxSecQ.toFixed(2)}</strong> ${secTagHtml}</span>
+                                    <span>Cría: <strong class="brd-subtier-q" style="color: ${childColor};">Q ${childQ.toFixed(4)}</strong></span>
                                 </div>
                             `;
 
@@ -1664,7 +2223,7 @@
             stonesInputsHtml += `
                 <label class="brd-checkbox-label">
                     <input type="checkbox" id="useStonesCheckbox" ${settings.useStonesCost ? 'checked' : ''}>
-                    <span>Calculate with stones (${doubleStones ? '2× Double active' : '1× Normal'})</span>
+                    <span>Calcular con Stones (${doubleStones ? '2× Doble activo' : '1× Normal'})</span>
                 </label>
             `;
 
@@ -1686,7 +2245,7 @@
         const pheromoneMarketDisplay = getPheromoneMarketDisplay();
         htmlBox += `
             <div class="brd-settings-wrap">
-                <span class="brd-settings-toggle" id="settingsToggleBtn">${foldArrow} Settings</span>
+                <span class="brd-settings-toggle" id="settingsToggleBtn">${foldArrow} Configuración</span>
                 <div class="brd-settings-body ${bodyClass}">
                     <div class="brd-settings-row">
                         <div class="brd-setting-item">
@@ -1695,39 +2254,40 @@
                             <button type="button" class="brd-market-refresh" id="refreshPheromoneMarketBtn" title="Actualizar precio actual del market">↻</button>
                         </div>
                         <div class="brd-setting-item">
-                            <span>Kills/h:</span>
-                            <input type="text" id="killsPerHourInput" value="${settings.killsPerHour || ''}" placeholder="0" inputmode="numeric" autocomplete="off">
+                            <span>Derrotados/h:</span>
+                            <input type="text" id="killsPerHourInput" value="${settings.killsPerHour || ''}" placeholder="Abre Hunt Analyzer" readonly title="Valor automático del Hunt Analyzer actual">
+                            <small class="brd-auto-source">Automático</small>
                         </div>
                     </div>
                     ${stonesInputsHtml}
                     <div class="brd-settings-row">
-                        <label class="brd-checkbox-label" title="Adds the extra breeding costs to craft required secondary materials that exceed the wild quality cap (1.80 Q)">
+                        <label class="brd-checkbox-label" title="Añade el costo de criar materiales secundarios que superen el límite salvaje de Quality 1.80">
                             <input type="checkbox" id="includeSubchainCheckbox" ${settings.includeSubchainCost ? 'checked' : ''}>
-                            <span>Include sub-breeding costs (Sec > 1.80 Q)</span>
+                            <span>Incluir costos de subcrianza (Sec. &gt; 1.80 Q)</span>
                         </label>
                     </div>
                     <div class="brd-settings-row">
-                        <label class="brd-checkbox-label" title="Simulate parents IV and Quality">
+                        <label class="brd-checkbox-label" title="Simular IV y Quality de los padres">
                             <input type="checkbox" id="simulateParentsCheckbox" ${settings.simulateParents ? 'checked' : ''}>
-                            <span>Simulate Parents</span>
+                            <span>Simular padres</span>
                         </label>
                     </div>
                     <div class="brd-settings-row">
-                        <span>Growth System:</span>
+                        <span>Sistema de crecimiento:</span>
                         <div class="brd-radio-group">
-                            <label title="Average Growth (+0.0096 Free / +0.1875 Phero)">
+                            <label title="Crecimiento promedio (+0.0096 gratis / +0.1875 Pheromone)">
                                 <input type="radio" name="growthRadio" value="avg" ${settings.growthType === 'avg' ? 'checked' : ''}>
-                                Average
+                                Promedio
                             </label>
-                            <label title="Minimum Growth (+0.0050 Free / +0.1500 Phero)">
+                            <label title="Crecimiento mínimo (+0.0050 gratis / +0.1500 Pheromone)">
                                 <input type="radio" name="growthRadio" value="min" ${settings.growthType === 'min' ? 'checked' : ''}>
-                                Minimum
+                                Mínimo
                             </label>
                         </div>
                     </div>
                     <div class="brd-export-row">
-                        <button type="button" class="brd-export-btn" id="exportJsonBtn" title="Copy full data as JSON to clipboard">Export JSON</button>
-                        <button type="button" class="brd-export-btn" id="exportCsvBtn" title="Copy full data as CSV to clipboard">Export CSV</button>
+                        <button type="button" class="brd-export-btn" id="exportJsonBtn" title="Copiar todos los datos JSON al portapapeles">Exportar JSON</button>
+                        <button type="button" class="brd-export-btn" id="exportCsvBtn" title="Copiar todos los datos CSV al portapapeles">Exportar CSV</button>
                     </div>
                 </div>
             </div>
@@ -1859,13 +2419,7 @@
 
         const killsInput = document.getElementById('killsPerHourInput');
         if (killsInput) {
-            killsInput.addEventListener('input', (e) => {
-                let cleanVal = e.target.value.replace(/\D/g, '');
-                e.target.value = cleanVal;
-                const val = parseInt(cleanVal, 10);
-                settings.killsPerHour = isNaN(val) ? 0 : val;
-                lastStateSignature = '';
-            });
+            killsInput.value = settings.killsPerHour > 0 ? String(settings.killsPerHour) : '';
         }
 
         const radios = document.querySelectorAll('input[name="growthRadio"]');
@@ -1883,8 +2437,8 @@
                 const payload = generateExportPayload();
                 const jsonText = JSON.stringify(payload, null, 2);
                 navigator.clipboard.writeText(jsonText).then(() => {
-                    exportJsonBtn.textContent = 'Copied!';
-                    setTimeout(() => { exportJsonBtn.textContent = 'Export JSON'; }, 1500);
+                    exportJsonBtn.textContent = '¡Copiado!';
+                    setTimeout(() => { exportJsonBtn.textContent = 'Exportar JSON'; }, 1500);
                 }).catch(err => {
                     console.error('Clipboard error:', err);
                 });
@@ -1897,8 +2451,8 @@
                 const payload = generateExportPayload();
                 const csvText = convertPayloadToCSV(payload);
                 navigator.clipboard.writeText(csvText).then(() => {
-                    exportCsvBtn.textContent = 'Copied!';
-                    setTimeout(() => { exportCsvBtn.textContent = 'Export CSV'; }, 1500);
+                    exportCsvBtn.textContent = '¡Copiado!';
+                    setTimeout(() => { exportCsvBtn.textContent = 'Exportar CSV'; }, 1500);
                 }).catch(err => {
                     console.error('Clipboard error:', err);
                 });
@@ -1928,4 +2482,5 @@
     setInterval(() => {
         if (document.querySelector('.brd-col-pair')) refreshPheromoneMarketPrice();
     }, PHEROMONE_MARKET_REFRESH_MS);
+    setInterval(syncBreedingDockBadge, 1000);
 })();
