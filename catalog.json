@@ -1,7 +1,40 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-08-28T18:56:48Z",
+    "updatedAt":  "2026-08-28T18:58:21Z",
     "scripts":  [
+                    {
+                        "id":  "telegram-alerts",
+                        "name":  "PokeGrid Telegram Alerts",
+                        "namespace":  "pokegrid.telegram-alerts",
+                        "version":  "1.14.0",
+                        "author":  "PokeGrid",
+                        "summary":  "Alertas configurables de capturas, objetivos y stock mediante Telegram.",
+                        "description":  "Envía alertas de capturas, shinies, tiers, IVs, objetivos y stock de Poké Balls. Incluye deduplicación, selección de tarjetas y datos visuales del juego.",
+                        "category":  "Notificaciones",
+                        "tags":  [
+                                     "telegram",
+                                     "alertas",
+                                     "capturas",
+                                     "market"
+                                 ],
+                        "games":  [
+                                      "Poke Idle World"
+                                  ],
+                        "permissions":  [
+                                            "Modifica la interfaz mediante GM_addStyle",
+                                            "Guarda la configuración mediante GM_getValue y GM_setValue",
+                                            "Envía alertas a api.telegram.org mediante GM_xmlhttpRequest",
+                                            "Lee capturas, eventos y stock visibles del juego"
+                                        ],
+                        "minLauncherVersion":  "0.22.1",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/telegram-alerts.user.js",
+                        "sha256":  "fc0209f7c4f1e8305f89714921699649196b81c58994de44c0199b119ead8fdf",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Actualización 1.14.0",
+                        "icon":  "✈️",
+                        "featured":  false,
+                        "publishedAt":  "2026-08-24T10:08:35Z"
+                    },
                     {
                         "id":  "breeding-center-calculator",
                         "name":  "Breeding Center - Breeding calculator",
@@ -168,36 +201,6 @@
                         "icon":  "🧩",
                         "featured":  false,
                         "publishedAt":  "2026-08-24T22:08:23Z"
-                    },
-                    {
-                        "id":  "telegram-alerts",
-                        "name":  "PokeGrid Telegram Alerts",
-                        "namespace":  "pokegrid.telegram-alerts",
-                        "version":  "1.12.1",
-                        "author":  "PokeGrid",
-                        "summary":  "Alertas configurables de capturas, objetivos y stock mediante Telegram.",
-                        "description":  "Envía alertas de capturas, shinies, tiers, IVs, objetivos y stock de Poké Balls. Incluye deduplicación, selección de tarjetas y datos visuales del juego.",
-                        "category":  "Notificaciones",
-                        "tags":  [
-                                     "telegram",
-                                     "alertas",
-                                     "capturas",
-                                     "market"
-                                 ],
-                        "permissions":  [
-                                            "Modifica la interfaz mediante GM_addStyle",
-                                            "Guarda la configuración mediante GM_getValue y GM_setValue",
-                                            "Envía alertas a api.telegram.org mediante GM_xmlhttpRequest",
-                                            "Lee capturas, eventos y stock visibles del juego"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/telegram-alerts.user.js",
-                        "sha256":  "687653e6549a160ee932612c46c30781a4c26219103902f20e501e2fdf8b38bf",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación inicial de la versión 1.12.1.",
-                        "icon":  "✈️",
-                        "featured":  false,
-                        "publishedAt":  "2026-08-24T10:08:35Z"
                     },
                     {
                         "id":  "exact-iv-scanner",
