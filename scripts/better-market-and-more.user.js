@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Better Market and More
 // @namespace    http://tampermonkey.net/
-// @version      10.14.0
+// @version      10.18.1
 // @description  Mercado Global rediseñado, Cassino portátil de Marlon, vendedor portátil de Stones y Exact IV Scanner completo.
-// @match        https://poke.idleworld.online/play
+// @match        *://poke.idleworld.online/*
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -215,6 +215,79 @@
     const STORAGE_MARK_ENHANCEMENTS = 'script_mark_enhancements_v1';
     const STORAGE_MAP_FILTERS = 'script_map_filters_v1';
     const STORAGE_HA_HISTORY = 'script_ha_history_v1';
+    const STORAGE_SELL_BOTANY_LABELS = 'script_sell_botany_labels_v1';
+
+    const BOTANY_BERRY_META = [
+        ['Chilan',64831,64809],['Babiri',64832,64810],['Colbur',64833,64811],['Haban',64834,64812],
+        ['Kasib',64835,64813],['Charti',64836,64814],['Tanga',64837,64815],['Payapa',64838,64816],
+        ['Coba',64839,64817],['Shuca',64840,64818],['Kebia',64841,64819],['Chople',64842,64820],
+        ['Yache',64843,64821],['Rindo',64844,64822],['Wacan',64845,64823],['Passho',64846,64824],
+        ['Occa',64847,64825],['Roseli',64848,64826],['Kee',64849,64830],['Rovia',64850,44457]
+    ];
+    const BOTANY_BERRY_COLORS = Object.freeze({
+        Chilan:'#a8a878',Babiri:'#8fa8bd',Colbur:'#8a6754',Haban:'#7b55d9',Kasib:'#8067a1',Charti:'#b8a038',Tanga:'#a8b820',Payapa:'#f06493',
+        Coba:'#85a6ed',Shuca:'#d7b75c',Kebia:'#b252b2',Chople:'#cf4b43',Yache:'#72cfd3',Rindo:'#58b957',Wacan:'#e8c12e',Passho:'#5790e8',
+        Occa:'#e66738',Roseli:'#e58ab3',Kee:'#9aa4b2',Rovia:'#4ed98a'
+    });
+    const BOTANY_RECIPE_PARTS = {
+        64809:[[73,960],[24,2160],[59222,6000]],64810:[[97,960],[83,3950],[59246,6000]],64811:[[137,2670],[59235,6000],[59237,9000]],
+        64812:[[115,960],[37,720],[59241,6000]],64813:[[111,4800],[137,2040],[59232,6000]],64814:[[35,960],[128,2280],[59239,6000]],
+        64815:[[17,1200],[11592,3130],[59220,6000]],64816:[[89,960],[103,2040],[59229,6000]],64817:[[38,790],[114,720],[59221,6000]],
+        64818:[[94,1290],[3,2400],[59243,6000]],64819:[[125,4000],[127,3120],[59242,6000]],64820:[[86,2400],[105,2640],[59224,6000]],
+        64821:[[122,960],[116,2400],[59233,6000]],64822:[[12,960],[99,3120],[59217,6000]],64823:[[43,960],[42,2760],[59226,6000]],
+        64824:[[74,3900],[65,720],[59219,6000]],64825:[[82,960],[54,2760],[59218,6000]],64826:[[136,3270],[88,2400],[59238,6000]],
+        64830:[[2,22],[27304,2]],44457:[[204,6000],[21,600]],64831:[[108,2310],[11556,1450]],64832:[[11537,130],[11549,1380]],
+        64833:[[11550,1460],[59249,6550]],64834:[[38,430],[37,530]],64835:[[137,1460],[11595,850]],64836:[[69,530],[11560,580]],
+        64837:[[11532,1790],[11540,1450]],64838:[[11530,1460],[11521,1560]],64839:[[11515,3370],[11514,1780]],
+        64840:[[11534,2920],[11552,1460]],64841:[[11516,3370],[11517,1460]],64842:[[11540,1460],[11555,1940]],
+        64843:[[11547,2920],[11544,1460]],64844:[[11529,3800],[11510,1990]],64845:[[11518,2300],[11522,1990]],
+        64846:[[11586,3370],[11512,1990]],64847:[[11543,1940],[11511,1990]],64848:[[11520,180],[11535,2340]],
+        64849:[[2,11],[27304,1]],64850:[[204,3000],[21,300]]
+    };
+    const BOTANY_BERRIES_BY_MATERIAL = (() => {
+        const result = new Map();
+        const add = (itemId, berryName) => {
+            const names = result.get(String(itemId)) || [];
+            if (!names.includes(berryName)) names.push(berryName);
+            result.set(String(itemId), names);
+        };
+        BOTANY_BERRY_META.forEach(([baseName, commonId, wildId]) => {
+            [[commonId, `${baseName} Berry`, 19354], [wildId, `Wild ${baseName} Berry`, 19356]].forEach(([berryId, berryName, herbId]) => {
+                add(herbId, berryName);
+                (BOTANY_RECIPE_PARTS[berryId] || []).forEach(([itemId]) => add(itemId, berryName));
+            });
+        });
+        return result;
+    })();
+
+    function getBotanyBerryLabels(itemId) {
+        return BOTANY_BERRIES_BY_MATERIAL.get(String(itemId)) || [];
+    }
+
+    function buildBotanySellTags(labels) {
+        const names = Array.isArray(labels) ? labels : [];
+        if (!names.length) return '';
+        const allWild = names.every(name => /^Wild\s/i.test(name));
+        const allCommon = names.every(name => !/^Wild\s/i.test(name));
+        let tags;
+        if (names.length >= 8 && (allWild || allCommon)) {
+            tags = [{ label: `${names.length} Berries ${allWild ? 'silvestres' : 'comunes'}`, wild: allWild }];
+        } else {
+            tags = names.slice(0, 3).map(name => {
+                const baseName = name.replace(/^Wild\s+/i, '').replace(/\s+Berry$/i, '');
+                return { label: name, wild: /^Wild\s/i.test(name), color: BOTANY_BERRY_COLORS[baseName] || '#69c98d' };
+            });
+            if (names.length > tags.length) tags.push({ label: `+${names.length - tags.length} recetas`, more: true });
+        }
+        return `<span class="hunt-botany-tags" title="Material de: ${escapeHTML(names.join(', '))}">
+            <small class="hunt-botany-caption">MATERIAL PARA</small>
+            <span class="hunt-botany-tag-list">${tags.map(tag => `<span class="hunt-botany-tag${tag.wild ? ' wild' : ''}${tag.more ? ' more' : ''}"${tag.color ? ` style="--berry-tag:${tag.color}"` : ''}>${tag.more ? '＋' : tag.wild ? '🍃' : '🌿'} ${escapeHTML(tag.label)}</span>`).join('')}</span>
+        </span>`;
+    }
+
+    function isSellBotanyLabelsEnabled() {
+        try { return localStorage.getItem(STORAGE_SELL_BOTANY_LABELS) === 'true'; } catch (_) { return false; }
+    }
     // Limpieza definitiva de los datos pertenecientes al historial retirado.
     try {
         localStorage.removeItem('script_market_price_history_v1');
@@ -652,6 +725,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotItems:'Objetos', depotPokemon:'Pokémon', depotFamilyItems:'Familia: objetos', depotFamilyPokemon:'Familia: Pokémon', depotSubtitle:'Almacenamiento personal y familiar', depotBag:'Mochila', depotTeam:'Equipo', depotBox:'Box', depotFamily:'Depósito familiar', depotYourBag:'Tu mochila', depotYourPokemon:'Tus Pokémon · equipo y Box', depotSearchPokemon:'Buscar Pokémon por nombre', depotClear:'Limpiar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'OBJETO', depotPokemonKind:'POKÉMON', depotAvailable:'disponibles', depotEmpty:'No hay contenido disponible' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotItems:'Itens', depotPokemon:'Pokémon', depotFamilyItems:'Família: itens', depotFamilyPokemon:'Família: Pokémon', depotSubtitle:'Armazenamento pessoal e familiar', depotBag:'Mochila', depotTeam:'Equipe', depotBox:'Box', depotFamily:'Depósito da família', depotYourBag:'Sua mochila', depotYourPokemon:'Seus Pokémon · equipe e Box', depotSearchPokemon:'Buscar Pokémon pelo nome', depotClear:'Limpar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'disponíveis', depotEmpty:'Nenhum conteúdo disponível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotItems:'Items', depotPokemon:'Pokémon', depotFamilyItems:'Family: items', depotFamilyPokemon:'Family: Pokémon', depotSubtitle:'Personal and family storage', depotBag:'Bag', depotTeam:'Team', depotBox:'Box', depotFamily:'Family depot', depotYourBag:'Your bag', depotYourPokemon:'Your Pokémon · team and Box', depotSearchPokemon:'Search Pokémon by name', depotClear:'Clear', depotStore:'Store', depotDeposit:'Deposit', depotWithdraw:'Withdraw', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'available', depotEmpty:'No content available' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { depotSearchItems:'Buscar objeto por nombre…', depotItemFilters:'Filtros de objetos', depotFilterAll:'Todo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotSearchItems:'Buscar item pelo nome…', depotItemFilters:'Filtros de itens', depotFilterAll:'Tudo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { depotSearchItems:'Search item by name…', depotItemFilters:'Item filters', depotFilterAll:'All', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotTierFilter:'Tiers de Quality visibles', depotAllTiers:'Todos', depotNoTiers:'Ninguno' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotTierFilter:'Tiers de Quality visíveis', depotAllTiers:'Todos', depotNoTiers:'Nenhum' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotTierFilter:'Visible Quality tiers', depotAllTiers:'All', depotNoTiers:'None' });
@@ -700,6 +776,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon en el equipo', casinoTeamSubtitle:'Administra inmediatamente los Pokémon comprados o evolucionados.', casinoTeamEmpty:'No hay Pokémon comprados en el equipo.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar en el Box', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon na equipe', casinoTeamSubtitle:'Gerencie imediatamente os Pokémon comprados ou evoluídos.', casinoTeamEmpty:'Não há Pokémon comprados na equipe.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar no Box', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Team Pokémon', casinoTeamSubtitle:'Immediately manage purchased or evolved Pokémon.', casinoTeamEmpty:'There are no purchased Pokémon on the team.', casinoNewPokemon:'NEWLY OBTAINED', casinoStore:'Store', casinoStoreTitle:'Store in Box', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoQuantity:'Cantidad', casinoAutoStore:'Enviar compras al depósito', casinoAutoStoreHint:'Cada Pokémon nuevo se guarda antes de continuar.', casinoBuyingProgress:'Procesando {current} de {total}: {name}…', casinoBatchBought:'Compraste {done} de {total} {name}.', casinoBatchTraded:'Completaste {done} de {total} intercambios de {name}.', casinoBatchStored:' {count} se enviaron automáticamente al depósito.', casinoBatchPartial:'Solo se procesaron {done} de {total} {name}.', casinoAutoStoreError:'La compra se completó, pero no se pudo enviar el Pokémon al depósito.' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoQuantity:'Quantidade', casinoAutoStore:'Enviar compras ao depósito', casinoAutoStoreHint:'Cada Pokémon novo é guardado antes de continuar.', casinoBuyingProgress:'Processando {current} de {total}: {name}…', casinoBatchBought:'Você comprou {done} de {total} {name}.', casinoBatchTraded:'Você concluiu {done} de {total} trocas de {name}.', casinoBatchStored:' {count} foram enviados automaticamente ao depósito.', casinoBatchPartial:'Apenas {done} de {total} {name} foram processados.', casinoAutoStoreError:'A compra foi concluída, mas o Pokémon não pôde ser enviado ao depósito.' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoQuantity:'Quantity', casinoAutoStore:'Send purchases to storage', casinoAutoStoreHint:'Each new Pokémon is stored before continuing.', casinoBuyingProgress:'Processing {current} of {total}: {name}…', casinoBatchBought:'Bought {done} of {total} {name}.', casinoBatchTraded:'Completed {done} of {total} {name} trades.', casinoBatchStored:' {count} were automatically sent to storage.', casinoBatchPartial:'Only processed {done} of {total} {name}.', casinoAutoStoreError:'The purchase completed, but the Pokémon could not be sent to storage.' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'VENDER STONE', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'VENDER STONES', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'SELL STONES', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
@@ -2555,8 +2634,13 @@
         .script-casino-requirement { min-height:19px;display:inline-flex;align-items:center;gap:3px;padding:1px 4px;color:#a9e8c1;background:#102c23;border:1px solid #2f7055;border-radius:4px;font-size:6.5px;font-weight:750; }
         .script-casino-requirement.is-missing { color:#ffb0aa;background:#321d20;border-color:#774048; }
         .script-casino-requirement img { width:15px;height:15px;object-fit:contain;image-rendering:pixelated; }
-        .script-casino-action-row { grid-column:2;display:flex;align-items:center;gap:7px;min-width:0; }
+        .script-casino-action-row { grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:5px;min-width:0; }
         .script-casino-reason { min-width:0;flex:1;color:#98adba;font-size:7px;line-height:1.15; }
+        .script-casino-purchase-controls { min-width:0;display:grid;grid-template-columns:46px minmax(70px,auto);align-items:end;gap:4px; }
+        .script-casino-quantity-label { display:flex;flex-direction:column;gap:2px;color:#8fa8b8;font-size:6.5px;font-weight:850; }
+        .script-casino-quantity { box-sizing:border-box;width:46px;height:27px;padding:2px 4px;color:#f4f8fb;background:#091923;border:1px solid #36596c;border-radius:5px;font-size:9px;font-weight:900;text-align:center;outline:none; }
+        .script-casino-quantity:focus { border-color:#69d5f8;box-shadow:0 0 0 2px #32bee52b; }
+        .script-casino-quantity:disabled { opacity:.45;cursor:not-allowed; }
         .script-casino-buy { flex:none;min-width:70px;min-height:27px;padding:0 8px;color:#16200c;background:linear-gradient(180deg,#f1d571,#d9b84d);border:1px solid #ffe290;border-radius:5px;font-size:9.2px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0005;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
         .script-casino-buy:hover:not(:disabled) { filter:brightness(1.08);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
         .script-casino-buy:disabled { color:#71808a;background:#1a2a35;border-color:#344b59;cursor:not-allowed; }
@@ -2567,6 +2651,11 @@
         .script-casino-team-count { padding:3px 7px;color:#d7c47c;background:#211d10;border:1px solid #62572d;border-radius:999px;font-size:8px;font-weight:900; }
         .script-casino-team-head p { margin:4px 0 0;color:#7892a4;font-size:8px;line-height:1.3; }
         .script-casino-team-tools { margin-top:8px;display:grid;grid-template-columns:minmax(105px,.7fr) 1fr 1fr;gap:5px; }
+        .script-casino-auto-store { grid-column:1/-1;min-width:0;display:flex;align-items:center;gap:7px;padding:6px 8px;color:#bcecff;background:#0a1b28;border:1px solid #32627a;border-radius:6px;font-size:8px;font-weight:900;cursor:pointer;user-select:none; }
+        .script-casino-auto-store input { width:15px;height:15px;margin:0;accent-color:#42c9ef;cursor:pointer; }
+        .script-casino-auto-store-copy { min-width:0;display:flex;flex-direction:column;gap:1px; }
+        .script-casino-auto-store-copy small { color:#7795a7;font-size:6.8px;font-weight:650;line-height:1.2; }
+        .script-casino-auto-store:has(input:checked) { color:#dff9e8;background:#102b24;border-color:#3c8a69; }
         .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9edff5;background:#081722;border:1px solid #2b5268;border-radius:5px;font-size:8px;font-weight:900; }
         .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:24px;padding:2px 5px;color:#f7fbfd;background:#102638;border:1px solid #3a657c;border-radius:4px;font:inherit;text-align:center;outline:none; }
         .script-casino-iv-goal input:focus { border-color:#66d9ff;box-shadow:0 0 0 2px #31bfe62c; }
@@ -2695,6 +2784,7 @@
             .script-casino-art { width:48px;height:48px; }
             .script-casino-art img { width:45px;height:45px; }
             .script-casino-action-row { grid-column:1/-1; }
+            .script-casino-purchase-controls { grid-template-columns:48px minmax(78px,auto); }
             .script-casino-team-list { max-height:42dvh; }
             .script-casino-team-tools { grid-template-columns:1fr 1fr; }
             .script-casino-iv-goal { grid-column:1/-1; }
@@ -3031,6 +3121,29 @@
         .hunt-sell-row[hidden] { display: none !important; }
         .hunt-sell-row input[type="number"] { width: 100%; box-sizing: border-box; background: #0c161f; color: #e2e8f0; border: 1px solid #273f52; border-radius: 4px; padding: 5px; }
         .hunt-sell-row.protected { opacity: 0.45; }
+        .hunt-sell-tools { display:flex;align-items:center;gap:8px;flex:none;margin-bottom:9px;padding:8px 10px;border:1px solid #294450;border-radius:8px;background:linear-gradient(145deg,#0e2028,#09161d);box-shadow:inset 0 1px #ffffff07; }
+        .hunt-sell-tools-copy { min-width:120px;margin-right:auto; }.hunt-sell-tools-copy b{display:block;color:#e9ddc3;font-size:10px}.hunt-sell-tools-copy small{display:block;margin-top:2px;color:#708c9b;font-size:8px}
+        .hunt-sell-botany-toggle { position:relative;display:inline-flex;align-items:center;gap:7px;min-height:31px;padding:4px 9px 4px 7px;border:1px solid #47624f;border-radius:6px;background:#10261f;color:#bfe8cd;font-size:9px;font-weight:850;cursor:pointer;user-select:none;white-space:nowrap;transition:background .15s,border-color .15s,color .15s; }
+        .hunt-sell-botany-toggle:hover { border-color:#73bd89;background:#173429;color:#e6fff0; }
+        .hunt-sell-botany-toggle input { position:absolute;opacity:0;pointer-events:none; }
+        .hunt-sell-switch { position:relative;width:28px;height:15px;flex:none;border:1px solid #40535c;border-radius:999px;background:#071117;box-shadow:inset 0 1px 3px #000;transition:.16s; }
+        .hunt-sell-switch:after { content:"";position:absolute;left:2px;top:2px;width:9px;height:9px;border-radius:50%;background:#71828b;transition:.16s; }
+        .hunt-sell-botany-toggle input:checked + .hunt-sell-switch { border-color:#5dcc80;background:#164b2c; }.hunt-sell-botany-toggle input:checked + .hunt-sell-switch:after{left:15px;background:#75e49a;box-shadow:0 0 7px #58d78288}
+        .hunt-sell-botany-toggle input:indeterminate + .hunt-sell-switch { border-color:#c69842;background:#49391b; }.hunt-sell-botany-toggle input:indeterminate + .hunt-sell-switch:after{left:8px;background:#efc768}
+        .hunt-sell-botany-toggle:has(input:disabled) { opacity:.48;cursor:wait; }
+        .hunt-sell-botany-count { min-width:17px;padding:2px 4px;border-radius:8px;background:#07151b;color:#74d596;font-size:7px;text-align:center; }
+        .hunt-botany-tags { display:none;min-width:0;margin-top:6px;padding-top:5px;border-top:1px solid #274039; }
+        .script-npc-item-sell.botany-labels-on .hunt-botany-tags { display:block; }
+        .hunt-botany-caption { display:block;margin-bottom:4px;color:#57946b;font-size:6px;font-weight:950;letter-spacing:.1em; }
+        .hunt-botany-tag-list { display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden; }
+        .hunt-botany-tag { display:inline-flex;align-items:center;min-width:0;max-width:118px;padding:3px 5px;border:1px solid #47704d;border-radius:4px;background:#102b20;color:#91e5a8;font-size:7px;font-weight:850;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .hunt-botany-tag[style] { border-color:color-mix(in srgb,var(--berry-tag) 68%,#243d48);background:color-mix(in srgb,var(--berry-tag) 13%,#0c1d25);color:color-mix(in srgb,var(--berry-tag) 78%,#fff); }
+        .hunt-botany-tag.wild { border-color:#527846;background:#1b2d1b;color:#b6e68a; }.hunt-botany-tag.wild[style]{border-color:color-mix(in srgb,var(--berry-tag) 62%,#4c7941);background:color-mix(in srgb,var(--berry-tag) 11%,#14251a);color:color-mix(in srgb,var(--berry-tag) 72%,#dfffc9)}.hunt-botany-tag.more{border-color:#526878;background:#172631;color:#b7c9d5}
+        .script-npc-item-sell.botany-labels-on .hunt-sell-row.has-botany-material { min-height:106px !important; }
+        .script-npc-item-sell .hunt-sell-row.protected { opacity:1;filter:none; }
+        .script-npc-item-sell .hunt-sell-row.protected:after { content:"PROTEGIDO";position:absolute;right:7px;top:6px;padding:2px 4px;border:1px solid #70622e;border-radius:3px;background:#282315;color:#d9bd64;font-size:6px;font-weight:950;letter-spacing:.08em;pointer-events:none; }
+        .script-npc-item-sell .hunt-sell-row.protected .hunt-sell-info,.script-npc-item-sell .hunt-sell-row.protected .hunt-sell-art { opacity:.72; }
+        .hunt-item-lock { display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #354550;border-radius:6px;background:#090f13;color:#e0c97c;font-size:15px;cursor:pointer;transition:border-color .15s,background .15s,transform .15s; }.hunt-item-lock:hover{border-color:#b38c3d;background:#172129;transform:translateY(-1px)}
         .hunt-sell-backdrop { background:rgba(0,0,0,.72) !important;backdrop-filter:blur(2px); }
         .hunt-sell-backdrop .script-npc-sell-window { display:flex;flex-direction:column;max-height:90vh;background:linear-gradient(145deg,#0d141a,#070b0f) !important;border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden; }
         .hunt-sell-backdrop .script-npc-sell-window .sell-confirm-title { flex:none;min-height:52px;padding:10px 14px !important;background:linear-gradient(180deg,#151c22,#0b1116) !important;border-bottom:1px solid #745725 !important;box-shadow:0 3px 12px #0008; }
@@ -3674,6 +3787,15 @@
         .portable-depot-content.depot-view-list .depot-entry-lock { width:25px;height:25px;font-size:12px !important; }
         .portable-depot-poke-filters { grid-column:1/-1;display:grid;grid-template-columns:minmax(190px,2fr) repeat(4,minmax(82px,1fr)) auto;gap:7px;padding:9px !important;background:linear-gradient(145deg,#101a21,#090f14) !important;border:1px solid #354334 !important;border-left:3px solid #ba9140 !important;border-radius:8px !important;box-shadow:0 3px 10px #0006; }
         .portable-depot-poke-filters input { box-sizing:border-box;width:100%;min-height:32px;padding:6px 8px;background:#071017;border:1px solid #304854;border-radius:6px;color:#dce6eb;font:600 10px var(--piw-game-font);outline:none; }.portable-depot-poke-filters input:focus{border-color:#aa8235;box-shadow:0 0 0 2px #aa823523;}
+        .portable-depot-item-filters { grid-column:1/-1;display:grid;grid-template-columns:minmax(220px,1fr) auto;align-items:center;gap:8px;padding:8px 9px;background:linear-gradient(145deg,#101a21,#090f14);border:1px solid #354334;border-left:3px solid #ba9140;border-radius:8px;box-shadow:0 3px 10px #0006; }
+        .portable-depot-item-search-wrap { min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:7px;height:34px;box-sizing:border-box;padding:0 9px;color:#76cdef;background:#071017;border:1px solid #304854;border-radius:6px; }
+        .portable-depot-item-search-wrap:focus-within { border-color:#aa8235;box-shadow:0 0 0 2px #aa823523; }
+        .portable-depot-item-search { min-width:0;width:100%;height:30px;padding:0;color:#e4edf2;background:transparent;border:0;outline:0;font:650 10px var(--piw-game-font); }
+        .portable-depot-item-search::-webkit-search-cancel-button { filter:invert(1);opacity:.55;cursor:pointer; }
+        .portable-depot-item-categories { display:flex;align-items:center;gap:4px;padding:3px;background:#070d11;border:1px solid #2c414c;border-radius:7px; }
+        .portable-depot-item-category { min-width:68px;min-height:28px;padding:4px 9px;color:#96acb8;background:#111b21;border:1px solid transparent;border-radius:5px;font:850 8.5px var(--piw-game-font);cursor:pointer;transition:color .15s,background .15s,border-color .15s,transform .15s; }
+        .portable-depot-item-category:hover { color:#e9dfc9;border-color:#66532f;transform:translateY(-1px); }
+        .portable-depot-item-category.on { color:#171006;background:linear-gradient(#e1c477,#b58a38);border-color:#d3ad55;box-shadow:0 2px 6px #0007; }
         .portable-depot-clear-filters { min-height:32px !important;padding:5px 10px !important;background:#151e23 !important;border-color:#5e5135 !important;color:#e4d9c3 !important;font:800 9px var(--piw-game-font); }
         .portable-depot-tier-filters { grid-column:1/-1;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding-top:7px;border-top:1px solid #263a43; }
         .portable-depot-tier-label { margin-right:3px;color:#7892a1;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase; }
@@ -3682,7 +3804,7 @@
         .portable-depot-tier-shortcut { padding:3px 7px;background:#10181d;border:1px solid #3b4d56;border-radius:5px;color:#9cafb9;font:800 8px var(--piw-game-font);cursor:pointer; }
         .portable-depot-family-header { grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px !important;background:linear-gradient(90deg,#18232a,#0b1216) !important;border:1px solid #594725 !important;border-left:3px solid #c49a42 !important;border-radius:8px !important;color:#b7c9d2 !important;font-size:10px !important;box-shadow:0 3px 9px #0006; }
         .portable-depot-family-header strong{color:#f0e0bd;font-size:12px}.portable-depot-family-header span{color:#7fa1b1}
-        @media (max-width:800px) { .portable-depot-backdrop .script-portable-depot-window{height:min(840px,95vh)}.portable-depot-backdrop .depot-head{align-items:stretch;flex-wrap:wrap}.portable-depot-brand{flex:1}.portable-depot-tabs{order:3;flex-basis:100%;justify-content:flex-start;overflow-x:auto}.portable-depot-content{grid-template-columns:1fr;grid-template-rows:auto;overflow-y:auto}.portable-depot-content>.portable-depot-column{min-height:270px;height:auto}.portable-depot-poke-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.portable-depot-poke-filters input:first-child{grid-column:1/-1}.portable-depot-clear-filters{grid-column:1/-1}.depot-column-head{align-items:flex-start;flex-wrap:wrap}.depot-column-actions{width:100%}.portable-depot-side-action{flex:1} }
+        @media (max-width:800px) { .portable-depot-backdrop .script-portable-depot-window{height:min(840px,95vh)}.portable-depot-backdrop .depot-head{align-items:stretch;flex-wrap:wrap}.portable-depot-brand{flex:1}.portable-depot-tabs{order:3;flex-basis:100%;justify-content:flex-start;overflow-x:auto}.portable-depot-content{grid-template-columns:1fr;grid-template-rows:auto;overflow-y:auto}.portable-depot-content>.portable-depot-column{min-height:270px;height:auto}.portable-depot-poke-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.portable-depot-poke-filters input:first-child{grid-column:1/-1}.portable-depot-clear-filters{grid-column:1/-1}.portable-depot-item-filters{grid-template-columns:1fr}.portable-depot-item-categories{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.portable-depot-item-category{min-width:0}.depot-column-head{align-items:flex-start;flex-wrap:wrap}.depot-column-actions{width:100%}.portable-depot-side-action{flex:1} }
         .portable-shop-heading {
             margin: 8px 0 0;
             padding: 7px 3px 5px;
@@ -3918,6 +4040,13 @@
                 width:calc(100vw - 8px) !important;max-width:calc(100vw - 8px) !important;
                 height:calc(100dvh - 8px) !important;max-height:calc(100dvh - 8px) !important;border-radius:8px !important;
             }
+            .hunt-sell-tools { flex-wrap:wrap;padding:7px;gap:6px; }
+            .hunt-sell-tools-copy { flex:1 0 100%; }
+            .hunt-sell-botany-toggle { flex:1 1 calc(50% - 4px);justify-content:center;min-width:0;padding-inline:5px;font-size:8px; }
+            .hunt-sell-botany-lock-toggle { flex-basis:calc(58% - 4px); }
+            .hunt-sell-botany-toggle > span:not(.hunt-sell-switch) { overflow:hidden;text-overflow:ellipsis; }
+            .hunt-botany-tag-list { flex-wrap:wrap;overflow:visible; }
+            .hunt-botany-tag { max-width:100%; }
             .script-market-window .mk-head { min-height:auto;padding:8px !important;flex-wrap:wrap;gap:6px !important; }
             .script-market-window .market-head-primary { flex-basis:calc(100% - 34px);flex-wrap:wrap;gap:6px; }
             .script-market-window .market-head-primary > b { font-size:14px; }
@@ -4973,6 +5102,11 @@
         .inv-window.script-window-layout-compact .inv-slots { grid-template-columns:repeat(auto-fill,minmax(42px,1fr)) !important; }
         .dex-window.script-window-layout-compact .dex-script-controls { align-items:stretch; }
         .dex-window.script-window-layout-compact .dex-script-controls .dex-fbtn { flex:1 1 calc(33.333% - 6px); }
+        .script-npc-item-sell.script-window-layout-compact .hunt-sell-tools { flex-wrap:wrap; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-tools { flex-wrap:wrap;padding:7px;gap:6px; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-tools-copy { flex:1 0 100%; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-botany-toggle { flex:1 1 calc(50% - 4px);justify-content:center;min-width:0;padding-inline:5px;font-size:8px; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-botany-tag-list { flex-wrap:wrap;overflow:visible; }
 
         .market-iv-stage.script-window-layout-mobile > .script-market-window { border-radius:8px !important; }
         .market-iv-stage.script-window-layout-mobile .script-market-window .mk-head { min-height:auto;padding:8px !important;flex-wrap:wrap;gap:6px !important; }
@@ -5557,6 +5691,16 @@
         showScriptNotice(`Hunt "${huntName}" não foi localizada em nenhuma área.`, { isError: true });
     }
 
+    document.addEventListener('pokegrid:travel-to-pokemon', event => {
+        const pokemonName = String(event.detail?.pokemonName || '').trim();
+        if (!pokemonName) return;
+        event.detail.handled = true;
+        Promise.resolve(teleportToTarget(pokemonName)).catch(error => {
+            console.error('Falha ao viajar para o melhor drop de Botânica:', error);
+            showScriptNotice(`Não foi possível viajar até ${pokemonName}.`, { isError: true });
+        });
+    });
+
     function waitForElement(selector, timeoutMs) {
         const existing = document.querySelector(selector);
         if (existing) return Promise.resolve(existing);
@@ -5698,6 +5842,10 @@
                             </div>
                             <p>${escapeHTML(tr('casinoTeamSubtitle'))}</p>
                             <div class="script-casino-team-tools">
+                                <label class="script-casino-auto-store">
+                                    <input class="script-casino-auto-store-input" type="checkbox">
+                                    <span class="script-casino-auto-store-copy"><b>${escapeHTML(tr('casinoAutoStore'))}</b><small>${escapeHTML(tr('casinoAutoStoreHint'))}</small></span>
+                                </label>
                                 <label class="script-casino-iv-goal"><span>${escapeHTML(tr('casinoIvGoal'))}</span><input class="script-casino-iv-goal-input" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoIvGoalHint'))}"></label>
                                 <button class="script-casino-bulk-action script-casino-bulk-store" type="button">📦 ${escapeHTML(tr('casinoStoreAll'))}</button>
                                 <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">💲 ${escapeHTML(tr('casinoSellAll'))}</button>
@@ -5718,6 +5866,7 @@
         const refreshButton = backdrop.querySelector('.script-casino-refresh');
         const teamList = backdrop.querySelector('.script-casino-team-list');
         const teamCount = backdrop.querySelector('.script-casino-team-count');
+        const autoStoreInput = backdrop.querySelector('.script-casino-auto-store-input');
         const ivGoalInput = backdrop.querySelector('.script-casino-iv-goal-input');
         const bulkStoreButton = backdrop.querySelector('.script-casino-bulk-store');
         const bulkSellButton = backdrop.querySelector('.script-casino-bulk-sell');
@@ -5726,11 +5875,14 @@
         const recentTeamIds = new Set();
         const alertedGoalPokeIds = new Set();
         const ivGoalStorageKey = 'script_casino_iv_goal_v1';
+        const autoStoreStorageKey = 'script_casino_auto_store_v1';
         let ivGoal = Math.max(0, Math.min(192, Number(localStorage.getItem(ivGoalStorageKey)) || 0));
+        let autoStorePurchases = localStorage.getItem(autoStoreStorageKey) === '1';
         let busySpeciesId = null;
         let busyPokeId = null;
         let closed = false;
         ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+        autoStoreInput.checked = autoStorePurchases;
 
         const close = () => {
             if (closed) return;
@@ -5825,7 +5977,7 @@
             showIvGoalAlert(matches);
         };
 
-        const storeTeamPokemon = async (poke, { silent = false } = {}) => {
+        const storeTeamPokemon = async (poke, { silent = false, refreshCatalog = true, shouldRender = true } = {}) => {
             const rawPokeId = poke?.id ?? poke?.capturedId ?? poke?.pokeId;
             const pokeId = String(rawPokeId ?? '');
             if (!pokeId) throw new Error('Pokémon sem identificador.');
@@ -5840,9 +5992,13 @@
             teamPokemon = updated.filter(entry => entry?.team)
                 .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
             recentTeamIds.delete(pokeId);
-            try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
-            render();
-            renderTeam();
+            if (refreshCatalog) {
+                try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
+            }
+            if (shouldRender && !closed) {
+                render();
+                renderTeam();
+            }
             if (!silent) setStatus(formatCasinoText(tr('casinoStored'), { name:poke.name || 'Pokémon' }), 'success');
             return true;
         };
@@ -5954,8 +6110,8 @@
             const visibleTeam = getTeamViews().visible;
             const purchasedTeam = visibleTeam.filter(poke => recentTeamIds.has(getPokeId(poke)));
             const sellablePurchased = purchasedTeam.filter(poke => !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
-            bulkStoreButton.disabled = busyPokeId != null || purchasedTeam.length === 0;
-            bulkSellButton.disabled = busyPokeId != null || sellablePurchased.length === 0;
+            bulkStoreButton.disabled = busyPokeId != null || busySpeciesId != null || purchasedTeam.length === 0;
+            bulkSellButton.disabled = busyPokeId != null || busySpeciesId != null || sellablePurchased.length === 0;
             bulkStoreButton.textContent = `📦 ${tr('casinoStoreAll')} (${purchasedTeam.length})`;
             bulkSellButton.textContent = `💲 ${tr('casinoSellAll')} (${sellablePurchased.length})`;
             announceIvGoalMatches(visibleTeam);
@@ -5997,14 +6153,14 @@
                     <div class="script-casino-team-stats">${stats.map(([label, value]) => `<span class="script-casino-team-stat">${label}<b>${Number(value || 0).toLocaleString('pt-BR')}</b></span>`).join('')}</div>
                     <div class="script-casino-team-value">${escapeHTML(tr('casinoSellValue'))}: 💲 ${sellValue.toLocaleString('pt-BR')}${protectedPoke ? ` · ${escapeHTML(tr('casinoProtected'))}` : ''}</div>
                     <div class="script-casino-team-actions">
-                        <button class="script-casino-team-action script-casino-store" type="button" ${busyPokeId != null ? 'disabled' : ''}>📦 ${escapeHTML(tr('casinoStore'))}</button>
-                        <button class="script-casino-team-action script-casino-sell" type="button" ${busyPokeId != null || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>💲 ${escapeHTML(tr('casinoSellPokemon'))}</button>
+                        <button class="script-casino-team-action script-casino-store" type="button" ${busyPokeId != null || busySpeciesId != null ? 'disabled' : ''}>📦 ${escapeHTML(tr('casinoStore'))}</button>
+                        <button class="script-casino-team-action script-casino-sell" type="button" ${busyPokeId != null || busySpeciesId != null || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>💲 ${escapeHTML(tr('casinoSellPokemon'))}</button>
                     </div>`;
                 card.querySelector('.script-casino-team-art img')?.addEventListener('error', event => {
                     event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
                 }, { once:true });
                 card.querySelector('.script-casino-store').addEventListener('click', async () => {
-                    if (busyPokeId != null) return;
+                    if (busyPokeId != null || busySpeciesId != null) return;
                     busyPokeId = pokeId;
                     refreshButton.disabled = true;
                     renderTeam();
@@ -6022,8 +6178,107 @@
                 teamList.appendChild(card);
             });
         };
+        const getNewTeamPokemon = (previousTeam, expectedSpeciesId = 0) => teamPokemon.filter(poke => {
+            const pokeId = getPokeId(poke);
+            const matchesOffer = !expectedSpeciesId || Number(poke?.speciesId || 0) === Number(expectedSpeciesId);
+            return pokeId && matchesOffer && (!previousTeam.has(pokeId)
+                || previousTeam.get(pokeId) !== Number(poke?.speciesId || 0));
+        });
+        const refreshPurchasedPokemon = async (previousTeam, expectedSpeciesId) => {
+            let purchased = [];
+            for (let attempt = 0; attempt < 4 && !closed; attempt += 1) {
+                await refreshCasinoData();
+                purchased = getNewTeamPokemon(previousTeam, expectedSpeciesId);
+                if (purchased.length) break;
+                if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 140));
+            }
+            return purchased;
+        };
+        const processCasinoQuantity = async (initialOffer, requestedQuantity) => {
+            const total = Math.max(1, Math.min(999, Math.floor(Number(requestedQuantity) || 1)));
+            const speciesId = Number(initialOffer?.speciesId || 0);
+            if (!speciesId || busySpeciesId != null || busyPokeId != null) return;
+            busySpeciesId = speciesId;
+            refreshButton.disabled = true;
+            autoStoreInput.disabled = true;
+            let completed = 0;
+            let automaticallyStored = 0;
+            let lastError = null;
+            render();
+            renderTeam();
+            try {
+                for (let index = 0; index < total && !closed; index += 1) {
+                    const currentOffer = (Array.isArray(payload?.offers) ? payload.offers : [])
+                        .find(entry => Number(entry?.speciesId || 0) === speciesId) || initialOffer;
+                    if (!currentOffer?.canBuy) {
+                        lastError = new Error(getMarlonOfferReason(currentOffer, payload));
+                        break;
+                    }
+                    setStatus(formatCasinoText(tr('casinoBuyingProgress'), {
+                        current:index + 1, total, name:currentOffer.name || initialOffer.name || 'Pokémon'
+                    }));
+                    const previousTeam = new Map(teamPokemon.map(poke => [
+                        getPokeId(poke), Number(poke?.speciesId || 0)
+                    ]));
+                    try {
+                        await gameApiRequest('/api/game/marlon/buy', {
+                            method:'POST', body:JSON.stringify({ speciesId })
+                        });
+                        completed += 1;
+                        sendGameMessage({ type:'inv-get' });
+                        const purchased = await refreshPurchasedPokemon(previousTeam, speciesId);
+                        purchased.forEach(poke => recentTeamIds.add(getPokeId(poke)));
+                        announceIvGoalMatches(getTeamViews().visible);
+
+                        if (autoStorePurchases) {
+                            const visibleIds = new Set(getTeamViews().visible.map(getPokeId));
+                            const storable = purchased.filter(poke => visibleIds.has(getPokeId(poke)));
+                            if (!storable.length) {
+                                lastError = new Error(tr('casinoAutoStoreError'));
+                                break;
+                            }
+                            for (const poke of storable) {
+                                try {
+                                    await storeTeamPokemon(poke, {
+                                        silent:true, refreshCatalog:false, shouldRender:false
+                                    });
+                                    automaticallyStored += 1;
+                                } catch (error) {
+                                    lastError = new Error(`${tr('casinoAutoStoreError')} ${error.message || ''}`.trim());
+                                    break;
+                                }
+                            }
+                            try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
+                            if (lastError) break;
+                        }
+                    } catch (error) {
+                        lastError = error;
+                        break;
+                    }
+                }
+            } finally {
+                try { await refreshCasinoData(); } catch (_) {}
+                busySpeciesId = null;
+                refreshButton.disabled = false;
+                autoStoreInput.disabled = false;
+                if (!closed) {
+                    render();
+                    renderTeam();
+                    const name = initialOffer.name || 'Pokémon';
+                    const baseMessage = formatCasinoText(tr(completed === total
+                        ? (initialOffer.isTrade ? 'casinoBatchTraded' : 'casinoBatchBought')
+                        : 'casinoBatchPartial'), { done:completed, total, name });
+                    const storedMessage = automaticallyStored > 0
+                        ? formatCasinoText(tr('casinoBatchStored'), { count:automaticallyStored }) : '';
+                    const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
+                    setStatus(`${baseMessage}${storedMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                }
+            }
+        };
         const render = () => {
             const offers = Array.isArray(payload?.offers) ? payload.offers : [];
+            autoStoreInput.checked = autoStorePurchases;
+            autoStoreInput.disabled = busySpeciesId != null || busyPokeId != null;
             balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
             team.textContent = `${tr('casinoTeam')}: ${Number(payload?.teamCount || 0).toLocaleString('pt-BR')}/${Number(payload?.maxTeam || 0).toLocaleString('pt-BR')}`;
             warning.hidden = payload?.hasRoom !== false;
@@ -6059,51 +6314,21 @@
                     </div>
                     <div class="script-casino-action-row">
                         <span class="script-casino-reason">${escapeHTML(reason)}</span>
-                        <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
+                        <div class="script-casino-purchase-controls">
+                            <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}></label>
+                            <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
+                        </div>
                     </div>`;
                 card.querySelector('.script-casino-art img').addEventListener('error', event => {
                     event.currentTarget.src = getPokeApiSpriteUrl({ speciesId: offer.speciesId });
                 }, { once:true });
+                const quantityInput = card.querySelector('.script-casino-quantity');
+                quantityInput.addEventListener('change', () => {
+                    quantityInput.value = String(Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1))));
+                });
                 card.querySelector('.script-casino-buy').addEventListener('click', async () => {
-                    if (!offer.canBuy || busySpeciesId != null) return;
-                    const previousTeam = new Map(teamPokemon.map(poke => [
-                        getPokeId(poke), Number(poke?.speciesId || 0)
-                    ]));
-                    busySpeciesId = offer.speciesId;
-                    refreshButton.disabled = true;
-                    render();
-                    setStatus(`${offer.isTrade ? tr('casinoTrade') : tr('casinoBuy')} ${offer.name || ''}…`);
-                    try {
-                        const result = await gameApiRequest('/api/game/marlon/buy', {
-                            method:'POST',
-                            body:JSON.stringify({ speciesId:offer.speciesId })
-                        });
-                        sendGameMessage({ type:'inv-get' });
-                        const successKey = (result?.isTrade ?? offer.isTrade) ? 'casinoTraded' : 'casinoBought';
-                        const successMessage = formatCasinoText(tr(successKey), {
-                            name:result?.name || offer.name || 'Pokémon',
-                            gold:Number(result?.goldSpent ?? offer.price ?? 0).toLocaleString('pt-BR')
-                        });
-                        try {
-                            await refreshCasinoData();
-                            teamPokemon.forEach(poke => {
-                                const pokeId = getPokeId(poke);
-                                if (!previousTeam.has(pokeId) || previousTeam.get(pokeId) !== Number(poke?.speciesId || 0)) {
-                                    recentTeamIds.add(pokeId);
-                                }
-                            });
-                            setStatus(successMessage, 'success');
-                        } catch (refreshError) {
-                            console.warn('La operación de Marlon se completó, pero no se pudo refrescar el catálogo.', refreshError);
-                            setStatus(successMessage, 'success');
-                        }
-                    } catch (error) {
-                        setStatus(`${tr('casinoActionError')} ${error.message || ''}`.trim(), 'error');
-                    } finally {
-                        busySpeciesId = null;
-                        refreshButton.disabled = false;
-                        if (!closed) { render(); renderTeam(); }
-                    }
+                    if (!offer.canBuy || busySpeciesId != null || busyPokeId != null) return;
+                    await processCasinoQuantity(offer, quantityInput.value);
                 });
                 list.appendChild(card);
             });
@@ -6136,6 +6361,10 @@
         refreshButton.addEventListener('click', load);
         bulkStoreButton.addEventListener('click', storeAllPurchasedPokemon);
         bulkSellButton.addEventListener('click', sellAllPurchasedPokemon);
+        autoStoreInput.addEventListener('change', () => {
+            autoStorePurchases = autoStoreInput.checked;
+            localStorage.setItem(autoStoreStorageKey, autoStorePurchases ? '1' : '0');
+        });
         ivGoalInput.addEventListener('change', () => {
             const parsed = Math.round(Number(ivGoalInput.value) || 0);
             ivGoal = Math.max(0, Math.min(192, parsed));
@@ -7948,6 +8177,8 @@
         let inventory = [];
         let familyData = null;
         let busy = false;
+        const depotItemFilters = { name:'', category:'all' };
+        const familyItemFilters = { name:'', category:'all' };
         const depotPokeFilters = { name: '', ivMin: '', ivMax: '', qualityMin: '', qualityMax: '' };
         const familyPokeFilters = { name: '', ivMin: '', ivMax: '', qualityMin: '', qualityMax: '' };
         const depotQualityTiers = [
@@ -8301,6 +8532,60 @@
             return true;
         });
 
+        const getDepotItemCategory = entry => {
+            const itemId = entry?.itemId ?? entry?.id;
+            const entryName = String(entry?.name || entry?.itemName || '').trim();
+            const itemData = globalItemApiData.get(String(itemId))
+                || globalItemApiData.get(entryName.toLocaleLowerCase().trim())
+                || {};
+            const descriptors = [
+                entry?.category, entry?.kind, entry?.type, entry?.itemKind,
+                itemData?.category, itemData?.kind, itemData?.type, itemData?.itemKind
+            ].filter(Boolean).join(' ').toLocaleLowerCase();
+            const resolvedName = String(entryName || itemData?.name || itemData?.title || '').toLocaleLowerCase();
+            return /(^|[\s_-])stones?($|[\s_-])/.test(descriptors) || /\bstone\b/.test(resolvedName)
+                ? 'stones' : 'misc';
+        };
+        const filterDepotItems = (entries, filters) => {
+            const query = String(filters?.name || '').trim().toLocaleLowerCase();
+            const category = filters?.category || 'all';
+            return (Array.isArray(entries) ? entries : []).filter(entry => {
+                const itemId = entry?.itemId ?? entry?.id;
+                const itemData = globalItemApiData.get(String(itemId)) || {};
+                const name = String(entry?.name || entry?.itemName || itemData?.name || itemData?.title || `Item #${itemId ?? ''}`).toLocaleLowerCase();
+                if (query && !name.includes(query)) return false;
+                return category === 'all' || getDepotItemCategory(entry) === category;
+            });
+        };
+        const makeDepotItemFilters = filters => {
+            const controls = document.createElement('div');
+            controls.className = 'portable-depot-item-filters';
+            controls.setAttribute('aria-label', tr('depotItemFilters'));
+            controls.innerHTML = `
+                <label class="portable-depot-item-search-wrap">
+                    <span aria-hidden="true">⌕</span>
+                    <input class="portable-depot-item-search" type="search" value="${escapeHTML(filters.name)}" placeholder="${escapeHTML(tr('depotSearchItems'))}" autocomplete="off">
+                </label>
+                <div class="portable-depot-item-categories" role="group" aria-label="${escapeHTML(tr('depotItemFilters'))}">
+                    <button class="portable-depot-item-category${filters.category === 'all' ? ' on' : ''}" data-item-category="all" type="button">▦ ${escapeHTML(tr('depotFilterAll'))}</button>
+                    <button class="portable-depot-item-category${filters.category === 'stones' ? ' on' : ''}" data-item-category="stones" type="button">◆ ${escapeHTML(tr('depotFilterStones'))}</button>
+                    <button class="portable-depot-item-category${filters.category === 'misc' ? ' on' : ''}" data-item-category="misc" type="button">📦 ${escapeHTML(tr('depotFilterMisc'))}</button>
+                </div>`;
+            const search = controls.querySelector('.portable-depot-item-search');
+            search.addEventListener('input', () => {
+                filters.name = search.value;
+                render();
+                const replacement = content.querySelector('.portable-depot-item-search');
+                replacement?.focus();
+                replacement?.setSelectionRange?.(replacement.value.length, replacement.value.length);
+            });
+            controls.querySelectorAll('[data-item-category]').forEach(button => button.addEventListener('click', () => {
+                filters.category = button.dataset.itemCategory || 'all';
+                render();
+            }));
+            return controls;
+        };
+
         const makeDepotPokemonFilters = filters => {
             const controls = document.createElement('div');
             const visibleTiers = filters === familyPokeFilters ? familyVisibleTiers : depotVisibleTiers;
@@ -8466,11 +8751,12 @@
             const previousColumnScrolls = Array.from(content.querySelectorAll('section')).map(section => section.scrollTop);
             content.innerHTML = '';
             content.style.cssText = '';
-            content.classList.toggle('has-filters', activeTab === 'pokemon' || activeTab === 'family-pokemon');
+            content.classList.toggle('has-filters', ['items', 'pokemon', 'family-items', 'family-pokemon'].includes(activeTab));
             content.classList.toggle('has-family-header', activeTab === 'family-items' || activeTab === 'family-pokemon');
             if (activeTab === 'items') {
-                const bag = depotData?.inventory || [];
-                const stored = depotData?.depot || [];
+                const bag = filterDepotItems(depotData?.inventory || [], depotItemFilters);
+                const stored = filterDepotItems(depotData?.depot || [], depotItemFilters);
+                content.appendChild(makeDepotItemFilters(depotItemFilters));
                 content.append(
                     makeColumn(tr('depotBag'), bag, 'store', 'A mochila está vazia.'),
                     makeColumn(`Depot · ${depotData?.depot?.length || 0}/${depotData?.maxSlots || 0}`, stored, 'withdraw', 'O Depot está vazio.')
@@ -8492,9 +8778,12 @@
                     name: inventoryById.get(String(item.itemId))?.name || globalItemApiData.get(String(item.itemId))?.name || `Item #${item.itemId}`,
                     icon: inventoryById.get(String(item.itemId))?.icon || globalItemApiData.get(String(item.itemId))?.icon || ''
                 }));
+                const familyBag = filterDepotItems(bag, familyItemFilters);
+                const familyStored = filterDepotItems(familyData?.depot?.items || [], familyItemFilters);
+                content.appendChild(makeDepotItemFilters(familyItemFilters));
                 content.append(
-                    makeFamilyColumn(tr('depotYourBag'), bag, 'deposit', 'item'),
-                    makeFamilyColumn(tr('depotFamily'), familyData?.depot?.items || [], 'withdraw', 'item')
+                    makeFamilyColumn(tr('depotYourBag'), familyBag, 'deposit', 'item'),
+                    makeFamilyColumn(tr('depotFamily'), familyStored, 'withdraw', 'item')
                 );
             } else if (activeTab === 'family-pokemon') {
                 renderFamilyHeader();
@@ -8583,14 +8872,24 @@
 
         const backdrop = document.createElement('div');
         backdrop.className = 'sell-confirm-backdrop hunt-sell-backdrop';
+        const botanyLabelsEnabled = isSellBotanyLabelsEnabled();
         backdrop.innerHTML = `
-            <div class="sell-confirm-modal script-npc-sell-window script-npc-item-sell" style="width:min(900px,96vw);max-width:96vw;">
+            <div class="sell-confirm-modal script-npc-sell-window script-npc-item-sell${botanyLabelsEnabled ? ' botany-labels-on' : ''}" style="width:min(900px,96vw);max-width:96vw;">
                 <div class="sell-confirm-title">
                     <span>🛒 ${tr('sellNpcItems')}</span>
                     <button class="hunt-pokemon-open mk-bulk-btn" type="button" style="margin-left:auto;">🐾 Pokémon</button>
                     <button class="hunt-sell-close" type="button" style="margin-left:auto;background:none;border:0;color:#a0aec0;font-size:20px;cursor:pointer;">×</button>
                 </div>
                 <div class="sell-confirm-body">
+                    <div class="hunt-sell-tools">
+                        <span class="hunt-sell-tools-copy"><b>Protección de materiales</b><small>Identifica y protege materiales usados por las recetas de Botánica.</small></span>
+                        <label class="hunt-sell-botany-toggle" title="Mostrar en cada objeto las Berries que utilizan este material">
+                            <input class="hunt-sell-botany-checkbox" type="checkbox"${botanyLabelsEnabled ? ' checked' : ''}><span class="hunt-sell-switch" aria-hidden="true"></span><span>🌿 Ver Botánica</span>
+                        </label>
+                        <label class="hunt-sell-botany-toggle hunt-sell-botany-lock-toggle" title="Bloquear o desbloquear juntos todos los materiales de Botánica disponibles">
+                            <input class="hunt-sell-botany-lock-checkbox" type="checkbox" disabled><span class="hunt-sell-switch" aria-hidden="true"></span><span>🔒 Bloquear materiales</span><b class="hunt-sell-botany-count">0/0</b>
+                        </label>
+                    </div>
                     <div class="hunt-sell-status" style="color:#a0aec0;text-align:center;padding:16px;">Carregando inventário...</div>
                     <div class="hunt-sell-list"></div>
                     <div class="sell-confirm-footer" style="display:none;">
@@ -8616,6 +8915,14 @@
         const footer = backdrop.querySelector('.sell-confirm-footer');
         const submit = backdrop.querySelector('.hunt-sell-submit');
         const selectAll = backdrop.querySelector('.hunt-sell-select-all');
+        const sellModal = backdrop.querySelector('.script-npc-item-sell');
+        const botanyCheckbox = backdrop.querySelector('.hunt-sell-botany-checkbox');
+        const botanyLockCheckbox = backdrop.querySelector('.hunt-sell-botany-lock-checkbox');
+        const botanyCount = backdrop.querySelector('.hunt-sell-botany-count');
+        botanyCheckbox.addEventListener('change', () => {
+            sellModal.classList.toggle('botany-labels-on', botanyCheckbox.checked);
+            try { localStorage.setItem(STORAGE_SELL_BOTANY_LABELS, String(botanyCheckbox.checked)); } catch (_) {}
+        });
 
         try {
             const [inventory, shopData] = await Promise.all([
@@ -8649,6 +8956,7 @@
 
             status.style.display = 'none';
             footer.style.display = 'flex';
+            let syncBotanyBulkLockState = () => {};
             inventory.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
                 const protectionReason = getItemProtectionReason(item);
                 const isProtected = Boolean(protectionReason);
@@ -8664,7 +8972,11 @@
 
                 const name = document.createElement('span');
                 name.className = 'hunt-sell-info';
-                name.innerHTML = `<small class="hunt-sell-kind">OBJETO NPC</small><b class="hunt-sell-name">${escapeHTML(item.name)}</b><small class="hunt-sell-meta"><span class="npc-item-stock">📦 ${item.qty.toLocaleString('pt-BR')} disponibles</span> · <span class="hunt-sell-price">💲 ${item.npcPrice.toLocaleString('pt-BR')} c/u</span></small>`;
+                const berryLabels = getBotanyBerryLabels(item.itemId);
+                const botanyTags = buildBotanySellTags(berryLabels);
+                row.classList.toggle('has-botany-material', berryLabels.length > 0);
+                row.dataset.botanyMaterial = berryLabels.length ? 'true' : 'false';
+                name.innerHTML = `<small class="hunt-sell-kind">OBJETO NPC</small><b class="hunt-sell-name">${escapeHTML(item.name)}</b><small class="hunt-sell-meta"><span class="npc-item-stock">📦 ${item.qty.toLocaleString('pt-BR')} disponibles</span> · <span class="hunt-sell-price">💲 ${item.npcPrice.toLocaleString('pt-BR')} c/u</span></small>${botanyTags}`;
 
                 const art = document.createElement('span');
                 art.className = 'hunt-sell-art';
@@ -8680,25 +8992,81 @@
                 quantity.value = String(item.qty);
                 quantity.disabled = isProtected;
 
-                const lock = document.createElement('span');
-                lock.textContent = isProtected ? '🔒' : '🔓';
-                lock.title = protectionReason ? `Bloqueado por: ${protectionReason}. Clique para desbloquear.` : 'Clique para bloquear pelo cadeado nativo do Mark';
-                lock.setAttribute('role', 'button'); lock.tabIndex = 0;
-                lock.style.cssText = 'cursor:pointer;font-size:16px;padding:4px;';
+                const lock = document.createElement('button');
+                lock.type = 'button';
+                lock.className = 'hunt-item-lock';
+                const applyItemLockState = (locked, reason = '') => {
+                    const protectedNow = Boolean(locked);
+                    lock.textContent = protectedNow ? '🔒' : '🔓';
+                    lock.title = protectedNow
+                        ? `Bloqueado${reason ? ` por: ${reason}` : ''}. Pulsa para desbloquear.`
+                        : 'Bloquear este objeto con el candado nativo del juego';
+                    checkbox.disabled = protectedNow;
+                    quantity.disabled = protectedNow;
+                    if (protectedNow) checkbox.checked = false;
+                    row.classList.toggle('protected', protectedNow);
+                    row.dataset.locked = protectedNow ? 'true' : 'false';
+                };
+                applyItemLockState(isProtected, protectionReason);
                 lock.addEventListener('click', async event => {
                     event.preventDefault(); event.stopPropagation();
+                    lock.disabled = true;
                     try {
                         const locked = await togglePortableItemProtection(item);
-                        lock.textContent = locked ? '🔒' : '🔓';
-                        checkbox.disabled = locked;
-                        quantity.disabled = locked;
-                        if (locked) checkbox.checked = false;
+                        applyItemLockState(locked, locked ? getItemProtectionReason(item) : '');
+                        syncBotanyBulkLockState();
                         updateSaleSummary();
                     } catch (error) { showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), error.message, true); }
+                    finally { lock.disabled = false; }
                 });
+                row._pgBotanyLock = { item, applyItemLockState, lock };
                 row.append(checkbox, art, name, quantity, lock);
                 list.appendChild(row);
             });
+
+            const getBotanyLockRows = () => Array.from(list.querySelectorAll('.hunt-sell-row[data-botany-material="true"]'));
+            syncBotanyBulkLockState = () => {
+                const materialRows = getBotanyLockRows();
+                const lockedCount = materialRows.filter(row => Boolean(getItemProtectionReason(row._pgBotanyLock.item))).length;
+                botanyCount.textContent = `${lockedCount}/${materialRows.length}`;
+                botanyLockCheckbox.disabled = materialRows.length === 0;
+                botanyLockCheckbox.checked = materialRows.length > 0 && lockedCount === materialRows.length;
+                botanyLockCheckbox.indeterminate = lockedCount > 0 && lockedCount < materialRows.length;
+                botanyLockCheckbox.closest('label').title = materialRows.length
+                    ? `${lockedCount} de ${materialRows.length} materiales de Botánica están protegidos`
+                    : 'No hay materiales de Botánica vendibles en el inventario';
+            };
+            botanyLockCheckbox.addEventListener('change', async () => {
+                const desiredLocked = botanyLockCheckbox.checked;
+                const materialRows = getBotanyLockRows();
+                botanyLockCheckbox.disabled = true;
+                botanyCheckbox.disabled = true;
+                status.textContent = `${desiredLocked ? 'Bloqueando' : 'Desbloqueando'} ${materialRows.length} materiales de Botánica…`;
+                status.style.display = '';
+                let failures = 0;
+                for (const row of materialRows) {
+                    const control = row._pgBotanyLock;
+                    const currentlyLocked = Boolean(getItemProtectionReason(control.item));
+                    if (currentlyLocked === desiredLocked) continue;
+                    control.lock.disabled = true;
+                    try {
+                        const locked = await togglePortableItemProtection(control.item, desiredLocked);
+                        control.applyItemLockState(locked, locked ? getItemProtectionReason(control.item) : '');
+                    } catch (error) {
+                        failures += 1;
+                        console.warn(`No se pudo cambiar el bloqueo de ${control.item.name}:`, error);
+                    } finally {
+                        control.lock.disabled = false;
+                    }
+                }
+                botanyCheckbox.disabled = false;
+                syncBotanyBulkLockState();
+                updateSaleSummary();
+                showWindowMessage(sellModal, failures
+                    ? `Se actualizaron los materiales, pero ${failures} no pudieron cambiarse.`
+                    : `${materialRows.length} materiales de Botánica fueron ${desiredLocked ? 'protegidos' : 'desbloqueados'}.`, failures > 0);
+            });
+            syncBotanyBulkLockState();
 
             const updateSaleSummary = () => {
                 let total = 0;
@@ -8768,6 +9136,7 @@
                             checkbox.checked = false;
                             row.querySelector('.npc-item-stock').textContent = `📦 ${remaining.toLocaleString('pt-BR')} disponibles`;
                         });
+                        syncBotanyBulkLockState();
                         updateSaleSummary();
                         showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), `Venda concluída: +💲${Number(result.goldGained || 0).toLocaleString('pt-BR')}`);
                         submit.disabled = false;
@@ -13962,27 +14331,6 @@
         return ivText ? Number(ivText.replace(',', '.')) : null;
     }
 
-    let huntAnalyzerRenderRefreshPending = false;
-    function refreshHuntAnalyzerGameRender() {
-        if (huntAnalyzerRenderRefreshPending || document.hidden) return;
-        if (!document.querySelector('.ha-window:not(.ha-compare-modal)')) return;
-        huntAnalyzerRenderRefreshPending = true;
-        setTimeout(() => {
-            try {
-                const event = new Event('visibilitychange');
-                Object.defineProperty(event, 'piwQolRenderRefresh', { value: true });
-                document.dispatchEvent(event);
-            } finally {
-                huntAnalyzerRenderRefreshPending = false;
-            }
-        }, 80);
-    }
-
-    document.addEventListener('visibilitychange', event => {
-        if (!event.piwQolRenderRefresh && !document.hidden) refreshHuntAnalyzerGameRender();
-    });
-    window.addEventListener('focus', refreshHuntAnalyzerGameRender);
-
     function showCompareModal() {
         const curr = currentHuntSnapshot || { defeated: 0, timeText: '0s', balance: 0, balHour: 0, xpHour: 0, killsHour: 0, xpGained: 0, locName: 'Nenhuma' };
         const last = lastHuntSnapshot || huntHistory[0] || { defeated: 0, timeText: '0s', balance: 0, balHour: 0, xpHour: 0, killsHour: 0, xpGained: 0, locName: 'Nenhuma' };
@@ -14102,7 +14450,6 @@
     function trackHuntAnalyzer() {
         const haWindow = document.querySelector('.ha-window:not(.ha-compare-modal)');
         if (!haWindow) return;
-        refreshHuntAnalyzerGameRender();
 
         const getCardVal = (idx) => {
             const card = haWindow.querySelectorAll('.ha-card b')[idx];
