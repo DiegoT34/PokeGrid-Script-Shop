@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-09-23T08:21:29Z",
+    "updatedAt":  "2026-09-23T10:22:20Z",
     "scripts":  [
                     {
                         "id":  "better-market-and-more",
@@ -26,7 +26,7 @@
                                         ],
                         "minLauncherVersion":  "0.22.1",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
-                        "sha256":  "95ace7315659be7eb2989054e75dd8f52ae191d4b65e506e157fde0c188cd988",
+                        "sha256":  "63b6ea5497399f38febb74bcaa7f424e67d5b474889439a77b0ac8f6e75a2da8",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
                         "changelog":  "Actualización 10.20.0",
                         "icon":  "🛒",

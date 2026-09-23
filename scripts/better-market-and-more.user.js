@@ -6672,7 +6672,7 @@
         if (!document.getElementById('script-independent-shop-bar-style')) {
             const style = document.createElement('style');
             style.id = 'script-independent-shop-bar-style';
-            style.textContent = '#script-independent-shop-bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:6px;max-width:96vw;box-sizing:border-box;padding:7px;background:linear-gradient(145deg,#111e27f5,#081117f5);border:1px solid #8a682d;border-radius:13px;box-shadow:0 8px 28px #000b,inset 0 1px #ffffff12;overflow-x:auto;overscroll-behavior:contain;scrollbar-width:thin}#script-independent-shop-bar .script-shop-bar-button,#script-independent-shop-bar .script-shop-bar-grip{position:relative;flex:0 0 auto;min-width:64px;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 8px;color:#e9dfca;background:linear-gradient(145deg,#192a33,#101a20);border:1px solid #334957;border-radius:9px;cursor:pointer;touch-action:manipulation}#script-independent-shop-bar .script-shop-bar-button:hover{background:linear-gradient(145deg,#253b45,#15252d);border-color:#c49b4a;transform:translateY(-1px)}#script-independent-shop-bar .script-shop-bar-button small{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 10px system-ui,sans-serif}#script-independent-shop-bar .script-shop-bar-icon{width:27px;height:27px;display:grid;place-items:center;font:20px system-ui,sans-serif}#script-independent-shop-bar .script-shop-bar-icon img,#script-independent-shop-bar .script-menu-sprite-rotator{width:25px;height:25px;object-fit:contain;image-rendering:pixelated}#script-independent-shop-bar .script-shop-bar-grip{min-width:25px;width:25px;padding:0;color:#9cb0bc;background:transparent;border-color:transparent;cursor:grab;font-size:16px}#script-independent-shop-bar .script-shop-bar-grip:active{cursor:grabbing}#script-independent-shop-bar .script-shop-bar-toggle{flex:0 0 auto;min-width:32px;width:32px;height:56px;display:flex;align-items:center;justify-content:center;padding:0;color:#d8c69a;background:linear-gradient(145deg,#22343f,#131e25);border:1px solid #4a6274;border-radius:9px;cursor:pointer;font-size:15px;line-height:1}#script-independent-shop-bar .script-shop-bar-toggle:hover{background:linear-gradient(145deg,#2c4450,#182a33);border-color:#c49b4a}#script-independent-shop-bar .script-shop-bar-chevron{display:block;transition:transform .18s ease}#script-independent-shop-bar.is-collapsed .script-shop-bar-chevron{transform:rotate(180deg)}#script-independent-shop-bar.is-collapsed .script-shop-bar-button{display:none !important}#script-independent-shop-bar.is-collapsed{gap:4px;padding:5px 6px;overflow-x:hidden}@media(max-width:600px){#script-independent-shop-bar{gap:4px;padding:5px;max-width:98vw}#script-independent-shop-bar .script-shop-bar-button{min-width:53px;min-height:52px;padding:4px}#script-independent-shop-bar .script-shop-bar-button small{max-width:73px;font-size:9px}#script-independent-shop-bar .script-shop-bar-toggle{min-width:28px;width:28px;height:52px}}';
+            style.textContent = '#script-independent-shop-bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:2147483000;display:flex;flex-direction:column;align-items:flex-start;gap:4px;max-height:calc(100vh - 28px);box-sizing:border-box;padding:4px;background:transparent;border:none;border-radius:0;box-shadow:none;pointer-events:none;overscroll-behavior:contain}#script-independent-shop-bar .script-shop-bar-list{flex:1 1 auto;min-height:0;width:176px;display:flex;flex-direction:column;align-items:flex-start;gap:4px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;pointer-events:none}#script-independent-shop-bar .script-shop-bar-list::-webkit-scrollbar{width:0;height:0;display:none}#script-independent-shop-bar .script-shop-bar-button,#script-independent-shop-bar .script-shop-bar-grip{position:relative;flex:0 0 auto;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;color:#e9dfca;background:linear-gradient(145deg,#192a33,#101a20);border:1px solid #334957;border-radius:6px;cursor:pointer;touch-action:manipulation;pointer-events:auto}#script-independent-shop-bar .script-shop-bar-button{width:32px;height:32px;overflow:hidden;white-space:nowrap;padding:0;transform-origin:left center;transition:width .2s cubic-bezier(.22,.8,.25,1),background .15s ease,border-color .15s ease,box-shadow .15s ease}#script-independent-shop-bar .script-shop-bar-button:hover,#script-independent-shop-bar .script-shop-bar-button:focus-visible{width:var(--hover-width,168px);outline:0;color:#fff;background:linear-gradient(145deg,#253b45,#15252d);border-color:#c49b4a;box-shadow:0 4px 12px #000a}#script-independent-shop-bar .script-shop-bar-icon{flex:0 0 30px;width:30px;height:30px;display:grid;place-items:center;font:16px system-ui,sans-serif}#script-independent-shop-bar .script-shop-bar-icon img,#script-independent-shop-bar .script-menu-sprite-rotator{width:16px;height:16px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 2px 2px #000a)}#script-independent-shop-bar .script-shop-bar-label{min-width:0;overflow:hidden;text-overflow:ellipsis;padding-right:8px;text-align:left;font:700 10px system-ui,sans-serif;letter-spacing:.02em;opacity:0;transform:translateX(-4px);transition:opacity .16s ease .05s,transform .16s ease .05s}#script-independent-shop-bar .script-shop-bar-button:hover .script-shop-bar-label,#script-independent-shop-bar .script-shop-bar-button:focus-visible .script-shop-bar-label{opacity:1;transform:none}#script-independent-shop-bar .script-shop-bar-grip{width:32px;height:24px;padding:0;color:#9cb0bc;background:transparent;border-color:transparent;cursor:grab;font-size:11px}#script-independent-shop-bar .script-shop-bar-grip:hover{color:#e9dfca;background:linear-gradient(145deg,#192a33,#101a20);border-color:#334957}#script-independent-shop-bar .script-shop-bar-grip:active{cursor:grabbing}#script-independent-shop-bar .script-shop-bar-arrow{flex:0 0 auto;pointer-events:auto;width:32px;height:16px;display:flex;align-items:center;justify-content:center;padding:0;color:#8fa3b0;background:linear-gradient(145deg,#16262f,#0e181e);border:1px solid #2c414d;border-radius:5px;cursor:pointer;font-size:8px;line-height:1;box-shadow:0 2px 6px #0008}#script-independent-shop-bar .script-shop-bar-arrow:hover{color:#fff;border-color:#c49b4a;background:linear-gradient(145deg,#22384a,#152530)}#script-independent-shop-bar .script-shop-bar-toggle{flex:0 0 auto;pointer-events:auto;width:32px;height:24px;display:flex;align-items:center;justify-content:center;padding:0;color:#d8c69a;background:linear-gradient(145deg,#22343f,#131e25);border:1px solid #4a6274;border-radius:6px;cursor:pointer;font-size:10px;line-height:1}#script-independent-shop-bar .script-shop-bar-toggle:hover{background:linear-gradient(145deg,#2c4450,#182a33);border-color:#c49b4a}#script-independent-shop-bar .script-shop-bar-chevron{display:block;transition:transform .18s ease}#script-independent-shop-bar.is-collapsed .script-shop-bar-chevron{transform:rotate(180deg)}#script-independent-shop-bar.is-collapsed .script-shop-bar-button{display:none !important}#script-independent-shop-bar.is-collapsed{gap:3px;padding:4px}#script-independent-shop-bar .market-alert-dock-badge{right:0;top:2px}@media(max-width:600px){#script-independent-shop-bar{gap:3px;padding:4px}#script-independent-shop-bar .script-shop-bar-button{width:28px;height:28px}#script-independent-shop-bar .script-shop-bar-icon{flex-basis:26px;width:26px;height:26px;font-size:14px}#script-independent-shop-bar .script-shop-bar-icon img,#script-independent-shop-bar .script-menu-sprite-rotator{width:14px;height:14px}#script-independent-shop-bar .script-shop-bar-grip{width:28px;height:22px}#script-independent-shop-bar .script-shop-bar-arrow{width:28px;height:14px;font-size:7px}#script-independent-shop-bar .script-shop-bar-toggle{width:28px;height:22px}}';
             document.head.appendChild(style);
         }
         const bar = document.createElement('div');
@@ -6692,6 +6692,36 @@
         grip.title = 'Arrastrar botonera';
         grip.setAttribute('aria-label', 'Arrastrar botonera');
         bar.appendChild(grip);
+        // Flechas de desplazamiento: solo son visibles cuando la ventana es tan
+        // pequeña que la lista de botones no cabe completa dentro de ella.
+        const list = document.createElement('div');
+        list.className = 'script-shop-bar-list';
+        const makeArrow = (direction) => {
+            const arrow = document.createElement('button');
+            arrow.type = 'button';
+            arrow.className = 'script-shop-bar-arrow';
+            arrow.style.display = 'none';
+            arrow.innerHTML = '<span aria-hidden="true">' + (direction === 'up' ? '▲' : '▼') + '</span>';
+            const label = direction === 'up' ? 'Subir botones' : 'Bajar botones';
+            arrow.title = label;
+            arrow.setAttribute('aria-label', label);
+            arrow.addEventListener('click', () => list.scrollBy({ top: direction === 'up' ? -80 : 80, behavior: 'smooth' }));
+            return arrow;
+        };
+        const upArrow = makeArrow('up');
+        const downArrow = makeArrow('down');
+        bar.appendChild(upArrow);
+        bar.appendChild(list);
+        bar.appendChild(downArrow);
+        function updateArrows() {
+            const overflow = list.scrollHeight > list.clientHeight + 1;
+            const atTop = list.scrollTop <= 0.5;
+            const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 0.5;
+            upArrow.style.display = overflow && !atTop ? 'flex' : 'none';
+            downArrow.style.display = overflow && !atBottom ? 'flex' : 'none';
+        }
+        list.addEventListener('scroll', updateArrows, { passive: true });
+        window.addEventListener('resize', updateArrows);
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.id = 'script-shop-bar-toggle';
@@ -6703,6 +6733,7 @@
             const label = tr(collapsed ? 'shopBarShow' : 'shopBarHide');
             toggle.title = label;
             toggle.setAttribute('aria-label', label);
+            updateArrows();
         };
         try { setBarCollapsed(localStorage.getItem(SCRIPT_SHOP_BAR_COLLAPSED) === '1'); } catch (_) { setBarCollapsed(false); }
         toggle.addEventListener('click', () => {
@@ -6711,27 +6742,48 @@
             try { localStorage.setItem(SCRIPT_SHOP_BAR_COLLAPSED, collapsed ? '1' : '0'); } catch (_) {}
         });
         bar.appendChild(toggle);
+        // Medidor efímero con la misma tipografía que las etiquetas: permite
+        // que cada botón se expanda a su propio ancho de texto (ancho auto-ajustable).
+        const labelMeasurer = document.createElement('span');
+        labelMeasurer.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;font:700 10px system-ui,sans-serif;letter-spacing:.02em;';
+        document.body.appendChild(labelMeasurer);
+        let widestHover = 0;
         const addButton = (id, label, icon, handler, spriteRole) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.id = id;
             button.className = 'script-shop-bar-button';
-            button.title = label;
+            // El nombre ya aparece con el efecto hover (igual que las categorías
+            // del Mercado Global); el tooltip nativo se quitó para no duplicarlo.
             button.setAttribute('aria-label', label);
             const roleAttr = spriteRole ? ' data-menu-sprite="' + spriteRole + '"' : '';
-            button.innerHTML = '<span class="script-shop-bar-icon"' + roleAttr + '>' + icon + '</span><small>' + escapeHTML(label) + '</small>';
+            button.innerHTML = '<span class="script-shop-bar-icon"' + roleAttr + '>' + icon + '</span><span class="script-shop-bar-label">' + escapeHTML(label) + '</span>';
             button.addEventListener('click', handler);
-            bar.appendChild(button);
+            // Ancho de expansión = columna del icono (30px) + ancho real del texto
+            // + padding final (8px) + 2px de margen de seguridad, por botón.
+            labelMeasurer.textContent = label;
+            const hoverWidth = Math.ceil(30 + labelMeasurer.getBoundingClientRect().width + 10);
+            widestHover = Math.max(widestHover, hoverWidth);
+            button.style.setProperty('--hover-width', hoverWidth + 'px');
+            list.appendChild(button);
         };
         addButton('script-shop-bar-market', tr('globalMarket'), SCRIPT_SHOP_MENU_ICONS.market, showGlobalMarketWindow);
         addButton('script-shop-bar-casino', tr('casino'), SCRIPT_SHOP_MENU_ICONS.casino, showPortableCasino);
         addButton('script-shop-bar-stones', tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller, 'stones');
         addButton('script-shop-bar-balls', tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop, 'balls');
         addButton('script-shop-bar-items', tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow, 'sell');
-        addButton('script-shop-bar-pokemon', tr('sellNpcPokemon'), '<img src="' + escapeHTML(getPokemonIconUrl(25) || '') + '" alt="">', showHuntPokemonSellWindow);
+        // Botón «Vender Pokémon» oculto de la botonera (solo visual, a petición del usuario).
+        // La función sigue disponible: la ventana «Vender objetos y Pokémon» abre esta misma ventana.
+        // Descomenta la siguiente línea si quieres restaurar el botón en la botonera.
+        // addButton('script-shop-bar-pokemon', tr('sellNpcPokemon'), '<img src="' + escapeHTML(getPokemonIconUrl(25) || '') + '" alt="">', showHuntPokemonSellWindow);
         // El Depósito ya no vive como botón individual en el dock: forma parte de la botonera.
         addButton('script-shop-bar-depot', tr('depotAccess'), SCRIPT_DOCK_ICONS.depot, showPortableDepot);
+        // La lista reserva el ancho del botón más ancho para que ninguna expansión
+        // se recorte; el área extra es invisible (el fondo de la barra es transparente).
+        if (widestHover > 0) list.style.width = (widestHover + 8) + 'px';
+        labelMeasurer.remove();
         document.body.appendChild(bar);
+        requestAnimationFrame(updateArrows);
         void startScriptShopMenuSprites(bar);
         updateMarketAlertBadges();
         updateMarketSaleDockBadge();
@@ -6746,7 +6798,7 @@
             bar.style.transform = 'none';
             const move = moveEvent => {
                 if (moveEvent.pointerId !== event.pointerId) return;
-                const left = Math.max(0, Math.min(window.innerWidth - bar.offsetWidth, originLeft + moveEvent.clientX - startX));
+                const left = Math.max(0, Math.min(window.innerWidth - 44, originLeft + moveEvent.clientX - startX));
                 const top = Math.max(0, Math.min(window.innerHeight - bar.offsetHeight, originTop + moveEvent.clientY - startY));
                 bar.style.left = left + 'px';
                 bar.style.top = top + 'px';
