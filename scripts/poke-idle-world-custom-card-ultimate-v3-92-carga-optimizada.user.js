@@ -450,7 +450,7 @@
         }
 
         /* --------------------------------------------------- */
-        /* GAME DOCK - ULTRA COMPACTO Y RESPONSIVO             */
+        /* GAME DOCK - FLEXBOX AUTOAJUSTABLE, MÁXIMO 2 FILAS   */
         /* --------------------------------------------------- */
         .game-dock {
             position: fixed !important;
@@ -466,15 +466,16 @@
             border-top: none !important;
             border-radius: 0 0 12px 12px !important;
             padding: 6px 8px !important;
-            display: grid !important;
-            grid-template-columns: repeat(15, 26px) !important; 
+            display: flex !important;
+            flex-wrap: wrap !important;
             justify-content: center !important;
             gap: 4px !important; 
             z-index: 1000 !important;
             box-shadow: 0 5px 25px rgba(0,0,0,0.8) !important;
             transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), top 0.4s, right 0.4s, left 0.4s !important;
             width: max-content !important;
-            max-width: 98vw !important;
+            /* --cc-dock-maxw lo calcula layoutDockRows() para garantizar máximo 2 filas */
+            max-width: min(98vw, var(--cc-dock-maxw, 98vw)) !important;
             overflow: visible !important;
             contain: none !important;
             scale: var(--cc-scale-dock) !important;
@@ -484,7 +485,12 @@
             transform: translateY(-100%) !important; 
         }
         
-        .game-dock > * {
+        /* El juego envuelve todos los botones en .dock-scroll (y el primero
+           además en .dock-poke-wrap). Los disolvemos para que cada botón sea
+           un item directo del flexbox del dock y nada se quede fuera del marco. */
+        .game-dock .dock-scroll, .game-dock .dock-poke-wrap { display: contents !important; }
+
+        .game-dock > *, .game-dock .dock-btn {
             background: #0a1220 !important;
             border: 1px solid #1c3659 !important;
             border-radius: 6px !important;
@@ -496,19 +502,20 @@
             transition: all 0.2s ease !important;
             color: #94a3b8 !important;
             text-decoration: none !important;
-            width: 26px !important;  
-            height: 26px !important; 
+            width: auto !important;  
+            height: auto !important; 
             min-width: 26px !important;
             min-height: 26px !important;
-            max-width: 26px !important;
-            max-height: 26px !important;
+            max-width: 140px !important;
+            max-height: 42px !important;
+            flex: 0 1 auto !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
             cursor: pointer !important;
             position: relative !important; 
         }
         
-        .game-dock > *:hover {
+        .game-dock > *:hover, .game-dock .dock-btn:hover {
             background: rgba(59, 130, 246, 0.2) !important;
             border-color: #3b82f6 !important;
             transform: translateY(-2px) !important;
@@ -527,11 +534,14 @@
             margin: 0 auto !important;
         }
 
-        .game-dock > * > span, .game-dock > * > div:not(.poke-menu):not(.script-shop-menu) {
+        /* Oculta etiquetas de texto dentro de los botones sin tocar badges,
+           flechas ni el contador privado de este script. */
+        .game-dock .dock-btn > span:not(.dock-badge):not(.dock-news-arrow):not(.script-private-chat-badge),
+        .game-dock .dock-btn > div:not(.poke-menu):not(.script-shop-menu) {
             display: none !important; 
         }
         
-        .game-dock .badge, .game-dock [style*="background: red"] {
+        .game-dock .badge, .game-dock .dock-badge, .game-dock [style*="background: red"] {
             display: block !important;
             position: absolute !important;
             top: -3px !important;
@@ -622,7 +632,6 @@
                 margin-right: auto !important;
                 transform: none !important;
                 transform-origin: top center !important;
-                grid-template-columns: repeat(8, 26px) !important;
                 border-radius: 0 0 12px 12px !important;
                 border: 1px solid #1c3659 !important;
                 border-top: none !important;
@@ -1413,6 +1422,45 @@
         }
     }
 
+    /* Dock de navegación (flexbox): calcula el ancho máximo del marco para que
+       los botones se repartan en como máximo 2 filas. Si la mitad redondeada
+       hacia arriba del total cabe en una fila, el resto siempre cabe en la
+       segunda y ningún botón se sale del marco. */
+    function layoutDockRows() {
+        const dock = document.querySelector('.game-dock');
+        if (!dock) return;
+
+        /* El juego envuelve los botones en .dock-scroll (lo disolvemos con
+           display:contents); medimos sus hijos reales, no el contenedor. */
+        const holder = dock.querySelector(':scope > .dock-scroll') || dock;
+        const items = Array.from(holder.children).filter(el => {
+            if (el.id === 'dock-toggle-btn') return false; // flotante, no ocupa hueco de fila
+            if (el.hidden || el.offsetWidth <= 0) return false;
+            const style = getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+        });
+
+        const count = items.length;
+        if (count <= 1) {
+            dock.style.setProperty('--cc-dock-maxw', '98vw');
+            return;
+        }
+
+        const GAP_PX = 4; // debe coincidir con el gap de .game-dock en CSS
+        const perRow = Math.ceil(count / 2);
+        const widths = items.map(el => el.offsetWidth).sort((a, b) => b - a);
+        let contentWidth = 0;
+        for (let i = 0; i < perRow && i < widths.length; i++) contentWidth += widths[i];
+        contentWidth += GAP_PX * Math.max(0, perRow - 1);
+
+        // max-width se aplica al borde exterior: sumar padding y bordes.
+        const dockStyle = getComputedStyle(dock);
+        const chrome = parseFloat(dockStyle.paddingLeft) + parseFloat(dockStyle.paddingRight)
+            + parseFloat(dockStyle.borderLeftWidth) + parseFloat(dockStyle.borderRightWidth);
+
+        dock.style.setProperty('--cc-dock-maxw', `${Math.round(contentWidth + (isNaN(chrome) ? 0 : chrome))}px`);
+    }
+
     function themePartyBars() {
         const partyContainer = document.querySelector('.phud-party');
         if (!partyContainer) return;
@@ -1681,6 +1729,7 @@
             safelyRefresh(setupCaptureBarToggle);
             safelyRefresh(setupHudToggle);
             safelyRefresh(setupDockToggle);
+            safelyRefresh(layoutDockRows);
             safelyRefresh(setupPrivateChatDockBadge);
             safelyRefresh(setupScriptScaleSettings);
             safelyRefresh(setupPhoneShopMenuFix);
