@@ -782,12 +782,12 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros y evoluciones especiales de Eevee, disponibles desde cualquier zona.', casinoRefresh:'Actualizar', casinoLoading:'Consultando las ofertas de Marlon…', casinoEmpty:'Marlon no tiene ofertas disponibles en este momento.', casinoLoadError:'No se pudo consultar a Marlon.', casinoTeam:'Equipo', casinoTeamFull:'Tu equipo está lleno. Libera un espacio antes de recibir otro Pokémon.', casinoEvolution:'EVOLUCIÓN', casinoBuy:'Comprar', casinoTrade:'Intercambiar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Necesitas un Eevee', casinoNeedStone:'Falta la Stone requerida', casinoNoRoom:'Equipo lleno', casinoUnavailable:'No disponible', casinoEeveeRequirement:'Eevee disponible', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar intercambio', casinoConfirmBuyText:'¿Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'¿Intercambiar tu Eevee{stone} y pagar 💲 {gold} para recibir {name}?', casinoBought:'Compraste {name} por 💲 {gold}.', casinoTraded:'Intercambio completado: recibiste {name} y pagaste 💲 {gold}.', casinoActionError:'No se pudo completar la operación con Marlon.', casinoClose:'Cerrar Cassino' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros e evoluções especiais do Eevee, disponíveis de qualquer área.', casinoRefresh:'Atualizar', casinoLoading:'Consultando as ofertas de Marlon…', casinoEmpty:'Marlon não possui ofertas disponíveis neste momento.', casinoLoadError:'Não foi possível consultar Marlon.', casinoTeam:'Equipe', casinoTeamFull:'Sua equipe está cheia. Libere um espaço antes de receber outro Pokémon.', casinoEvolution:'EVOLUÇÃO', casinoBuy:'Comprar', casinoTrade:'Trocar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Você precisa de um Eevee', casinoNeedStone:'Falta a Stone necessária', casinoNoRoom:'Equipe cheia', casinoUnavailable:'Indisponível', casinoEeveeRequirement:'Eevee disponível', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar troca', casinoConfirmBuyText:'Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'Trocar seu Eevee{stone} e pagar 💲 {gold} para receber {name}?', casinoBought:'Você comprou {name} por 💲 {gold}.', casinoTraded:'Troca concluída: você recebeu {name} e pagou 💲 {gold}.', casinoActionError:'Não foi possível concluir a operação com Marlon.', casinoClose:'Fechar Cassino' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { casino:'Casino', casinoTitle:'Casino · Marlon', casinoSubtitle:'Rare Pokémon and special Eevee evolutions, available from any area.', casinoRefresh:'Refresh', casinoLoading:'Checking Marlon’s offers…', casinoEmpty:'Marlon has no offers available right now.', casinoLoadError:'Marlon could not be reached.', casinoTeam:'Team', casinoTeamFull:'Your team is full. Free a slot before receiving another Pokémon.', casinoEvolution:'EVOLUTION', casinoBuy:'Buy', casinoTrade:'Trade', casinoNeedGold:'Not enough gold', casinoNeedEevee:'You need an Eevee', casinoNeedStone:'Required Stone missing', casinoNoRoom:'Team full', casinoUnavailable:'Unavailable', casinoEeveeRequirement:'Eevee available', casinoConfirmBuy:'Confirm purchase', casinoConfirmTrade:'Confirm trade', casinoConfirmBuyText:'Buy {name} for 💲 {gold}?', casinoConfirmTradeText:'Trade your Eevee{stone} and pay 💲 {gold} to receive {name}?', casinoBought:'You bought {name} for 💲 {gold}.', casinoTraded:'Trade completed: you received {name} and paid 💲 {gold}.', casinoActionError:'The operation with Marlon could not be completed.', casinoClose:'Close Casino' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon en el equipo', casinoTeamSubtitle:'Administra inmediatamente los Pokémon comprados o evolucionados.', casinoTeamEmpty:'No hay Pokémon comprados en el equipo.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar en el Box', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon na equipe', casinoTeamSubtitle:'Gerencie imediatamente os Pokémon comprados ou evoluídos.', casinoTeamEmpty:'Não há Pokémon comprados na equipe.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar no Box', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Team Pokémon', casinoTeamSubtitle:'Immediately manage purchased or evolved Pokémon.', casinoTeamEmpty:'There are no purchased Pokémon on the team.', casinoNewPokemon:'NEWLY OBTAINED', casinoStore:'Store', casinoStoreTitle:'Store in Box', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoQuantity:'Cantidad', casinoAutoStore:'Enviar compras al depósito', casinoAutoStoreHint:'Cada Pokémon nuevo se guarda antes de continuar.', casinoBuyingProgress:'Procesando {current} de {total}: {name}…', casinoBatchBought:'Compraste {done} de {total} {name}.', casinoBatchTraded:'Completaste {done} de {total} intercambios de {name}.', casinoBatchStored:' {count} se enviaron automáticamente al depósito.', casinoBatchPartial:'Solo se procesaron {done} de {total} {name}.', casinoAutoStoreError:'La compra se completó, pero no se pudo enviar el Pokémon al depósito.' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoQuantity:'Quantidade', casinoAutoStore:'Enviar compras ao depósito', casinoAutoStoreHint:'Cada Pokémon novo é guardado antes de continuar.', casinoBuyingProgress:'Processando {current} de {total}: {name}…', casinoBatchBought:'Você comprou {done} de {total} {name}.', casinoBatchTraded:'Você concluiu {done} de {total} trocas de {name}.', casinoBatchStored:' {count} foram enviados automaticamente ao depósito.', casinoBatchPartial:'Apenas {done} de {total} {name} foram processados.', casinoAutoStoreError:'A compra foi concluída, mas o Pokémon não pôde ser enviado ao depósito.' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoQuantity:'Quantity', casinoAutoStore:'Send purchases to storage', casinoAutoStoreHint:'Each new Pokémon is stored before continuing.', casinoBuyingProgress:'Processing {current} of {total}: {name}…', casinoBatchBought:'Bought {done} of {total} {name}.', casinoBatchTraded:'Completed {done} of {total} {name} trades.', casinoBatchStored:' {count} were automatically sent to storage.', casinoBatchPartial:'Only processed {done} of {total} {name}.', casinoAutoStoreError:'The purchase completed, but the Pokémon could not be sent to storage.' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Datos de cada Pokémon comprado, capturados antes de ir al depósito.', casinoTeamEmpty:'Aún no has comprado Pokémon.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar en el Box', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Dados de cada Pokémon comprado, capturados antes de irem ao depósito.', casinoTeamEmpty:'Você ainda não comprou Pokémon.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStore:'Guardar', casinoStoreTitle:'Guardar no Box', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Purchased Pokémon', casinoTeamSubtitle:'Data from each purchased Pokémon, captured before it goes to storage.', casinoTeamEmpty:'You have not purchased any Pokémon yet.', casinoNewPokemon:'NEWLY OBTAINED', casinoStore:'Store', casinoStoreTitle:'Store in Box', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoQuantity:'Cantidad', casinoBuyingProgress:'Procesando {current} de {total}: {name}…', casinoBatchBought:'Compraste {done} de {total} {name}.', casinoBatchTraded:'Completaste {done} de {total} intercambios de {name}.', casinoBatchPartial:'Solo se procesaron {done} de {total} {name}.', });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoQuantity:'Quantidade', casinoBuyingProgress:'Processando {current} de {total}: {name}…', casinoBatchBought:'Você comprou {done} de {total} {name}.', casinoBatchTraded:'Você concluiu {done} de {total} trocas de {name}.', casinoBatchPartial:'Apenas {done} de {total} {name} foram processados.', });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoQuantity:'Quantity', casinoBuyingProgress:'Processing {current} of {total}: {name}…', casinoBatchBought:'Bought {done} of {total} {name}.', casinoBatchTraded:'Completed {done} of {total} {name} trades.', casinoBatchPartial:'Only processed {done} of {total} {name}.', });
     Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'VENDER STONE', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'VENDER STONES', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'SELL STONES', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
@@ -2658,11 +2658,6 @@
         .script-casino-team-count { padding:3px 7px;color:#d7c47c;background:#211d10;border:1px solid #62572d;border-radius:999px;font-size:8px;font-weight:900; }
         .script-casino-team-head p { margin:4px 0 0;color:#7892a4;font-size:8px;line-height:1.3; }
         .script-casino-team-tools { margin-top:8px;display:grid;grid-template-columns:minmax(105px,.7fr) 1fr 1fr;gap:5px; }
-        .script-casino-auto-store { grid-column:1/-1;min-width:0;display:flex;align-items:center;gap:7px;padding:6px 8px;color:#bcecff;background:#0a1b28;border:1px solid #32627a;border-radius:6px;font-size:8px;font-weight:900;cursor:pointer;user-select:none; }
-        .script-casino-auto-store input { width:15px;height:15px;margin:0;accent-color:#42c9ef;cursor:pointer; }
-        .script-casino-auto-store-copy { min-width:0;display:flex;flex-direction:column;gap:1px; }
-        .script-casino-auto-store-copy small { color:#7795a7;font-size:6.8px;font-weight:650;line-height:1.2; }
-        .script-casino-auto-store:has(input:checked) { color:#dff9e8;background:#102b24;border-color:#3c8a69; }
         .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9edff5;background:#081722;border:1px solid #2b5268;border-radius:5px;font-size:8px;font-weight:900; }
         .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:24px;padding:2px 5px;color:#f7fbfd;background:#102638;border:1px solid #3a657c;border-radius:4px;font:inherit;text-align:center;outline:none; }
         .script-casino-iv-goal input:focus { border-color:#66d9ff;box-shadow:0 0 0 2px #31bfe62c; }
@@ -5845,14 +5840,10 @@
                         <div class="script-casino-team-head">
                             <div class="script-casino-team-head-line">
                                 <h3>⚔ ${escapeHTML(tr('casinoTeamTitle'))}</h3>
-                                <span class="script-casino-team-count">0/0</span>
+                                <span class="script-casino-team-count">0</span>
                             </div>
                             <p>${escapeHTML(tr('casinoTeamSubtitle'))}</p>
                             <div class="script-casino-team-tools">
-                                <label class="script-casino-auto-store">
-                                    <input class="script-casino-auto-store-input" type="checkbox">
-                                    <span class="script-casino-auto-store-copy"><b>${escapeHTML(tr('casinoAutoStore'))}</b><small>${escapeHTML(tr('casinoAutoStoreHint'))}</small></span>
-                                </label>
                                 <label class="script-casino-iv-goal"><span>${escapeHTML(tr('casinoIvGoal'))}</span><input class="script-casino-iv-goal-input" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoIvGoalHint'))}"></label>
                                 <button class="script-casino-bulk-action script-casino-bulk-store" type="button">📦 ${escapeHTML(tr('casinoStoreAll'))}</button>
                                 <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">💲 ${escapeHTML(tr('casinoSellAll'))}</button>
@@ -5873,23 +5864,21 @@
         const refreshButton = backdrop.querySelector('.script-casino-refresh');
         const teamList = backdrop.querySelector('.script-casino-team-list');
         const teamCount = backdrop.querySelector('.script-casino-team-count');
-        const autoStoreInput = backdrop.querySelector('.script-casino-auto-store-input');
         const ivGoalInput = backdrop.querySelector('.script-casino-iv-goal-input');
         const bulkStoreButton = backdrop.querySelector('.script-casino-bulk-store');
         const bulkSellButton = backdrop.querySelector('.script-casino-bulk-sell');
         let payload = null;
         let teamPokemon = [];
+        let allPokes = [];
+        const purchasedPokemon = [];
         const recentTeamIds = new Set();
         const alertedGoalPokeIds = new Set();
         const ivGoalStorageKey = 'script_casino_iv_goal_v1';
-        const autoStoreStorageKey = 'script_casino_auto_store_v1';
         let ivGoal = Math.max(0, Math.min(192, Number(localStorage.getItem(ivGoalStorageKey)) || 0));
-        let autoStorePurchases = localStorage.getItem(autoStoreStorageKey) === '1';
         let busySpeciesId = null;
         let busyPokeId = null;
         let closed = false;
         ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
-        autoStoreInput.checked = autoStorePurchases;
 
         const close = () => {
             if (closed) return;
@@ -5911,6 +5900,7 @@
             }
             if (!pokemon.length) pokemon = await requestPokemonTeamFromGameContext(1800);
             if (pokemon.length) latestPokemon = pokemon;
+            allPokes = pokemon;
             return pokemon.filter(poke => poke?.team)
                 .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
         };
@@ -5947,12 +5937,6 @@
         const isTeamPokemonProtected = poke => Boolean(
             poke?.starter || isNativeLocked(poke) || poke?.shiny || poke?.market || poke?.listed
         );
-        const getTeamViews = () => {
-            const ordered = [...teamPokemon].sort((a, b) => Number(a?.slot ?? 99) - Number(b?.slot ?? 99));
-            const principal = ordered.find(poke => poke?.leader) || ordered[0] || null;
-            const principalId = principal ? getPokeId(principal) : '';
-            return { ordered, principal, visible:ordered.filter(poke => getPokeId(poke) !== principalId) };
-        };
         const showIvGoalAlert = matches => {
             if (closed || !matches.length || ivGoal <= 0) return;
             backdrop.querySelector('.script-casino-goal-alert')?.remove();
@@ -5974,9 +5958,9 @@
             backdrop.appendChild(alert);
             setTimeout(() => alert.remove(), 6500);
         };
-        const announceIvGoalMatches = visibleTeam => {
+        const announceIvGoalMatches = team => {
             if (ivGoal <= 0) return;
-            const matches = visibleTeam.filter(poke => recentTeamIds.has(getPokeId(poke))
+            const matches = team.filter(poke => recentTeamIds.has(getPokeId(poke))
                 && Number(poke?.ivTotal || 0) >= ivGoal
                 && !alertedGoalPokeIds.has(getPokeId(poke)));
             if (!matches.length) return;
@@ -6023,6 +6007,8 @@
                     method:'POST', body:JSON.stringify({ pokeIds:[pokeId] })
                 });
                 recentTeamIds.delete(pokeId);
+                const soldIndex = purchasedPokemon.findIndex(entry => getPokeId(entry) === pokeId);
+                if (soldIndex !== -1) purchasedPokemon.splice(soldIndex, 1);
                 const successMessage = formatCasinoText(tr('casinoSold'), {
                     name:poke.name || 'Pokémon',
                     gold:Number(result?.goldGained ?? sellValue).toLocaleString('pt-BR')
@@ -6044,7 +6030,7 @@
         };
 
         const storeAllPurchasedPokemon = async () => {
-            const candidates = getTeamViews().visible.filter(poke => recentTeamIds.has(getPokeId(poke)));
+            const candidates = purchasedPokemon.filter(poke => recentTeamIds.has(getPokeId(poke)));
             if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
             busyPokeId = '__bulk_store__';
             refreshButton.disabled = true;
@@ -6070,7 +6056,7 @@
         };
 
         const sellAllPurchasedPokemon = async () => {
-            const candidates = getTeamViews().visible.filter(poke => recentTeamIds.has(getPokeId(poke))
+            const candidates = purchasedPokemon.filter(poke => recentTeamIds.has(getPokeId(poke))
                 && !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
             if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
             busyPokeId = '__bulk_sell__';
@@ -6093,6 +6079,8 @@
                 storedIds.forEach(id => {
                     recentTeamIds.delete(id);
                     alertedGoalPokeIds.delete(id);
+                    const soldIndex = purchasedPokemon.findIndex(entry => getPokeId(entry) === id);
+                    if (soldIndex !== -1) purchasedPokemon.splice(soldIndex, 1);
                 });
                 const totalGold = Number(result?.goldGained ?? candidates
                     .filter(poke => storedIds.includes(getPokeId(poke)))
@@ -6112,24 +6100,23 @@
         };
 
         const renderTeam = () => {
-            teamCount.textContent = `${teamPokemon.length}/${Number(payload?.maxTeam || 6)}`;
+            teamCount.textContent = String(purchasedPokemon.length);
             teamList.replaceChildren();
-            const visibleTeam = getTeamViews().visible;
-            const purchasedTeam = visibleTeam.filter(poke => recentTeamIds.has(getPokeId(poke)));
+            const purchasedTeam = purchasedPokemon;
             const sellablePurchased = purchasedTeam.filter(poke => !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
             bulkStoreButton.disabled = busyPokeId != null || busySpeciesId != null || purchasedTeam.length === 0;
             bulkSellButton.disabled = busyPokeId != null || busySpeciesId != null || sellablePurchased.length === 0;
             bulkStoreButton.textContent = `📦 ${tr('casinoStoreAll')} (${purchasedTeam.length})`;
             bulkSellButton.textContent = `💲 ${tr('casinoSellAll')} (${sellablePurchased.length})`;
-            announceIvGoalMatches(visibleTeam);
-            if (!visibleTeam.length) {
+            announceIvGoalMatches(purchasedTeam);
+            if (!purchasedTeam.length) {
                 const empty = document.createElement('div');
                 empty.className = 'script-casino-team-empty';
                 empty.textContent = tr('casinoTeamEmpty');
                 teamList.appendChild(empty);
                 return;
             }
-            visibleTeam.forEach(poke => {
+            purchasedTeam.forEach(poke => {
                 const pokeId = getPokeId(poke);
                 const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
                 const protectedPoke = isTeamPokemonProtected(poke);
@@ -6185,17 +6172,17 @@
                 teamList.appendChild(card);
             });
         };
-        const getNewTeamPokemon = (previousTeam, expectedSpeciesId = 0) => teamPokemon.filter(poke => {
+        const getNewPurchasedPokemon = (previousSnapshot, expectedSpeciesId = 0) => allPokes.filter(poke => {
             const pokeId = getPokeId(poke);
             const matchesOffer = !expectedSpeciesId || Number(poke?.speciesId || 0) === Number(expectedSpeciesId);
-            return pokeId && matchesOffer && (!previousTeam.has(pokeId)
-                || previousTeam.get(pokeId) !== Number(poke?.speciesId || 0));
+            return pokeId && matchesOffer && (!previousSnapshot.has(pokeId)
+                || previousSnapshot.get(pokeId) !== Number(poke?.speciesId || 0));
         });
-        const refreshPurchasedPokemon = async (previousTeam, expectedSpeciesId) => {
+        const refreshPurchasedPokemon = async (previousSnapshot, expectedSpeciesId) => {
             let purchased = [];
             for (let attempt = 0; attempt < 4 && !closed; attempt += 1) {
                 await refreshCasinoData();
-                purchased = getNewTeamPokemon(previousTeam, expectedSpeciesId);
+                purchased = getNewPurchasedPokemon(previousSnapshot, expectedSpeciesId);
                 if (purchased.length) break;
                 if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 140));
             }
@@ -6207,9 +6194,7 @@
             if (!speciesId || busySpeciesId != null || busyPokeId != null) return;
             busySpeciesId = speciesId;
             refreshButton.disabled = true;
-            autoStoreInput.disabled = true;
             let completed = 0;
-            let automaticallyStored = 0;
             let lastError = null;
             render();
             renderTeam();
@@ -6224,7 +6209,7 @@
                     setStatus(formatCasinoText(tr('casinoBuyingProgress'), {
                         current:index + 1, total, name:currentOffer.name || initialOffer.name || 'Pokémon'
                     }));
-                    const previousTeam = new Map(teamPokemon.map(poke => [
+                    const previousSnapshot = new Map(allPokes.map(poke => [
                         getPokeId(poke), Number(poke?.speciesId || 0)
                     ]));
                     try {
@@ -6233,31 +6218,15 @@
                         });
                         completed += 1;
                         sendGameMessage({ type:'inv-get' });
-                        const purchased = await refreshPurchasedPokemon(previousTeam, speciesId);
-                        purchased.forEach(poke => recentTeamIds.add(getPokeId(poke)));
-                        announceIvGoalMatches(getTeamViews().visible);
-
-                        if (autoStorePurchases) {
-                            const visibleIds = new Set(getTeamViews().visible.map(getPokeId));
-                            const storable = purchased.filter(poke => visibleIds.has(getPokeId(poke)));
-                            if (!storable.length) {
-                                lastError = new Error(tr('casinoAutoStoreError'));
-                                break;
+                        const purchased = await refreshPurchasedPokemon(previousSnapshot, speciesId);
+                        purchased.forEach(poke => {
+                            const pokeId = getPokeId(poke);
+                            recentTeamIds.add(pokeId);
+                            if (pokeId && !purchasedPokemon.some(entry => getPokeId(entry) === pokeId)) {
+                                purchasedPokemon.unshift(JSON.parse(JSON.stringify(poke)));
                             }
-                            for (const poke of storable) {
-                                try {
-                                    await storeTeamPokemon(poke, {
-                                        silent:true, refreshCatalog:false, shouldRender:false
-                                    });
-                                    automaticallyStored += 1;
-                                } catch (error) {
-                                    lastError = new Error(`${tr('casinoAutoStoreError')} ${error.message || ''}`.trim());
-                                    break;
-                                }
-                            }
-                            try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
-                            if (lastError) break;
-                        }
+                        });
+                        announceIvGoalMatches(purchasedPokemon);
                     } catch (error) {
                         lastError = error;
                         break;
@@ -6267,7 +6236,6 @@
                 try { await refreshCasinoData(); } catch (_) {}
                 busySpeciesId = null;
                 refreshButton.disabled = false;
-                autoStoreInput.disabled = false;
                 if (!closed) {
                     render();
                     renderTeam();
@@ -6275,17 +6243,13 @@
                     const baseMessage = formatCasinoText(tr(completed === total
                         ? (initialOffer.isTrade ? 'casinoBatchTraded' : 'casinoBatchBought')
                         : 'casinoBatchPartial'), { done:completed, total, name });
-                    const storedMessage = automaticallyStored > 0
-                        ? formatCasinoText(tr('casinoBatchStored'), { count:automaticallyStored }) : '';
                     const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
-                    setStatus(`${baseMessage}${storedMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                    setStatus(`${baseMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
                 }
             }
         };
         const render = () => {
             const offers = Array.isArray(payload?.offers) ? payload.offers : [];
-            autoStoreInput.checked = autoStorePurchases;
-            autoStoreInput.disabled = busySpeciesId != null || busyPokeId != null;
             balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
             team.textContent = `${tr('casinoTeam')}: ${Number(payload?.teamCount || 0).toLocaleString('pt-BR')}/${Number(payload?.maxTeam || 0).toLocaleString('pt-BR')}`;
             warning.hidden = payload?.hasRoom !== false;
@@ -6368,10 +6332,6 @@
         refreshButton.addEventListener('click', load);
         bulkStoreButton.addEventListener('click', storeAllPurchasedPokemon);
         bulkSellButton.addEventListener('click', sellAllPurchasedPokemon);
-        autoStoreInput.addEventListener('change', () => {
-            autoStorePurchases = autoStoreInput.checked;
-            localStorage.setItem(autoStoreStorageKey, autoStorePurchases ? '1' : '0');
-        });
         ivGoalInput.addEventListener('change', () => {
             const parsed = Math.round(Number(ivGoalInput.value) || 0);
             ivGoal = Math.max(0, Math.min(192, parsed));
