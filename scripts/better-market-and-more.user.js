@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Better Market and More
+// @name         Better market and more
 // @namespace    http://tampermonkey.net/
-// @version      10.18.1
+// @version      10.20.0
 // @description  Mercado Global rediseñado, Cassino portátil de Marlon, vendedor portátil de Stones y Exact IV Scanner completo.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -10,6 +10,12 @@
 
 (function() {
     'use strict';
+
+    // Marca mínima de diagnóstico: confirma la inyección incluso si una mejora
+    // posterior encuentra una interfaz del juego todavía en construcción.
+    try {
+        document.documentElement?.setAttribute('data-better-market-and-more', 'loading');
+    } catch (_) { /* La marca no debe afectar el arranque del juego. */ }
 
     const NativeWebSocket = window.WebSocket;
     const nativeWebSocketSend = NativeWebSocket.prototype.send;
@@ -722,6 +728,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { mapFavorites:'Favoritos', mapAdvantage:'Ventaja', mapNeutral:'Neutral', mapDisadvantage:'Desventaja', mapLocked:'Bloqueados', mapNotFavorites:'No favoritos', mapLast:'Última zona', mapHere:'AQUÍ', mapRequires:'Requiere nivel', mapYourLevel:'tu nivel' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { mapFavorites:'Favoritos', mapAdvantage:'Vantagem', mapNeutral:'Neutra', mapDisadvantage:'Desvantagem', mapLocked:'Bloqueadas', mapNotFavorites:'Não favoritas', mapLast:'Última hunt', mapHere:'AQUI', mapRequires:'Requer nível', mapYourLevel:'seu nível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { mapFavorites:'Favorites', mapAdvantage:'Advantage', mapNeutral:'Neutral', mapDisadvantage:'Disadvantage', mapLocked:'Locked', mapNotFavorites:'Not favorites', mapLast:'Last area', mapHere:'HERE', mapRequires:'Requires level', mapYourLevel:'your level' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { depotAccess:'Depósito', shopBarHide:'Ocultar botonera', shopBarShow:'Mostrar botonera' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotAccess:'Depósito', shopBarHide:'Ocultar barra de botões', shopBarShow:'Mostrar barra de botões' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { depotAccess:'Depot', shopBarHide:'Collapse button bar', shopBarShow:'Expand button bar' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotItems:'Objetos', depotPokemon:'Pokémon', depotFamilyItems:'Familia: objetos', depotFamilyPokemon:'Familia: Pokémon', depotSubtitle:'Almacenamiento personal y familiar', depotBag:'Mochila', depotTeam:'Equipo', depotBox:'Box', depotFamily:'Depósito familiar', depotYourBag:'Tu mochila', depotYourPokemon:'Tus Pokémon · equipo y Box', depotSearchPokemon:'Buscar Pokémon por nombre', depotClear:'Limpiar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'OBJETO', depotPokemonKind:'POKÉMON', depotAvailable:'disponibles', depotEmpty:'No hay contenido disponible' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotItems:'Itens', depotPokemon:'Pokémon', depotFamilyItems:'Família: itens', depotFamilyPokemon:'Família: Pokémon', depotSubtitle:'Armazenamento pessoal e familiar', depotBag:'Mochila', depotTeam:'Equipe', depotBox:'Box', depotFamily:'Depósito da família', depotYourBag:'Sua mochila', depotYourPokemon:'Seus Pokémon · equipe e Box', depotSearchPokemon:'Buscar Pokémon pelo nome', depotClear:'Limpar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'disponíveis', depotEmpty:'Nenhum conteúdo disponível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotItems:'Items', depotPokemon:'Pokémon', depotFamilyItems:'Family: items', depotFamilyPokemon:'Family: Pokémon', depotSubtitle:'Personal and family storage', depotBag:'Bag', depotTeam:'Team', depotBox:'Box', depotFamily:'Family depot', depotYourBag:'Your bag', depotYourPokemon:'Your Pokémon · team and Box', depotSearchPokemon:'Search Pokémon by name', depotClear:'Clear', depotStore:'Store', depotDeposit:'Deposit', depotWithdraw:'Withdraw', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'available', depotEmpty:'No content available' });
@@ -1362,7 +1371,7 @@
             return;
         }
         const count = getMarketAlertInbox().length + getMarketItemAlertInbox().length;
-        const dockButton = document.getElementById('dock-btn-shops');
+        const dockButton = document.getElementById('script-shop-bar-market');
         if (dockButton) {
             let badge = dockButton.querySelector('.market-alert-dock-badge');
             if (!count) badge?.remove();
@@ -1815,7 +1824,7 @@
     }
 
     function updateMarketSaleDockBadge() {
-        const button = document.getElementById('dock-btn-shops');
+        const button = document.getElementById('script-shop-bar-market');
         if (!button) return;
         let badge = button.querySelector('.market-sale-dock-badge');
         const count = Math.max(0, Number(localStorage.getItem(STORAGE_MARKET_SALES_UNREAD)) || 0);
@@ -2572,7 +2581,7 @@
         }
         html.script-custom-scrollbars *::-webkit-scrollbar-thumb:hover { background: rgba(230, 205, 142, .58); background-clip: padding-box; }
         .promo-overlay { display: none !important; }
-        #dock-btn-quick-tp, #dock-btn-shops, #dock-btn-depot {
+        #dock-btn-quick-tp, #dock-btn-shops {
             background: transparent;
             border: 0;
             box-shadow: none;
@@ -2581,10 +2590,8 @@
         #dock-btn-quick-tp[hidden] { display: none !important; }
         #dock-btn-quick-tp { color: #ffcc00; font-size: 16px; font-weight: bold; }
         #dock-btn-shops { color: #9ae6b4; font-size: 15px; }
-        #dock-btn-depot { color: #90cdf4; font-size: 15px; }
         #dock-btn-shops .script-dock-emoji { display:block;font-size:19px;line-height:1;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
-        #dock-btn-depot .script-dock-sprite { display:block;width:24px;height:24px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
-        #dock-btn-shops:hover .script-dock-emoji,#dock-btn-depot:hover .script-dock-sprite { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
+        #dock-btn-shops:hover .script-dock-emoji { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
         .script-shop-menu .poke-menu-item { display:flex !important;align-items:center;gap:7px; }
         .script-shop-menu-icon { width:25px;height:25px;flex:none;display:grid;place-items:center;background:#ffffff08;border:1px solid #ffffff12;border-radius:6px;font-size:16px;line-height:1;filter:drop-shadow(0 2px 2px #0008);transition:transform .16s ease,background .16s ease,border-color .16s ease,filter .16s ease; }
         .script-menu-sprite-rotator { width:22px;height:22px;display:grid;place-items:center;overflow:hidden; }
@@ -6658,9 +6665,108 @@
         animateScriptMenuSprite(menu, 'sell', pools.sell);
     }
 
+    const SCRIPT_SHOP_BAR_POSITION = 'script_shop_bar_position_v1';
+    const SCRIPT_SHOP_BAR_COLLAPSED = 'script_shop_bar_collapsed_v1';
+    function injectIndependentShopBar() {
+        if (!document.body || document.getElementById('script-independent-shop-bar')) return;
+        if (!document.getElementById('script-independent-shop-bar-style')) {
+            const style = document.createElement('style');
+            style.id = 'script-independent-shop-bar-style';
+            style.textContent = '#script-independent-shop-bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:6px;max-width:96vw;box-sizing:border-box;padding:7px;background:linear-gradient(145deg,#111e27f5,#081117f5);border:1px solid #8a682d;border-radius:13px;box-shadow:0 8px 28px #000b,inset 0 1px #ffffff12;overflow-x:auto;overscroll-behavior:contain;scrollbar-width:thin}#script-independent-shop-bar .script-shop-bar-button,#script-independent-shop-bar .script-shop-bar-grip{position:relative;flex:0 0 auto;min-width:64px;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 8px;color:#e9dfca;background:linear-gradient(145deg,#192a33,#101a20);border:1px solid #334957;border-radius:9px;cursor:pointer;touch-action:manipulation}#script-independent-shop-bar .script-shop-bar-button:hover{background:linear-gradient(145deg,#253b45,#15252d);border-color:#c49b4a;transform:translateY(-1px)}#script-independent-shop-bar .script-shop-bar-button small{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 10px system-ui,sans-serif}#script-independent-shop-bar .script-shop-bar-icon{width:27px;height:27px;display:grid;place-items:center;font:20px system-ui,sans-serif}#script-independent-shop-bar .script-shop-bar-icon img,#script-independent-shop-bar .script-menu-sprite-rotator{width:25px;height:25px;object-fit:contain;image-rendering:pixelated}#script-independent-shop-bar .script-shop-bar-grip{min-width:25px;width:25px;padding:0;color:#9cb0bc;background:transparent;border-color:transparent;cursor:grab;font-size:16px}#script-independent-shop-bar .script-shop-bar-grip:active{cursor:grabbing}#script-independent-shop-bar .script-shop-bar-toggle{flex:0 0 auto;min-width:32px;width:32px;height:56px;display:flex;align-items:center;justify-content:center;padding:0;color:#d8c69a;background:linear-gradient(145deg,#22343f,#131e25);border:1px solid #4a6274;border-radius:9px;cursor:pointer;font-size:15px;line-height:1}#script-independent-shop-bar .script-shop-bar-toggle:hover{background:linear-gradient(145deg,#2c4450,#182a33);border-color:#c49b4a}#script-independent-shop-bar .script-shop-bar-chevron{display:block;transition:transform .18s ease}#script-independent-shop-bar.is-collapsed .script-shop-bar-chevron{transform:rotate(180deg)}#script-independent-shop-bar.is-collapsed .script-shop-bar-button{display:none !important}#script-independent-shop-bar.is-collapsed{gap:4px;padding:5px 6px;overflow-x:hidden}@media(max-width:600px){#script-independent-shop-bar{gap:4px;padding:5px;max-width:98vw}#script-independent-shop-bar .script-shop-bar-button{min-width:53px;min-height:52px;padding:4px}#script-independent-shop-bar .script-shop-bar-button small{max-width:73px;font-size:9px}#script-independent-shop-bar .script-shop-bar-toggle{min-width:28px;width:28px;height:52px}}';
+            document.head.appendChild(style);
+        }
+        const bar = document.createElement('div');
+        bar.id = 'script-independent-shop-bar';
+        bar.setAttribute('aria-label', 'Accesos de tiendas');
+        const savedPosition = (() => { try { return JSON.parse(localStorage.getItem(SCRIPT_SHOP_BAR_POSITION) || 'null'); } catch (_) { return null; } })();
+        if (Number.isFinite(savedPosition?.left) && Number.isFinite(savedPosition?.top)) {
+            bar.style.left = savedPosition.left + 'px';
+            bar.style.top = savedPosition.top + 'px';
+            bar.style.bottom = 'auto';
+            bar.style.transform = 'none';
+        }
+        const grip = document.createElement('button');
+        grip.type = 'button';
+        grip.className = 'script-shop-bar-grip';
+        grip.textContent = '⠿';
+        grip.title = 'Arrastrar botonera';
+        grip.setAttribute('aria-label', 'Arrastrar botonera');
+        bar.appendChild(grip);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.id = 'script-shop-bar-toggle';
+        toggle.className = 'script-shop-bar-toggle';
+        toggle.innerHTML = '<span class="script-shop-bar-chevron" aria-hidden="true">▾</span>';
+        const setBarCollapsed = (collapsed) => {
+            bar.classList.toggle('is-collapsed', collapsed);
+            toggle.setAttribute('aria-expanded', String(!collapsed));
+            const label = tr(collapsed ? 'shopBarShow' : 'shopBarHide');
+            toggle.title = label;
+            toggle.setAttribute('aria-label', label);
+        };
+        try { setBarCollapsed(localStorage.getItem(SCRIPT_SHOP_BAR_COLLAPSED) === '1'); } catch (_) { setBarCollapsed(false); }
+        toggle.addEventListener('click', () => {
+            const collapsed = !bar.classList.contains('is-collapsed');
+            setBarCollapsed(collapsed);
+            try { localStorage.setItem(SCRIPT_SHOP_BAR_COLLAPSED, collapsed ? '1' : '0'); } catch (_) {}
+        });
+        bar.appendChild(toggle);
+        const addButton = (id, label, icon, handler, spriteRole) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.id = id;
+            button.className = 'script-shop-bar-button';
+            button.title = label;
+            button.setAttribute('aria-label', label);
+            const roleAttr = spriteRole ? ' data-menu-sprite="' + spriteRole + '"' : '';
+            button.innerHTML = '<span class="script-shop-bar-icon"' + roleAttr + '>' + icon + '</span><small>' + escapeHTML(label) + '</small>';
+            button.addEventListener('click', handler);
+            bar.appendChild(button);
+        };
+        addButton('script-shop-bar-market', tr('globalMarket'), SCRIPT_SHOP_MENU_ICONS.market, showGlobalMarketWindow);
+        addButton('script-shop-bar-casino', tr('casino'), SCRIPT_SHOP_MENU_ICONS.casino, showPortableCasino);
+        addButton('script-shop-bar-stones', tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller, 'stones');
+        addButton('script-shop-bar-balls', tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop, 'balls');
+        addButton('script-shop-bar-items', tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow, 'sell');
+        addButton('script-shop-bar-pokemon', tr('sellNpcPokemon'), '<img src="' + escapeHTML(getPokemonIconUrl(25) || '') + '" alt="">', showHuntPokemonSellWindow);
+        // El Depósito ya no vive como botón individual en el dock: forma parte de la botonera.
+        addButton('script-shop-bar-depot', tr('depotAccess'), SCRIPT_DOCK_ICONS.depot, showPortableDepot);
+        document.body.appendChild(bar);
+        void startScriptShopMenuSprites(bar);
+        updateMarketAlertBadges();
+        updateMarketSaleDockBadge();
+        grip.addEventListener('pointerdown', event => {
+            if (event.button !== 0) return;
+            const rect = bar.getBoundingClientRect();
+            const startX = event.clientX, startY = event.clientY, originLeft = rect.left, originTop = rect.top;
+            grip.setPointerCapture?.(event.pointerId);
+            bar.style.left = rect.left + 'px';
+            bar.style.top = rect.top + 'px';
+            bar.style.bottom = 'auto';
+            bar.style.transform = 'none';
+            const move = moveEvent => {
+                if (moveEvent.pointerId !== event.pointerId) return;
+                const left = Math.max(0, Math.min(window.innerWidth - bar.offsetWidth, originLeft + moveEvent.clientX - startX));
+                const top = Math.max(0, Math.min(window.innerHeight - bar.offsetHeight, originTop + moveEvent.clientY - startY));
+                bar.style.left = left + 'px';
+                bar.style.top = top + 'px';
+            };
+            const up = upEvent => {
+                if (upEvent.pointerId !== event.pointerId) return;
+                document.removeEventListener('pointermove', move);
+                document.removeEventListener('pointerup', up);
+                try { localStorage.setItem(SCRIPT_SHOP_BAR_POSITION, JSON.stringify({ left: parseFloat(bar.style.left), top: parseFloat(bar.style.top) })); } catch (_) {}
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', up);
+            event.preventDefault();
+        });
+    }
     function injectQuickTPButton() {
-        const gameDock = document.querySelector('nav.game-dock');
+        const gameDock = document.querySelector('nav.game-dock, [data-guide="game-dock"], .game-dock');
         if (gameDock) {
+            document.querySelectorAll('.script-shop-wrap, .script-shop-menu, #dock-btn-shops').forEach(element => element.remove());
+            injectIndependentShopBar();
             const mapBtn = gameDock.querySelector('button[data-guide="dock-map"]');
             let tpBtn = document.getElementById('dock-btn-quick-tp');
             if (!tpBtn) {
@@ -6674,112 +6780,23 @@
             }
             updateNavButtonAppearance();
 
-            if (!document.getElementById('dock-btn-shops')) {
-                const shopWrap = document.createElement('span');
-                shopWrap.className = 'dock-poke-wrap script-shop-wrap';
-                const shopsButton = document.createElement('button');
-                shopsButton.id = 'dock-btn-shops';
-                shopsButton.className = 'dock-btn';
-                shopsButton.type = 'button';
-                shopsButton.innerHTML = SCRIPT_DOCK_ICONS.shops;
-                shopsButton.title = tr('shops');
-
-                const menu = document.createElement('div');
-                menu.className = 'poke-menu script-shop-menu';
-                menu.setAttribute('role', 'menu');
-                menu.hidden = true;
-                const positionShopMenu = () => {
-                    if (menu.hidden) return;
-                    const phoneMode = window.matchMedia('(max-width: 720px)').matches;
-                    if (!phoneMode) {
-                        if (menu.parentElement !== shopWrap) shopWrap.appendChild(menu);
-                        menu.style.removeProperty('position');
-                        menu.style.removeProperty('left');
-                        menu.style.removeProperty('right');
-                        menu.style.removeProperty('top');
-                        menu.style.removeProperty('bottom');
-                        menu.style.removeProperty('width');
-                        menu.style.removeProperty('max-height');
-                        menu.style.removeProperty('z-index');
-                        return;
-                    }
-                    if (menu.parentElement !== document.body) document.body.appendChild(menu);
-                    const rect = shopsButton.getBoundingClientRect();
-                    const margin = 6;
-                    const width = Math.min(260, Math.max(180, window.innerWidth - margin * 2));
-                    const left = Math.max(margin, Math.min(window.innerWidth - width - margin, rect.left + rect.width / 2 - width / 2));
-                    const spaceAbove = Math.max(0, rect.top - margin * 2);
-                    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - margin * 2);
-                    const desiredHeight = Math.min(360, Math.max(120, menu.scrollHeight));
-                    const openBelow = spaceBelow >= desiredHeight || spaceBelow >= spaceAbove;
-                    menu.style.position = 'fixed';
-                    menu.style.left = `${left}px`;
-                    menu.style.right = 'auto';
-                    menu.style.width = `${width}px`;
-                    menu.style.zIndex = '2147483646';
-                    menu.style.maxHeight = `${Math.max(90, (openBelow ? spaceBelow : spaceAbove) - margin)}px`;
-                    if (openBelow) {
-                        menu.style.top = `${Math.min(window.innerHeight - margin, rect.bottom + margin)}px`;
-                        menu.style.bottom = 'auto';
-                    } else {
-                        menu.style.top = 'auto';
-                        menu.style.bottom = `${Math.min(window.innerHeight - margin, window.innerHeight - rect.top + margin)}px`;
-                    }
-                };
-                const rebuildMenu = () => {
-                    menu.innerHTML = '';
-                    const addItem = (label, icon, handler) => {
-                        const item = document.createElement('button');
-                        item.type = 'button';
-                        item.className = 'poke-menu-item';
-                        item.setAttribute('role', 'menuitem');
-                        item.innerHTML = `<span class="script-shop-menu-icon">${icon}</span><span>${escapeHTML(label)}</span>`;
-                        item.addEventListener('click', event => {
-                            event.stopPropagation();
-                            menu.hidden = true;
-                            handler();
-                        });
-                        menu.appendChild(item);
-                    };
-                    addItem(tr('globalMarket'), SCRIPT_SHOP_MENU_ICONS.market, showGlobalMarketWindow);
-                    addItem(tr('casino'), SCRIPT_SHOP_MENU_ICONS.casino, showPortableCasino);
-                    addItem(tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller);
-                    addItem(tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop);
-                    addItem(tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow);
-                    void startScriptShopMenuSprites(menu);
-                };
-                shopsButton.addEventListener('click', event => {
-                    event.stopPropagation();
-                    const willOpen = menu.hidden;
-                    document.querySelectorAll('.script-shop-menu').forEach(other => { other.hidden = true; });
-                    if (willOpen) {
-                        rebuildMenu();
-                        menu.hidden = false;
-                        requestAnimationFrame(positionShopMenu);
-                        return;
-                    }
-                    menu.hidden = !willOpen;
-                });
-                document.addEventListener('click', event => {
-                    if (!shopWrap.contains(event.target) && !menu.contains(event.target)) menu.hidden = true;
-                });
-                window.addEventListener('resize', positionShopMenu, { passive: true });
-                window.addEventListener('scroll', positionShopMenu, { passive: true });
-                shopWrap.append(shopsButton, menu);
-                tpBtn.after(shopWrap);
-            }
-
-            if (!document.getElementById('dock-btn-depot')) {
-                const depotButton = document.createElement('button');
-                depotButton.id = 'dock-btn-depot';
-                depotButton.className = 'dock-btn';
-                depotButton.type = 'button';
-                depotButton.innerHTML = SCRIPT_DOCK_ICONS.depot;
-                depotButton.title = 'Depot';
-                depotButton.addEventListener('click', showPortableDepot);
-                document.getElementById('dock-btn-shops')?.closest('.script-shop-wrap')?.after(depotButton);
-            }
+            // El acceso a Depósito ahora vive dentro de la botonera desplegable.
             updateMarketSaleDockBadge();
+        }
+    }
+
+    let dockRetryScheduled = false;
+    function injectDockButtonsWhenReady(attempt = 0) {
+        injectQuickTPButton();
+        const dockReady = Boolean(document.querySelector('#dock-btn-quick-tp, #dock-btn-shops'));
+        // El juego monta el dock de forma asíncrona tras el login. Reintentamos
+        // durante un intervalo corto solo hasta que los accesos estén presentes.
+        if (!dockReady && attempt < 30 && !dockRetryScheduled) {
+            dockRetryScheduled = true;
+            setTimeout(() => {
+                dockRetryScheduled = false;
+                injectDockButtonsWhenReady(attempt + 1);
+            }, 200);
         }
     }
 
@@ -14705,36 +14722,67 @@
     }
 
     let domCheckTimeout = null;
+    let lastDomCheckAt = 0;
+    let domEnhancementsInitialized = false;
+    function runDOMEnhancement(name, callback) {
+        try {
+            const result = callback();
+            if (result && typeof result.catch === 'function') {
+                result.catch(error => console.error(`[Better Market and More] Falló la mejora: ${name}`, error));
+            }
+            return result;
+        } catch (error) {
+            // Las mejoras son independientes: un cambio puntual en la UI del
+            // juego no debe impedir que se inyecten todas las demás.
+            console.error(`[Better Market and More] Falló la mejora: ${name}`, error);
+            return undefined;
+        }
+    }
     const observer = new MutationObserver(() => {
         if (domCheckTimeout) return;
+        // El juego cambia el DOM con mucha frecuencia durante una hunt.
+        // Limitar los escaneos evita saturar el hilo principal.
+        const delay = Math.max(150, 700 - (Date.now() - lastDomCheckAt));
         domCheckTimeout = setTimeout(() => {
             domCheckTimeout = null;
+            lastDomCheckAt = Date.now();
             
-            injectQuickTPButton();
-            if (document.querySelector('.cfg-window')) injectConfigTab();
-            applyChatState();
-            injectHuntShopLauncher();
-            if (findNativeMarkWindow() && isMarkEnhancementsActive()) injectShopEnhancements();
-            if (document.querySelector('.ball-window')) injectHuntBallEnhancements(document.querySelector('.ball-window'));
-            if (document.querySelector('.dex-window')) injectDexEnhancements();
-            if (document.querySelector('.ha-window:not(.ha-compare-modal)')) trackHuntAnalyzer();
-            if (document.querySelector('.inv-window')) enhanceInventoryWindow();
-            enhanceCaptureLog();
-            applyBetterWindowScales();
+            runDOMEnhancement('botones del dock', injectDockButtonsWhenReady);
+            if (document.querySelector('.cfg-window')) runDOMEnhancement('configuración', injectConfigTab);
+            runDOMEnhancement('chat', applyChatState);
+            runDOMEnhancement('accesos de hunt', injectHuntShopLauncher);
+            if (findNativeMarkWindow() && isMarkEnhancementsActive()) runDOMEnhancement('Mark', injectShopEnhancements);
+            if (document.querySelector('.ball-window')) runDOMEnhancement('tienda de Poké Balls', () => injectHuntBallEnhancements(document.querySelector('.ball-window')));
+            if (document.querySelector('.dex-window')) runDOMEnhancement('Pokédex', injectDexEnhancements);
+            if (document.querySelector('.ha-window:not(.ha-compare-modal)')) runDOMEnhancement('Hunt Analyzer', trackHuntAnalyzer);
+            if (document.querySelector('.inv-window')) runDOMEnhancement('inventario', enhanceInventoryWindow);
+            runDOMEnhancement('registro de capturas', enhanceCaptureLog);
+            runDOMEnhancement('escala de ventanas', applyBetterWindowScales);
 
             const mapWindow = document.querySelector('.map-window');
             if (mapWindow) {
                 if (renderTimeout) clearTimeout(renderTimeout);
                 renderTimeout = setTimeout(buildSimpleList, 200);
             }
-        }, 150);
+        }, delay);
     });
 
     function initializeDOMEnhancements() {
-        applyMapScriptState();
+        // Tampermonkey puede ejecutar el script justo antes de que el juego
+        // monte su body. Esperamos ese nodo para no abortar el arranque.
+        if (!document.head || !document.body) {
+            setTimeout(initializeDOMEnhancements, 50);
+            return;
+        }
+        if (domEnhancementsInitialized) return;
+        domEnhancementsInitialized = true;
+
+        document.documentElement.dataset.betterMarketAndMore = 'initialized-10.20.0';
         observer.observe(document.body, { childList: true, subtree: true });
-        applyBetterWindowScales();
-        updateMarketSaleDockBadge();
+        runDOMEnhancement('botones iniciales del dock', injectDockButtonsWhenReady);
+        runDOMEnhancement('estado del mapa', applyMapScriptState);
+        runDOMEnhancement('escala inicial de ventanas', applyBetterWindowScales);
+        runDOMEnhancement('indicador de ventas', updateMarketSaleDockBadge);
         document.querySelectorAll('.market-alert-dock-badge,.market-alert-toast').forEach(element => element.remove());
         if (!marketSaleMonitorInterval) {
             setTimeout(pollCompletedMarketSales, 3500);
