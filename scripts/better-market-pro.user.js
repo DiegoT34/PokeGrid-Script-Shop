@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.20.4
+// @version      10.20.5
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -3757,6 +3757,10 @@
         .script-casino-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f4f7fa;font-size:11px;font-weight:900; }
         .script-casino-evolution { flex:none;padding:1px 4px;color:#d8b8ff;background:#33234c;border:1px solid #7652a4;border-radius:3px;font-size:6px;font-weight:900;letter-spacing:.45px; }
         .script-casino-price { margin-top:2px;color:#58e28c;font-size:10px;font-weight:900; }
+        .script-casino-item-have { margin-top:3px;color:#9fb6c4;font-size:8px;font-weight:800; }
+        .script-casino-item-qty { color:#f4c95d;font-weight:900; }
+        .script-casino-item-have b { color:#f4c95d; }
+        .script-casino-item-description { display:-webkit-box;margin-top:4px;overflow:hidden;color:#8fa8b8;font-size:7.5px;line-height:1.3;-webkit-box-orient:vertical;-webkit-line-clamp:3; }
         .script-casino-requirements { margin-top:3px;display:flex;flex-wrap:wrap;gap:3px; }
         .script-casino-requirement { min-height:19px;display:inline-flex;align-items:center;gap:3px;padding:1px 4px;color:#a9e8c1;background:#102c23;border:1px solid #2f7055;border-radius:4px;font-size:6.5px;font-weight:750; }
         .script-casino-requirement.is-missing { color:#ffb0aa;background:#321d20;border-color:#774048; }
@@ -7065,6 +7069,7 @@
         let ivGoal = Math.max(0, Math.min(192, Number(localStorage.getItem(ivGoalStorageKey)) || 0));
         let busySpeciesId = null;
         let busyPokeId = null;
+        let busyItemId = null;
         let closed = false;
         ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
 
@@ -7420,13 +7425,64 @@
                 }
             }
         };
+        const processCasinoItemQuantity = async (initialOffer, requestedQuantity) => {
+            const total = Math.max(1, Math.min(999, Math.floor(Number(requestedQuantity) || 1)));
+            const itemId = Number(initialOffer?.itemId || 0);
+            if (!itemId || busyItemId != null || busySpeciesId != null || busyPokeId != null) return;
+            busyItemId = itemId;
+            refreshButton.disabled = true;
+            const unitPrice = Math.max(0, Number(initialOffer?.price || 0)) * Math.max(1, Number(initialOffer?.qty || 1));
+            let goldAvailable = Math.max(0, Number(payload?.gold || 0));
+            let completed = 0;
+            let lastError = null;
+            render();
+            try {
+                for (let index = 0; index < total && !closed; index += 1) {
+                    const currentOffer = (Array.isArray(payload?.itemOffers) ? payload.itemOffers : [])
+                        .find(entry => Number(entry?.itemId || 0) === itemId) || initialOffer;
+                    if (!currentOffer?.canBuy || goldAvailable < unitPrice) {
+                        lastError = new Error(tr('casinoNeedGold'));
+                        break;
+                    }
+                    setStatus(formatCasinoText(tr('casinoBuyingProgress'), {
+                        current:index + 1, total, name:currentOffer.name || initialOffer.name || 'item'
+                    }));
+                    try {
+                        await gameApiRequest('/api/game/pokemaniac-trader/buy', {
+                            method:'POST', body:JSON.stringify({ itemId })
+                        });
+                        completed += 1;
+                        goldAvailable = Math.max(0, goldAvailable - unitPrice);
+                        sendGameMessage({ type:'inv-get' });
+                    } catch (error) {
+                        lastError = error;
+                        break;
+                    }
+                }
+            } finally {
+                try { await refreshCasinoData(); } catch (_) {}
+                busyItemId = null;
+                refreshButton.disabled = false;
+                if (!closed) {
+                    render();
+                    renderTeam();
+                    const name = initialOffer.name || 'item';
+                    const baseMessage = formatCasinoText(tr(completed === total
+                        ? 'casinoBatchBought'
+                        : 'casinoBatchPartial'), { done:completed, total, name });
+                    const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
+                    setStatus(`${baseMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                }
+            }
+        };
         const render = () => {
             const offers = Array.isArray(payload?.offers) ? payload.offers : [];
+            const itemOffers = Array.isArray(payload?.itemOffers) ? payload.itemOffers : [];
             balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
             team.textContent = `${tr('casinoTeam')}: ${Number(payload?.teamCount || 0).toLocaleString('pt-BR')}/${Number(payload?.maxTeam || 0).toLocaleString('pt-BR')}`;
             warning.hidden = payload?.hasRoom !== false;
             list.replaceChildren();
-            if (!offers.length) {
+            if (!offers.length && !itemOffers.length) {
                 const empty = document.createElement('div');
                 empty.className = 'script-casino-empty';
                 empty.textContent = tr('casinoEmpty');
@@ -7475,9 +7531,55 @@
                 });
                 list.appendChild(card);
             });
+            itemOffers.forEach(itemOffer => {
+                const itemId = Number(itemOffer?.itemId || 0);
+                const price = Math.max(0, Number(itemOffer?.price || 0));
+                const unitQty = Math.max(1, Number(itemOffer?.qty || 1));
+                const have = Math.max(0, Number(itemOffer?.have || 0));
+                const canBuy = Boolean(itemOffer?.canBuy) && itemId > 0 && price > 0;
+                const card = document.createElement('article');
+                card.className = `script-casino-card script-casino-item-card${canBuy ? '' : ' is-disabled'}`;
+                const icon = normalizeGameItemIcon(itemOffer?.iconUrl || '');
+                card.innerHTML = `
+                    <div class="script-casino-art"><img src="${escapeHTML(icon)}" alt="${escapeHTML(itemOffer?.name || 'Item')}"></div>
+                    <div class="script-casino-info">
+                        <div class="script-casino-name-line">
+                            <b class="script-casino-name">${escapeHTML(itemOffer?.name || `Item #${itemId || '—'}`)}${Number(itemOffer?.qty || 1) > 1 ? `<span class="script-casino-item-qty"> ×${Number(itemOffer.qty).toLocaleString('pt-BR')}</span>` : ''}</b>
+                            <span class="script-casino-evolution">ITEM</span>
+                        </div>
+                        <div class="script-casino-price">💲 ${price.toLocaleString('pt-BR')}</div>
+                        <div class="script-casino-item-have">You have: <b>${have.toLocaleString('pt-BR')}</b></div>
+                        ${itemOffer?.description ? `<div class="script-casino-item-description">${escapeHTML(itemOffer.description)}</div>` : ''}
+                    </div>
+                    <div class="script-casino-action-row">
+                        <span class="script-casino-reason">${escapeHTML(canBuy ? '' : tr('casinoNeedGold'))}</span>
+                        <div class="script-casino-purchase-controls">
+                            <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-item-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${canBuy && busyItemId == null ? '' : 'disabled'}></label>
+                            <button class="script-casino-buy script-casino-item-buy" type="button" ${canBuy && busyItemId == null ? '' : 'disabled'}>${escapeHTML(tr('casinoBuy'))}</button>
+                        </div>
+                    </div>`;
+                card.querySelector('.script-casino-art img')?.addEventListener('error', event => { event.currentTarget.replaceWith(document.createTextNode('📦')); }, { once:true });
+                const quantityInput = card.querySelector('.script-casino-item-quantity');
+                const buyButton = card.querySelector('.script-casino-item-buy');
+                const updateItemQuantity = () => {
+                    const quantity = Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1)));
+                    quantityInput.value = String(quantity);
+                    const total = price * unitQty * quantity;
+                    buyButton.disabled = !canBuy || busyItemId != null || Number(payload?.gold || 0) < total;
+                    buyButton.title = buyButton.disabled && canBuy ? tr('casinoNeedGold') : tr('casinoBuy');
+                };
+                quantityInput.addEventListener('input', updateItemQuantity);
+                quantityInput.addEventListener('change', updateItemQuantity);
+                buyButton.addEventListener('click', async () => {
+                    if (buyButton.disabled) return;
+                    await processCasinoItemQuantity(itemOffer, quantityInput.value);
+                });
+                updateItemQuantity();
+                list.appendChild(card);
+            });
         };
         const load = async () => {
-            if (busySpeciesId != null) return;
+            if (busySpeciesId != null || busyItemId != null) return;
             refreshButton.disabled = true;
             setStatus(tr('casinoLoading'));
             try {
@@ -7957,7 +8059,8 @@
                  #script-independent-shop-bar .script-shop-bar-eye { width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
                  #script-independent-shop-bar .script-shop-bar-eye-closed { display:none; }
                  #script-independent-shop-bar.is-hidden { pointer-events:none; }
-                                  #script-independent-shop-bar.is-hidden .script-shop-bar-grip,
+                                  #script-independent-shop-bar.is-hidden .script-shop-bar-side-controls,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-grip,
                  #script-independent-shop-bar.is-hidden .script-shop-bar-arrow,
                  #script-independent-shop-bar.is-hidden .script-shop-bar-toggle,
                  #script-independent-shop-bar.is-hidden .script-shop-bar-scale-controls,
@@ -8099,7 +8202,7 @@
                     top: 2px !important;
                     z-index: 5;
                 }
-                #script-independent-shop-bar .script-shop-bar-scale-controls {
+                #script-independent-shop-bar .script-shop-bar-side-controls {
                     position: absolute;
                     left: auto;
                     right: var(--shop-control-offset);
@@ -8107,11 +8210,38 @@
                     z-index: 3;
                     display: flex;
                     flex-direction: column;
+                    align-items: center;
                     gap: var(--shop-control-gap);
                     transform: translateY(-50%);
                     pointer-events: auto;
+                }
+                #script-independent-shop-bar .script-shop-bar-scale-controls {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: var(--shop-control-gap);
+                    pointer-events: auto;
                     transition: opacity .16s ease, visibility .16s ease;
                 }
+                #script-independent-shop-bar .script-shop-bar-grip {
+                    flex: 0 0 var(--shop-control-size);
+                    width: var(--shop-control-size);
+                    height: var(--shop-control-size);
+                    display: grid;
+                    place-items: center;
+                    padding: 0;
+                    border: 1px solid #526174;
+                    border-radius: var(--shop-control-radius);
+                    background: #111b28;
+                    color: #dbeafe;
+                    font-size: var(--shop-control-font-size);
+                    line-height: 1;
+                    cursor: grab;
+                    pointer-events: auto;
+                    transition: background-color .2s ease, color .2s ease, transform .2s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-grip:hover { background: #1b2a3a; color: #fff; }
+                #script-independent-shop-bar .script-shop-bar-grip:active { cursor: grabbing; transform: scale(.94); }
                 #script-independent-shop-bar:has(.script-shop-bar-button:hover) .script-shop-bar-scale-controls,
                 #script-independent-shop-bar:has(.script-shop-bar-button:focus-visible) .script-shop-bar-scale-controls {
                     opacity: 0;
@@ -8218,7 +8348,11 @@
         scaleUpButton.addEventListener('click', () => applyShopBarScale(currentShopBarScale + SCRIPT_SHOP_BAR_SCALE_STEP));
         scaleDownButton.addEventListener('click', () => applyShopBarScale(currentShopBarScale - SCRIPT_SHOP_BAR_SCALE_STEP));
         applyShopBarScale(savedShopBarScale, false);
-        bar.appendChild(scaleControls);
+        const sideControls = document.createElement('div');
+        sideControls.className = 'script-shop-bar-side-controls';
+        sideControls.setAttribute('aria-label', 'Controles de la botonera');
+        sideControls.appendChild(scaleControls);
+        bar.appendChild(sideControls);
         const savedPosition = (() => { try { return JSON.parse(localStorage.getItem(SCRIPT_SHOP_BAR_POSITION) || 'null'); } catch (_) { return null; } })();
         if (Number.isFinite(savedPosition?.left) && Number.isFinite(savedPosition?.top)) {
             bar.style.left = savedPosition.left + 'px';
@@ -8232,10 +8366,7 @@
         grip.textContent = '⠿';
         grip.title = 'Arrastrar botonera';
         grip.setAttribute('aria-label', 'Arrastrar botonera');
-        const topControls = document.createElement('div');
-        topControls.className = 'script-shop-bar-top-controls';
-        topControls.appendChild(grip);
-        bar.appendChild(topControls);
+        sideControls.appendChild(grip);
         // Flechas de desplazamiento: solo son visibles cuando la ventana es tan
         // pequeña que la lista de botones no cabe completa dentro de ella.
         const list = document.createElement('div');

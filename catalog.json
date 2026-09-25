@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-09-25T11:49:05Z",
+    "updatedAt":  "2026-09-25T16:25:23Z",
     "scripts":  [
                     {
                         "id":  "better-market-pro",
                         "name":  "Better market Pro",
                         "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.20.4",
+                        "version":  "10.20.5",
                         "author":  "DiegoT34",
                         "summary":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
                         "description":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
@@ -22,9 +22,9 @@
                                         ],
                         "minLauncherVersion":  "0.22.3",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-pro.user.js",
-                        "sha256":  "b71df2e00c063a1e03cf6aa1f570503559ef9b47fb9dc9078de5a37760a8a2e6",
+                        "sha256":  "dc4f374638141bbf2a9b0887c5fedeeeade5f52c1aeae749b9db93129a50fecd",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación 10.20.4",
+                        "changelog":  "Actualización 10.20.5",
                         "icon":  "🧩",
                         "featured":  true,
                         "publishedAt":  "2026-09-25T11:48:47Z"
