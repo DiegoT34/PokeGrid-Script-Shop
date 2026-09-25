@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-09-25T11:48:47Z",
+    "updatedAt":  "2026-09-25T11:49:05Z",
     "scripts":  [
                     {
                         "id":  "better-market-pro",
@@ -28,37 +28,6 @@
                         "icon":  "🧩",
                         "featured":  true,
                         "publishedAt":  "2026-09-25T11:48:47Z"
-                    },
-                    {
-                        "id":  "better-market-and-more",
-                        "name":  "Better market and more",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.20.0",
-                        "author":  "DiegoT34",
-                        "summary":  "Mercado global rediseñado con herramientas de venta, depósito y calculadora de IVs.",
-                        "description":  "Rediseña el mercado global, venta de objetos y Pokémon, depósito, tienda, mapa y configuraciones. Integra herramientas de consulta de IVs manteniendo la información y operaciones del juego.",
-                        "category":  "Crianza",
-                        "tags":  [
-                                     "market",
-                                     "ivs",
-                                     "inventario",
-                                     "mapa"
-                                 ],
-                        "games":  [
-                                      "Poke Idle World"
-                                  ],
-                        "permissions":  [
-                                            "Modifica la interfaz visible del juego",
-                                            "Lee datos visibles de mercado, inventario, depósito y Pokémon"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-and-more.user.js",
-                        "sha256":  "cb44e5861b721c8eff64fda6f3a5617b81b72a1384cbe5e563c96218c8c265fb",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 10.20.0",
-                        "icon":  "🛒",
-                        "featured":  true,
-                        "publishedAt":  "2026-08-24T20:52:32Z"
                     },
                     {
                         "id":  "poke-idle-world-custom-card-ultimate-v3-92-carga-optimizada",
