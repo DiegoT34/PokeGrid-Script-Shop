@@ -1,7 +1,34 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-09-26T02:34:51Z",
+    "updatedAt":  "2026-09-26T09:53:31Z",
     "scripts":  [
+                    {
+                        "id":  "custom-hub-game",
+                        "name":  "CUSTOM HUB GAME",
+                        "namespace":  "http://tampermonkey.net/",
+                        "version":  "4.0.0",
+                        "author":  "DiegoT34",
+                        "summary":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
+                        "description":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
+                        "category":  "Utilidades",
+                        "tags":  [
+
+                                 ],
+                        "games":  [
+                                      "Poke Idle World"
+                                  ],
+                        "permissions":  [
+
+                                        ],
+                        "minLauncherVersion":  "0.22.3",
+                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-hub-game.user.js",
+                        "sha256":  "dc95753be5ff34b285291cb6de0cdd5a9b1c16e7014270ca0e604fa41ae20c8b",
+                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
+                        "changelog":  "Publicación 4.0.0",
+                        "icon":  "🧩",
+                        "featured":  true,
+                        "publishedAt":  "2026-09-26T09:53:31Z"
+                    },
                     {
                         "id":  "better-market-pro",
                         "name":  "Better market Pro",
