@@ -23,9 +23,18 @@
     let latestInventory = null;
     let latestPokemon = null;
     let latestFamily = null;
+    /* O servidor responde con {type:'error', message} quando recusa uma acao.
+       Esse evento nao tinha nenhum ouvinte, entao o motivo real era descartado e
+       todas as recusas viravam a mesma mensagem generica. Guardamos o ultimo. */
+    let lastGameError = null;
     let latestAutohelper = null;
     const gameEventWaiters = new Map();
     const trackedGameSockets = new WeakSet();
+    /* Todos los sockets /ws vivos y el que trae los eventos del juego (familia,
+       pokes, inventario). Dentro de una hunt hay mas de uno abierto. */
+    const liveGameSockets = new Set();
+    let primaryGameSocket = null;
+    const GAME_SOCKET_EVENT_TYPES = new Set(['family', 'pokes', 'inventory', 'autohelper', 'chat', 'pokedex', 'quests', 'friends']);
     let lastSocketMessageAt = Date.now();
     let lastHuntSocketActivityAt = Date.now();
     let lastAutoReconnectAt = 0;
@@ -56,6 +65,10 @@
         } catch {
             return;
         }
+        /* El socket que entrega estos eventos es el principal para enviar ordenes. */
+        if (message && GAME_SOCKET_EVENT_TYPES.has(message.type) && event?.currentTarget) {
+            primaryGameSocket = event.currentTarget;
+        }
         lastSocketMessageAt = Date.now();
         if (isInHuntContext() && isHuntProgressMessage(message)) {
             lastHuntSocketActivityAt = Date.now();
@@ -65,6 +78,12 @@
         }
         if (message?.type === 'family') latestFamily = message;
         if (message?.type === 'autohelper') latestAutohelper = message;
+        if (message?.type === 'error') {
+            lastGameError = {
+                message: message.message || message.error || 'O servidor recusou a operação.',
+                at: Date.now()
+            };
+        }
         if (message?.type === 'pokes') {
             latestPokemon = message.list || [];
             if (updateCachedLeaderPokemon(latestPokemon)) {
@@ -82,13 +101,23 @@
 
     function trackGameSocket(socket, url = socket?.url) {
         if (!socket || !String(url || '').includes('/ws')) return socket;
+        /* Antes gameSocket era "el ultimo que hablo" y NativeWebSocket.prototype.send
+           reasignaba en cada envio. Dentro de una hunt hay un segundo socket: en cuanto
+           ese envoyaba algo, se quedaba con el puntero y las ordenes de familia (y las
+           de cualquier otra cosa) iban por el socket equivocado, que no las procesa:
+           no hay respuesta y el scriptlaubia un rechazo inexistente.
+           Ahora se guardan todos y se prefiere el socket principal, que es el que
+           realmente trae los eventos del juego. */
+        if (!liveGameSockets.has(socket)) {
+            liveGameSockets.add(socket);
+            socket.addEventListener('message', handleGameSocketMessage);
+            socket.addEventListener('close', () => {
+                liveGameSockets.delete(socket);
+                if (gameSocket === socket) gameSocket = null;
+                if (primaryGameSocket === socket) primaryGameSocket = null;
+            });
+        }
         gameSocket = socket;
-        if (trackedGameSockets.has(socket)) return socket;
-        trackedGameSockets.add(socket);
-        socket.addEventListener('message', handleGameSocketMessage);
-        socket.addEventListener('close', () => {
-            if (gameSocket === socket) gameSocket = null;
-        });
         return socket;
     }
 
@@ -102,23 +131,46 @@
     Object.setPrototypeOf(TrackedWebSocket, NativeWebSocket);
     window.WebSocket = TrackedWebSocket;
     NativeWebSocket.prototype.send = function(data) {
-        trackGameSocket(this);
+        const tracked = String(this?.url || '').includes('/ws');
+        if (tracked && !liveGameSockets.has(this)) trackGameSocket(this);
+        if (!tracked) trackGameSocket(this);
         return nativeWebSocketSend.call(this, data);
     };
 
     function sendGameMessage(message) {
-        if (!gameSocket || gameSocket.readyState !== NativeWebSocket.OPEN) return false;
-        gameSocket.send(JSON.stringify(message));
-        return true;
+        /* Se prefiere el socket principal; si no, cualquiera abierto conocido. */
+        const candidates = [primaryGameSocket, gameSocket, ...liveGameSockets];
+        for (const socket of candidates) {
+            if (socket && socket.readyState === NativeWebSocket.OPEN) {
+                gameSocket = socket;
+                socket.send(JSON.stringify(message));
+                return true;
+            }
+        }
+        return false;
     }
 
+    function isGameSocketOpen(socket) {
+        return Boolean(socket) && socket.readyState === NativeWebSocket.OPEN;
+    }
+    /* Devuelve el socket que hay que usar: el principal si esta abierto, si no
+       cualquiera de los conocidos que lo este. */
+    function pickOpenGameSocket() {
+        if (isGameSocketOpen(primaryGameSocket)) return primaryGameSocket;
+        if (isGameSocketOpen(gameSocket)) return gameSocket;
+        for (const socket of liveGameSockets) {
+            if (isGameSocketOpen(socket)) return socket;
+        }
+        return null;
+    }
     async function waitForGameSocket(timeoutMs = 5000) {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            if (gameSocket?.readyState === NativeWebSocket.OPEN) return true;
+            const open = pickOpenGameSocket();
+            if (open) return open;
             await new Promise(resolve => setTimeout(resolve, 100));
         }
-        return gameSocket?.readyState === NativeWebSocket.OPEN;
+        return pickOpenGameSocket();
     }
 
     setInterval(async () => {
@@ -132,7 +184,7 @@
         }
         if (!isAutoReconnectActive() || autoReconnectInProgress) return;
         const now = Date.now();
-        const connectionLost = !gameSocket || gameSocket.readyState !== NativeWebSocket.OPEN;
+        const connectionLost = !pickOpenGameSocket();
         const captureBarSignature = captureBar?.innerHTML || '';
         if (!connectionLost && captureBar && captureBarSignature !== lastCaptureBarSignature) {
             lastCaptureBarSignature = captureBarSignature;
@@ -218,6 +270,11 @@
     const STORAGE_HUNT_MARKET = 'script_hunt_market_v1';
     const STORAGE_HUNT_BULK_BUY = 'script_hunt_bulk_buy_v1';
     const STORAGE_HUNT_SELL = 'script_hunt_sell_v1';
+    /* Hunt de la que se salio para usar el Deposto familiar. Queda guardada para
+       que el regreso ocurra aunque el usuario cierre la ventana del Depot. */
+    const STORAGE_FAMILY_HUNT_PENDING = 'script_family_hunt_pending_v1';
+    let familyHuntTravelBusy = false;
+    let pendingFamilyHuntRecoveryStarted = false;
     const STORAGE_MARK_ENHANCEMENTS = 'script_mark_enhancements_v1';
     const STORAGE_MAP_FILTERS = 'script_map_filters_v1';
     const STORAGE_HA_HISTORY = 'script_ha_history_v1';
@@ -4419,6 +4476,14 @@
         .market-sale-toast > span { grid-area:icon;align-self:center;display:grid;place-items:center;width:22px;height:22px;color:#06150c;background:#53e18a;border-radius:50%;font-weight:1000; }
         .market-sale-toast > b { grid-area:title;color:#75efa3;font-size:11px; }
         .market-sale-toast > small { grid-area:meta;color:#c4d8df;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .script-toast-stack { position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;max-width:min(320px,86vw); }
+        .script-toast { display:grid;grid-template-columns:20px 1fr;column-gap:8px;align-items:center;padding:8px 11px;color:#e4f8ff;background:#0a1c26f2;border:1px solid #3a7f9c;border-left:3px solid #46c4e8;border-radius:8px;box-shadow:0 6px 18px #0009;font-size:12px;line-height:1.3;opacity:0;transform:translateX(14px);transition:opacity .18s ease,transform .18s ease; }
+        .script-toast.is-in { opacity:1;transform:translateX(0); }
+        .script-toast.is-out { opacity:0;transform:translateX(14px); }
+        .script-toast-ico { font-size:15px;line-height:1; }
+        .script-toast-msg { overflow:hidden;text-overflow:ellipsis; }
+        .script-toast.is-error { color:#ffe6e6;background:#2a0f12f2;border-color:#8a3b42;border-left-color:#e2564f; }
+        .script-toast.is-ok { color:#e2ffea;background:#0a2617f2;border-color:#3a8a5c;border-left-color:#4ade80; }
         .market-alert-toast { position:fixed;left:50%;top:72px;z-index:2147483647;max-width:min(520px,92vw);display:grid;grid-template-columns:23px auto;grid-template-areas:"icon title" "icon meta";column-gap:8px;padding:8px 14px;color:#e4f8ff;background:linear-gradient(90deg,#082532f2,#0b171df2);border:1px solid #46c4e8;border-radius:7px;box-shadow:0 8px 24px #000b,0 0 14px #32c8f040;opacity:0;transform:translate(-50%,-16px);transition:opacity .18s,transform .18s;pointer-events:none; }
         .market-alert-toast.show { opacity:1;transform:translate(-50%,0); }
         .market-alert-toast > span { grid-area:icon;align-self:center;display:grid;place-items:center;width:22px;height:22px;color:#06202a;background:#63d9fa;border-radius:50%;font-weight:1000; }
@@ -6842,9 +6907,97 @@
     }
     function getLastHunt() { return localStorage.getItem(STORAGE_LAST_HUNT) || null; }
 
+    /* El servidor no permite el deposito familiar dentro de una hunt. Para no
+       depender de eso, al abrir una pestana familiar se sale a la ciudad y al
+       cerrar el Depot se vuelve a la hunt de la que se salio. Se persiste el
+       nombre para que el regreso siga siendo posible aunque el usuario cierre
+       la ventana del Depot. */
+    function getPendingFamilyHunt() {
+        try { return localStorage.getItem(STORAGE_FAMILY_HUNT_PENDING) || null; } catch (_) { return null; }
+    }
+    function setPendingFamilyHunt(name) {
+        try {
+            if (name) localStorage.setItem(STORAGE_FAMILY_HUNT_PENDING, name);
+            else localStorage.removeItem(STORAGE_FAMILY_HUNT_PENDING);
+        } catch (_) {}
+    }
+
+    /* Deteccion mas estricta para decidir si hay que viajar. isInHuntContext() da
+       falso positivo porque a barra de captura continua no DOM depois de sair da
+       hunt. O HUD (.phud-tloc) e a fonte do proprio jogo, entao ele manda: se
+       dissermos uma cidade nao ha hunt. So sem informacao no HUD usamos os
+       indicadores de interface. */
+    function isPlayerReallyInHunt() {
+        const location = typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '';
+        if (location && !isCityName(location)) return true;
+        if (isCityName(location)) return false;
+        return isInHuntContext();
+    }
+
+    async function leaveHuntForFamilyDepot() {
+        if (familyHuntTravelBusy) return true;
+        /* Ja estamos fora de uma hunt: nao ha viagem a fazer. Devolve true para
+           que a aba familiar abra normalmente e NAO apaga a hunt pendente, para
+           que o regresso automatico continue a funcionar quando fechar o Depot. */
+        if (!isPlayerReallyInHunt()) return true;
+        const huntName = getCurrentHuntNameForReconnect();
+        if (!huntName) {
+            showScriptToast('No se pudo identificar la hunt actual. Sal de la hunt manualmente.', { isError: true });
+            return false;
+        }
+        familyHuntTravelBusy = true;
+        setPendingFamilyHunt(huntName);
+        showScriptToast(`Saliendo de ${huntName}…`);
+        try {
+            const left = await teleportToCeruleanForReconnect();
+            if (!left) {
+                setPendingFamilyHunt(null);
+                showScriptToast('No se pudo salir de la hunt automáticamente. Sal manualmente.', { isError: true });
+                return false;
+            }
+            return true;
+        } catch (error) {
+            console.warn('[Depot] Falha ao sair da hunt para o deposito familiar:', error);
+            return false;
+        } finally {
+            familyHuntTravelBusy = false;
+        }
+    }
+
+    async function returnToPendingFamilyHunt() {
+        if (familyHuntTravelBusy) return;
+        const huntName = getPendingFamilyHunt();
+        if (!huntName) return;
+        familyHuntTravelBusy = true;
+        try {
+            showScriptToast(`Volviendo a ${huntName}…`, { isOk: true });
+            await teleportToTarget(huntName);
+            setPendingFamilyHunt(null);
+        } catch (error) {
+            console.warn('[Depot] Falha ao voltar para a hunt:', error);
+            showScriptToast(`No se pudo volver a ${huntName}. Usa el mapa para ir allí.`, { isError: true, durationMs: 4200 });
+        } finally {
+            familyHuntTravelBusy = false;
+        }
+    }
+
     function getCurrentHuntNameForReconnect() {
-        const currentMarkerName = document.querySelector('.hunt-marker.here .hunt-name')?.textContent?.trim();
-        return currentMarkerName || getLastHunt();
+        /* O HUD (.phud-tloc) e onde o proprio jogo mostra onde o personagem esta:
+           e a fonte confiavel e sempre visivel. O marcador do mapa (.hunt-marker.here)
+           so existe quando o mapa esta montado e pode estar desatualizado, por isso
+           passa a ser apenas o segundo recurso. getLastHunt() so entra no fim: e a
+           ultima hunt visitada e nao necessariamente a atual. */
+        const candidates = [
+            typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '',
+            document.querySelector('.hunt-marker.here .hunt-name')?.textContent?.trim(),
+            getLastHunt()
+        ];
+        for (const candidate of candidates) {
+            const name = String(candidate || '').replace(/\\s+/g, ' ').trim();
+            if (!name || name === 'Sem Nome' || isCityName(name)) continue;
+            return name;
+        }
+        return null;
     }
 
     async function teleportToCeruleanForReconnect() {
@@ -6895,7 +7048,21 @@
     }
 
     function findMappedHunt(huntName) {
-        return globalHuntMarkerData.get(getCleanHuntName(huntName)) || null;
+        const key = getCleanHuntName(huntName);
+        if (!key) return null;
+        const exact = globalHuntMarkerData.get(key);
+        if (exact) return exact;
+        /* Respaldo: o nome informado pelo HUD pode diferir do marcador (acento,
+           prefixo, singular/plural). Sem uma correspondencia exata o mapa nao era
+           selecionado e o marcador da hunt nao aparecia no mapa certo. */
+        for (const [markerKey, marker] of globalHuntMarkerData.entries()) {
+            if (getCleanHuntName(markerKey) === key) return marker;
+        }
+        for (const [markerKey, marker] of globalHuntMarkerData.entries()) {
+            const cleanMarker = getCleanHuntName(markerKey);
+            if (cleanMarker && (cleanMarker.includes(key) || key.includes(cleanMarker))) return marker;
+        }
+        return null;
     }
 
     function getHuntMarkerArea(marker) {
@@ -8657,7 +8824,11 @@
                 tpBtn.className = 'dock-btn';
                 tpBtn.type = 'button';
                 tpBtn.addEventListener('click', handleNavQuickTP);
-                if (mapBtn && mapBtn.nextSibling) gameDock.insertBefore(tpBtn, mapBtn.nextSibling);
+                /* El boton del mapa cuelga de .dock-scroll, no del dock: insertar
+                   usando su nextSibling contra gameDock lanzaba NotFoundError y el
+                   boton de Teleport Rapido nunca llegaba a existir. Se inserta en
+                   el contenedor real del boton del mapa. */
+                if (mapBtn && mapBtn.parentElement) mapBtn.parentElement.insertBefore(tpBtn, mapBtn.nextSibling);
                 else gameDock.appendChild(tpBtn);
             }
             updateNavButtonAppearance();
@@ -10050,6 +10221,32 @@
         });
     }
 
+    /* Aviso ligero: recuadro pequeno arriba a la derecha que se cierra solo a los
+       2 segundos. Se usa para informar de viajes automaticos sin interrumpir con
+       una ventana modal que obliga a pulsar OK. */
+    function showScriptToast(message, { isError = false, isOk = false, durationMs = 2000 } = {}) {
+        if (!document.body) return;
+        let stack = document.querySelector('.script-toast-stack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.className = 'script-toast-stack';
+            document.body.appendChild(stack);
+        }
+        /* No mas de 3 a la vez: se limpa el mas antiguo si se acumulan. */
+        while (stack.children.length >= 3) stack.firstElementChild?.remove();
+        const toast = document.createElement('div');
+        toast.className = `script-toast${isError ? ' is-error' : ''}${isOk ? ' is-ok' : ''}`;
+        toast.setAttribute('role', 'status');
+        toast.innerHTML = `<span class="script-toast-ico">${isError ? '⚠️' : isOk ? '✅' : 'ℹ️'}</span><span class="script-toast-msg">${escapeHTML(message)}</span>`;
+        stack.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('is-in'));
+        setTimeout(() => {
+            toast.classList.remove('is-in');
+            toast.classList.add('is-out');
+            setTimeout(() => toast.remove(), 220);
+        }, Math.max(600, durationMs));
+    }
+
     function showScriptNotice(message, { title = 'Aviso', isError = false } = {}) {
         return new Promise(resolve => {
             const backdrop = document.createElement('div');
@@ -10164,7 +10361,12 @@
         `;
         document.body.appendChild(backdrop);
 
-        const close = () => backdrop.remove();
+        const close = () => {
+            backdrop.remove();
+            /* Cerrar el Depot cierra el ciclo: si salimos de una hunt para venir
+               aqui, se vuelve a ella. Sin await para no congelar el cierre. */
+            returnToPendingFamilyHunt();
+        };
         backdrop.querySelector('.portable-depot-close').addEventListener('click', close);
         backdrop.addEventListener('click', event => {
             if (event.target === backdrop) close();
@@ -10217,12 +10419,34 @@
             try {
                 latestFamily = null;
                 const previousFamilyData = familyData;
-                const response = await requestGameEvent('family', { type: 'family-action', ...payload }, null, 5000);
-                if (!response?.family) {
-                    familyData = previousFamilyData;
-                    throw new Error(response?.message || response?.error || 'O servidor recusou esta transferência.');
+                /* Sem socket aberto, requestGameEvent resolvia [] na hora e a
+                   transferencia nunca saia: o jogador so via a recusa generica.
+                   Aqui esperamos a reconexao e dizemos o que realmente acontece. */
+                if (!await waitForGameSocket(6000)) {
+                    throw new Error('Sem conexão com o servidor. O Depósito familiar fica indisponível enquanto o jogo reconecta — tente de novo em alguns segundos.');
                 }
-                familyData = response;
+                const errorMark = lastGameError?.at || 0;
+                const response = await requestGameEvent('family', { type: 'family-action', ...payload }, null, 5000);
+                if (response?.family) {
+                    familyData = response;
+                } else {
+                    const serverError = (lastGameError && lastGameError.at > errorMark) ? lastGameError.message : null;
+                    if (serverError) {
+                        familyData = previousFamilyData;
+                        throw new Error(serverError);
+                    }
+                    /* Sem erro e sem resposta: a acao pode ter entrado e a resposta
+                       ter-se perdido. Nao repetimos (poderia duplicar); confirmamos
+                       contra o estado real antes de avisar. */
+                    const recheck = await requestFreshGameEvent('family', 'family-get', { timeoutMs: 3000, attempts: 1 }).catch(() => null);
+                    if (recheck?.family) {
+                        familyData = recheck;
+                        render();
+                        return;
+                    }
+                    familyData = previousFamilyData;
+                    throw new Error('O servidor não respondeu a tempo. Vuelve a intentarlo en unos segundos.');
+                }
                 if (payload.action === 'item') {
                     latestInventory = null;
                     inventory = await requestFreshGameEvent('inventory', 'inv-get', { timeoutMs: 2500, attempts: 2 });
@@ -10806,8 +11030,16 @@
         };
 
         const bindTab = tab => {
-            tab.addEventListener('click', () => {
-                activeTab = tab.dataset.tab;
+            tab.addEventListener('click', async () => {
+                const target = tab.dataset.tab;
+                /* Las pestanas familiares requieren salir de la hunt: el servidor
+                   no las permite durante una caza. Se viaja antes de cambiar de
+                   pestana para que el Depot ya cargue los datos del servidor. */
+                if (target === 'family-items' || target === 'family-pokemon') {
+                    const ready = await leaveHuntForFamilyDepot();
+                    if (!ready) return;
+                }
+                activeTab = target;
                 backdrop.querySelectorAll('.depot-tab').forEach(button => button.classList.toggle('active', button === tab));
                 render();
             });
@@ -10857,8 +11089,7 @@
                 socketReady ? requestFreshGameEvent('family', 'family-get', { timeoutMs: 3500, attempts: 2 }) : Promise.resolve(null)
             ]);
             configureFamilyTabs();
-            status.remove();
-            if (!socketReady) {
+            status.remove();            if (!socketReady) {
                 showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), 'WebSocket indisponível: Pokémon e família não puderam ser carregados.', true);
             }
             render();
@@ -16631,6 +16862,15 @@
             lastDomCheckAt = Date.now();
             
             runDOMEnhancement('botones del dock', injectDockButtonsWhenReady);
+            /* Recuperacion: si se cerro la ventana (o la pestana) con el Depot
+               familiar abierto, el personaje quedo en la ciudad. Se devuelve a la
+               hunt de la que se salio, una sola vez por recarga. */
+            if (!pendingFamilyHuntRecoveryStarted) {
+                pendingFamilyHuntRecoveryStarted = true;
+                if (getPendingFamilyHunt() && !isPlayerReallyInHunt()) {
+                    setTimeout(() => { returnToPendingFamilyHunt(); }, 3500);
+                }
+            }
             if (document.querySelector('.cfg-window')) runDOMEnhancement('configuración', injectConfigTab);
             runDOMEnhancement('chat', applyChatState);
             runDOMEnhancement('accesos de hunt', injectHuntShopLauncher);
