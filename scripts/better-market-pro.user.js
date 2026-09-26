@@ -4716,7 +4716,7 @@
         }
         /* Global Market aligned with the Poké Ball Shop / Sell Items windows. */
         .script-market-backdrop { background:rgba(0,0,0,.72) !important;backdrop-filter:blur(2px); }
-        .script-market-window { border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden; }
+        .script-market-window { border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden;will-change:transform; }
         .script-market-window .mk-head { min-height:50px;padding:10px 14px !important;background:linear-gradient(180deg,#151c22,#0b1116) !important;border-bottom:1px solid #745725 !important;box-shadow:0 3px 12px #0008; }
         .script-market-window .mk-head > b { color:#f0e6ce !important;font-size:16px;letter-spacing:.015em;text-shadow:0 1px 2px #000; }
         .script-market-window .market-head-primary { flex:1;min-width:0;display:flex;align-items:center;gap:14px; }
@@ -6369,6 +6369,140 @@
     }
     appendStyleWhenReady(style);
 
+    /* ===== APLANADO VISUAL DEL PANEL DE CONFIGURACION =====
+       Quita hover, glow, blur, sombras, degradados y animaciones de la ventana
+       de Configuracion. Se conserva a proposito el dorado de los estados
+       activos (informa, no decora), la rejilla de 2 columnas, las cabeceras de
+       seccion y el scrollbar. No toca las pestanas Video / Contrasena ni
+       ningun otro panel del juego. Se inyecta aparte para poder desactivarlo
+       quitando este bloque sin reescribir las 160 reglas originales. */
+    const styleCfgFlat = document.createElement('style');
+    styleCfgFlat.id = 'script-cfg-flat-style';
+    styleCfgFlat.textContent = `
+        .cfg-window.script-mods-open,
+        .cfg-window.script-mods-open .cfg-body,
+        .cfg-window.script-mods-open .cfg-mods-content,
+        .cfg-window.script-mods-open .cfg-tabs,
+        .cfg-window.script-mods-open .script-mod-category,
+        .cfg-window.script-mods-open .script-mod-category h3,
+        .cfg-window.script-mods-open .cfg-row,
+        .cfg-window.script-mods-open .script-window-scale-row,
+        .cfg-window.script-mods-open .script-window-scale-head,
+        .cfg-window.script-mods-open .cfg-seg,
+        .cfg-window.script-mods-open .cfg-tab,
+        .cfg-window.script-mods-open button {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            transition: none !important;
+            animation: none !important;
+        }
+        .cfg-window.script-mods-open *,
+        .cfg-window.script-mods-open *::before,
+        .cfg-window.script-mods-open *::after {
+            transition: none !important;
+            animation: none !important;
+        }
+        .cfg-window.script-mods-open button:not(:disabled):hover,
+        .cfg-window.script-mods-open .cfg-row:hover,
+        .cfg-window.script-mods-open .script-window-scale-row:hover,
+        .cfg-window.script-mods-open .cfg-tab:not(.on):hover,
+        .cfg-window.script-mods-open .cfg-seg-btn:not(.on):hover {
+            transform: none !important;
+            box-shadow: none !important;
+            filter: none !important;
+        }
+        .cfg-window.script-mods-open { background: #0f1721 !important; border: 1px solid #2b3f54 !important; border-radius: 12px !important; }
+        .cfg-window.script-mods-open .cfg-tabs { background: #16202c !important; border-bottom: 1px solid #2b3f54 !important; }
+        .cfg-window.script-mods-open .cfg-body,
+        .cfg-window.script-mods-open .cfg-mods-content { background: #0f1721 !important; }
+        .cfg-window.script-mods-open .cfg-tab { background: #1a2635 !important; background-image: none !important; color: #d7e2ee !important; }
+        .cfg-window.script-mods-open .script-mod-category { background: #101a26 !important; background-image: none !important; }
+        .cfg-window.script-mods-open .cfg-tab.on,
+        .cfg-window.script-mods-open .cfg-tab-mods.on {
+            background: #e0b757 !important; background-image: none !important;
+            color: #17130a !important; border-color: #e0b757 !important; box-shadow: none !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category-grid > .cfg-row {
+            background: #16212e !important; background-image: none !important;
+            border: 1px solid #2a3d52 !important; border-radius: 10px !important; padding: 12px !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category-grid > .cfg-row:hover {
+            background: #16212e !important; border-color: #2a3d52 !important;
+        }
+        .cfg-window.script-mods-open .script-window-scale-row {
+            background: #16212e !important; background-image: none !important;
+            border: 1px solid #2a3d52 !important; border-radius: 10px !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category h3 { color: #cfdae6 !important; border-bottom: 1px solid #26374a !important; }
+        .cfg-window.script-mods-open .script-mod-category-grid,
+        .cfg-window.script-mods-open .script-mods-grid,
+        .cfg-window.script-mods-open .script-window-scale-grid { gap: 10px !important; }
+        .cfg-window.script-mods-open .cfg-mods-content::-webkit-scrollbar-thumb,
+        .cfg-window.script-mods-open .cfg-mods-content::-webkit-scrollbar-thumb:hover { background: #4a637c !important; }
+        .cfg-window .cfg-sell-result-count { padding: 4px 10px; color: #8fa3b6; font-size: 10px; border-bottom: 1px solid #1f2d3c; }
+        .cfg-window .cfg-sell-result-row { background: transparent !important; }
+
+        /* ---- "Confirmacion para objetos": dos columnas y nombres sin partir ---- */
+        .cfg-window .script-sell-confirm { display: block !important; }
+        .cfg-window .script-sell-head { margin-bottom: 10px; }
+        .cfg-window .script-sell-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+        .cfg-window .script-sell-col { min-width: 0; }
+        .cfg-window .script-sell-col-title {
+            display: block; margin-bottom: 6px; color: #93a7ba; font-size: 10px;
+            font-weight: 900; letter-spacing: .08em; text-transform: uppercase;
+        }
+        .cfg-window .script-sell-picker { position: relative; display: flex; gap: 8px; flex-wrap: wrap; }
+        .cfg-window .script-sell-search {
+            flex: 1 1 220px; min-width: 0; height: 34px; box-sizing: border-box;
+            background: #0d1620 !important; color: #e6eef6 !important;
+            border: 1px solid #2c4358 !important; border-radius: 6px !important;
+            padding: 0 10px !important; font-size: 12px !important; outline: none !important;
+        }
+        .cfg-window .script-sell-btn {
+            flex: 0 0 auto; height: 34px; padding: 0 12px; box-sizing: border-box;
+            background: #1b2b3c !important; color: #dbe6f0 !important;
+            border: 1px solid #2c4358 !important; border-radius: 6px !important;
+            font-size: 11px !important; font-weight: 800 !important; cursor: pointer !important;
+        }
+        .cfg-window .script-sell-menu {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: #16212e !important; border: 1px solid #2c4358 !important;
+            border-radius: 8px !important; z-index: 40; margin-top: 4px;
+            box-sizing: border-box; overflow: hidden;
+        }
+        .cfg-window .script-sell-results { max-height: 240px; overflow-y: auto; overflow-x: hidden; }
+        /* Filas comodos: una sola linea, sin partir el nombre, alto uniforme. */
+        .cfg-window .cfg-sell-result-row {
+            display: flex !important; align-items: center; gap: 9px;
+            min-height: 30px; padding: 5px 10px !important;
+            font-size: 12px !important; white-space: nowrap; overflow: hidden;
+            border-bottom: 1px solid #1c2937 !important; cursor: pointer;
+        }
+        .cfg-window .cfg-sell-result-row > span { overflow: hidden; text-overflow: ellipsis; }
+        .cfg-window .cfg-sell-result-row img { width: 18px; height: 18px; object-fit: contain; flex: 0 0 18px; }
+        .cfg-window .cfg-sell-result-row input[type="checkbox"] { width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }
+        /* Ya elegido: se marca con fondo, no con brillo. */
+        .cfg-window .cfg-sell-result-row:has(input:checked) { background: #1d3047 !important; }
+        .cfg-window .script-sell-selected {
+            display: flex; flex-direction: column; gap: 5px;
+            max-height: 190px; overflow-y: auto; padding-right: 4px;
+        }
+        .cfg-window .script-sell-selected > div {
+            display: flex; justify-content: space-between; align-items: center; gap: 8px;
+            background: #1a2b3b; border: 1px solid #2c4358; border-radius: 6px;
+            padding: 6px 9px; font-size: 12px; min-height: 30px;
+        }
+        .cfg-window .script-sell-selected > div > div { display: flex; align-items: center; gap: 7px; color: #e6eef6; min-width: 0; }
+        .cfg-window .script-sell-selected > div > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cfg-window .script-sell-selected img { width: 18px; height: 18px; object-fit: contain; flex: 0 0 18px; }
+        .cfg-window .script-sell-selected > div > span { cursor: pointer; color: #e8836f; font-weight: 900; font-size: 15px; line-height: 1; padding: 0 2px; }
+        .cfg-window.script-window-layout-compact .script-sell-columns,
+        .cfg-window.script-window-layout-mobile .script-sell-columns { grid-template-columns: minmax(0, 1fr) !important; }
+    `;
+    appendStyleWhenReady(styleCfgFlat);
+
     applyGameFont();
     applyVisualPreferences();
     loadStoredCustomFont();
@@ -7901,6 +8035,11 @@
     }
 
     const SCRIPT_SHOP_BAR_POSITION = 'script_shop_bar_position_v1';
+    /* Filas que se pintan de golpe en las listas del Mercado. Antes eran 100 y cada
+       fila arrastra sprite, input de cantidad y boton: el panel abria con ~2.400 nodos
+       y se caia a 30 fps. 30 mantiene el panel por debajo de ~800 nodos; el boton
+       "cargar mas" sigue presente, solo que en pasos de 30 en vez de 100. */
+    const SCRIPT_MARKET_PAGE_SIZE = 30;
     const SCRIPT_SHOP_BAR_COLLAPSED = 'script_shop_bar_collapsed_v1';
     const SCRIPT_SHOP_BAR_HIDDEN = 'script_shop_bar_hidden_v1';
     const SCRIPT_SHOP_BAR_SCALE = 'script_shop_bar_scale_v1';
@@ -8737,20 +8876,21 @@
                         </div>
                     </div>
 
-                    <div class="cfg-row script-mods-wide" style="background: #14222d; padding: 10px; border-radius: 6px; border: 1px solid #1a2d3a; margin: 0; display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;">
-                        <div class="cfg-label" style="flex:1;">
+                    <div class="cfg-row script-mods-wide script-sell-confirm" style="background: #14222d; padding: 12px; border-radius: 8px; border: 1px solid #1a2d3a; margin: 0;">
+                        <div class="cfg-label script-sell-head">
                             <b style="color: #e2e8f0; font-size: 14px;">${tr('sellConfirmation')}</b>
                             <span style="color: #a0aec0; font-size: 11px; display:block; margin-top:4px;">${tr('protectedItems')}</span>
                         </div>
                         
-                        <div id="cfg-sell-selected-list" style="flex:1; display:flex; flex-direction:column; gap:4px; max-height:120px; overflow-y:auto; padding-right:4px;">
-                        </div>
-                        
-                        <div style="flex:1; position:relative; min-width:180px;">
-                            <button type="button" id="cfg-sell-dd-btn" style="width:100%; text-align:left; background:#0c161f; color:#e2e8f0; border:1px solid #273f52; padding:6px 10px; border-radius:4px; cursor:pointer;">${tr('selectItems')}</button>
-                            <div id="cfg-sell-dropdown-menu" style="display:none; position:absolute; top:100%; right:0; width:100%; background:#14222d; border:1px solid #273f52; border-radius:4px; z-index:10; box-shadow:0 4px 6px rgba(0,0,0,0.3); margin-top:4px; padding:6px; box-sizing:border-box;">
-                                <input type="text" id="cfg-sell-search" placeholder="${tr('search')}" style="width:100%; box-sizing:border-box; background:#0c161f; color:#e2e8f0; border:1px solid #273f52; border-radius:4px; padding:6px; outline:none; margin-bottom:6px;">
-                                <div id="cfg-sell-dropdown" style="max-height:150px; overflow-y:auto;">
+                        <div class="script-sell-columns">
+                            <div class="script-sell-col">
+                                <div id="cfg-sell-selected-list" class="script-sell-selected"></div>
+                            </div>
+                            <div class="script-sell-col script-sell-picker">
+                                <input type="text" id="cfg-sell-search" class="script-sell-search" placeholder="${tr('search')}" autocomplete="off" spellcheck="false">
+                                <button type="button" id="cfg-sell-dd-btn" class="script-sell-btn">${tr('selectItems')}</button>
+                                <div id="cfg-sell-dropdown-menu" class="script-sell-menu">
+                                    <div id="cfg-sell-dropdown" class="script-sell-results"></div>
                                 </div>
                             </div>
                         </div>
@@ -8934,29 +9074,83 @@
             const searchInputEl = modsContent.querySelector('#cfg-sell-search');
             const dropdownEl = modsContent.querySelector('#cfg-sell-dropdown');
 
-            ddBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                ddMenu.style.display = ddMenu.style.display === 'none' ? 'block' : 'none';
-                if (ddMenu.style.display === 'block') {
-                    renderDropdown();
-                    searchInputEl.focus();
+            /* El catalogo puede seguir cargando: se espera, pero con tope. Un await
+               sin limite dejaria el desplegable vacio para siempre si la promesa
+               nunca llegara a resolverse. */
+            const waitForItemCatalog = (ms = 4000) => {
+                if (typeof itemDataLoadPromise === 'undefined' || !itemDataLoadPromise) return Promise.resolve();
+                return Promise.race([
+                    Promise.resolve(itemDataLoadPromise).catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, ms))
+                ]);
+            };
+
+            /* El menu se abre hacia abajo y, cuando el campo esta cerca del borde
+               inferior, los resultados caian por debajo del pliegue: se escribia y
+               no se veia nada. Aqui se voltea hacia arriba cuando no cabe abajo. */
+            const positionSellDropdown = () => {
+                if (ddMenu.style.display !== 'block') return;
+                const anchor = ddMenu.parentElement;
+                if (!anchor) return;
+                const rect = anchor.getBoundingClientRect();
+                const below = window.innerHeight - rect.bottom;
+                const above = rect.top;
+                const openUp = below < 260 && above > below;
+                ddMenu.style.top = openUp ? 'auto' : '100%';
+                ddMenu.style.bottom = openUp ? '100%' : 'auto';
+                const room = Math.max(150, (openUp ? above : below) - 16);
+                ddMenu.style.maxHeight = room + 'px';
+                if (typeof dropdownEl !== 'undefined' && dropdownEl) {
+                    dropdownEl.style.maxHeight = Math.max(90, room - 62) + 'px';
                 }
+            };
+
+            /* El campo de busqueda ahora esta siempre visible (fuera del menu), asi que
+               escribir o enfocar abre los resultados por su cuenta: no hace falta
+               pulsar antes el boton. El boton solo alterna la lista completa. */
+            const openSellDropdown = async () => {
+                await waitForItemCatalog();
+                renderDropdown();
+                ddMenu.style.display = 'block';
+                positionSellDropdown();
+            };
+            const closeSellDropdown = () => {
+                ddMenu.style.display = 'none';
+            };
+            const isSellDropdownOpen = () => ddMenu.style.display === 'block';
+
+            ddBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (isSellDropdownOpen()) { closeSellDropdown(); return; }
+                await openSellDropdown();
+                searchInputEl.focus();
             });
+            searchInputEl.addEventListener('focus', (e) => { e.stopPropagation(); if (!isSellDropdownOpen()) openSellDropdown(); });
+            searchInputEl.addEventListener('click', (e) => e.stopPropagation());
+            searchInputEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+            window.addEventListener('resize', positionSellDropdown, { passive:true });
+            window.addEventListener('scroll', positionSellDropdown, { passive:true, capture:true });
 
             if (configDropdownCloseHandler) {
                 document.removeEventListener('click', configDropdownCloseHandler);
             }
             configDropdownCloseHandler = (e) => {
-                if (!ddMenu.contains(e.target) && e.target !== ddBtn) {
-                    ddMenu.style.display = 'none';
-                }
+                if (ddMenu.contains(e.target) || ddBtn.contains(e.target) || searchInputEl.contains(e.target)) return;
+                closeSellDropdown();
             };
             document.addEventListener('click', configDropdownCloseHandler);
 
             let uniqueItems = null;
+            let uniqueItemsSourceSize = -1;
 
             function initUniqueItems() {
-                if (uniqueItems) return;
+                /* La cache se invalidaba por mera existencia, y un array vacio es
+                   truthy: si el panel se abria antes de que terminara items.json,
+                   uniqueItems se congelaba en [] y el buscador jamas mostraba nada.
+                   Ahora se invalida cuando el catalogo de origen cambia de tamano. */
+                const sourceSize = globalItemApiData.size;
+                if (uniqueItems && uniqueItemsSourceSize === sourceSize) return;
+                uniqueItemsSourceSize = sourceSize;
                 uniqueItems = [];
                 const seenNames = new Set();
                 for (const item of globalItemApiData.values()) {
@@ -9000,12 +9194,44 @@
                 }
             }
 
+            /* Resalta la parte que coincide con la busqueda sin usar innerHTML sobre
+               texto del catalogo: se parte el nombre y se envuelve solo el tramo. */
+            function buildItemResultLabel(itemName, query) {
+                const span = document.createElement('span');
+                span.style.color = '#e2e8f0';
+                if (!query) { span.textContent = itemName; return span; }
+                const index = itemName.toLowerCase().indexOf(query);
+                if (index < 0) { span.textContent = itemName; return span; }
+                span.appendChild(document.createTextNode(itemName.slice(0, index)));
+                const mark = document.createElement('b');
+                mark.textContent = itemName.slice(index, index + query.length);
+                mark.style.color = '#ffd778';
+                span.appendChild(mark);
+                span.appendChild(document.createTextNode(itemName.slice(index + query.length)));
+                return span;
+            }
+
+            let itemResultRows = [];
+            let itemResultIndex = -1;
+
+            function moveItemResult(step) {
+                if (!itemResultRows.length) return;
+                itemResultIndex = (itemResultIndex + step + itemResultRows.length) % itemResultRows.length;
+                itemResultRows.forEach((row, index) => {
+                    row.style.background = index === itemResultIndex ? '#1d3047' : 'transparent';
+                });
+                const active = itemResultRows[itemResultIndex];
+                if (active) active.scrollIntoView({ block: 'nearest' });
+            }
+
             function renderDropdown() {
                 initUniqueItems();
                 const query = searchInputEl.value.toLowerCase().trim();
                 const selectedItems = getSellConfirmItems();
                 dropdownEl.innerHTML = '';
-                
+                itemResultRows = [];
+                itemResultIndex = -1;
+
                 const filtered = query ? uniqueItems.filter(item => (item.name || item.title).toLowerCase().includes(query)) : uniqueItems;
                 const toShow = filtered.slice(0, 50);
 
@@ -9013,21 +9239,25 @@
                     dropdownEl.innerHTML = `<div style="padding:6px; color:#718096; font-size:12px; text-align:center;">${tr('noItemFound')}</div>`;
                     return;
                 }
-                
+
+                const counter = document.createElement('div');
+                counter.className = 'cfg-sell-result-count';
+                counter.textContent = query ? `${toShow.length} / ${filtered.length}` : `${uniqueItems.length}`;
+                dropdownEl.appendChild(counter);
+
                 toShow.forEach(item => {
                     const itemName = item.name || item.title;
                     const isChecked = selectedItems.includes(itemName);
                     const iconHTML = resolveItemIcon(itemName);
-                    
+
                     const row = document.createElement('label');
-                    row.style = 'display:flex; align-items:center; padding:6px 10px; cursor:pointer; border-bottom:1px solid #1a2d3a; font-size:13px;';
-                    row.addEventListener('mouseenter', () => row.style.background = '#14222d');
-                    row.addEventListener('mouseleave', () => row.style.background = 'transparent');
-                    
+                    row.className = 'cfg-sell-result-row';
+                    row.style = 'display:flex; align-items:center; gap:8px; padding:6px 10px; cursor:pointer; border-bottom:1px solid #1a2d3a; font-size:13px;';
+
                     const cb = document.createElement('input');
                     cb.type = 'checkbox';
                     cb.checked = isChecked;
-                    cb.style.marginRight = '8px';
+                    cb.style.marginRight = '0';
                     cb.addEventListener('change', () => {
                         let current = getSellConfirmItems();
                         if (cb.checked && !current.includes(itemName)) current.push(itemName);
@@ -9035,19 +9265,31 @@
                         setSellConfirmItems(current);
                         renderSelected();
                     });
-                    
-                    const nameSpan = document.createElement('span');
-                    nameSpan.textContent = itemName;
-                    nameSpan.style.color = '#e2e8f0';
-                    
+
                     row.appendChild(cb);
                     row.insertAdjacentHTML('beforeend', iconHTML);
-                    row.appendChild(nameSpan);
+                    row.appendChild(buildItemResultLabel(itemName, query));
                     dropdownEl.appendChild(row);
+                    itemResultRows.push(row);
                 });
             }
 
-            searchInputEl.addEventListener('input', renderDropdown);
+            searchInputEl.addEventListener('input', () => {
+                renderDropdown();
+                positionSellDropdown();
+            });
+            searchInputEl.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveItemResult(1); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); moveItemResult(-1); }
+                else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const row = itemResultRows[itemResultIndex < 0 ? 0 : itemResultIndex];
+                    if (row) row.click();
+                } else if (e.key === 'Escape') {
+                    ddMenu.style.display = 'none';
+                    ddBtn.focus();
+                }
+            });
             renderSelected();
         }
 
@@ -12703,7 +12945,7 @@
         let requestCatalogCache = [];
         let sellEntries = [];
         let selectedSellEntry = null;
-        let renderLimit = 100;
+        let renderLimit = SCRIPT_MARKET_PAGE_SIZE;
         let diamondPdRate = null;
         let sellReferenceRequestId = 0;
         let activeMarketFavoriteKey = '';
@@ -13078,10 +13320,19 @@
             filtersToggle.classList.toggle('on', enabled);
             updateHeldMarketFilters();
         };
+        /* Leer scrollWidth/clientWidth fuerza un layout sincronico. Antes se hacia en
+           CADA evento de scroll (y un scroll suave dispara decenas por segundo):
+           el navegador lo atribuyo como 206 ms de reflow forzado al abrir el panel.
+           Ahora el ancho total se mide una sola vez y el scroll solo lee scrollLeft,
+           que no invalida el layout, de modo que las flechas siguen respondiendo. */
+        let favoriteScrollMaximum = 0;
         const updateMarketFavoriteArrows = () => {
-            const maximum = Math.max(0, favoritesList.scrollWidth - favoritesList.clientWidth);
             favoriteScrollPrev.disabled = favoritesList.scrollLeft <= 1;
-            favoriteScrollNext.disabled = favoritesList.scrollLeft >= maximum - 1;
+            favoriteScrollNext.disabled = favoritesList.scrollLeft >= favoriteScrollMaximum - 1;
+        };
+        const measureMarketFavorites = () => {
+            favoriteScrollMaximum = Math.max(0, favoritesList.scrollWidth - favoritesList.clientWidth);
+            updateMarketFavoriteArrows();
         };
         const scrollMarketFavorites = direction => {
             const distance = Math.max(180, Math.floor(favoritesList.clientWidth * .72));
@@ -13113,7 +13364,7 @@
                         shinyOnly.checked = false;
                         [ivMin, ivMax, levelMin, levelMax, qualityMin, qualityMax].forEach(control => { control.value = ''; });
                         typeSelect.value = '';
-                        renderLimit = 100;
+                        renderLimit = SCRIPT_MARKET_PAGE_SIZE;
                         renderMarketFavorites();
                         load();
                         return;
@@ -13123,7 +13374,7 @@
                     categorySelect.value = activeCategory;
                     sortSelect.value = 'price-asc';
                     search.value = favorite.name;
-                    renderLimit = 100;
+                    renderLimit = SCRIPT_MARKET_PAGE_SIZE;
                     renderMarketFavorites();
                     load();
                 });
@@ -13131,13 +13382,14 @@
             });
             requestAnimationFrame(() => {
                 favoritesList.querySelector('.market-favorite-chip.on')?.scrollIntoView({ block:'nearest', inline:'nearest' });
-                updateMarketFavoriteArrows();
+                measureMarketFavorites();
             });
         };
         filtersToggle.addEventListener('click', () => setMarketFiltersOpen(!backdrop.classList.contains('market-filters-open')));
         favoriteScrollPrev.addEventListener('click', () => scrollMarketFavorites(-1));
         favoriteScrollNext.addEventListener('click', () => scrollMarketFavorites(1));
         favoritesList.addEventListener('scroll', updateMarketFavoriteArrows, { passive:true });
+        window.addEventListener('resize', measureMarketFavorites, { passive:true });
         const renderSellQualityTierButtons = () => {
             sellQualityTierButtons.innerHTML = '';
             sellQualityTierDefinitions.forEach(tier => {
@@ -13998,8 +14250,8 @@
                 more.type = 'button';
                 more.className = 'mk-bulk-btn';
                 more.style.cssText = 'margin:5px auto;padding:8px 18px;';
-                more.textContent = `${tr('loadMore')} (+${Math.min(100, filtered.length - visible.length)})`;
-                more.addEventListener('click', () => { renderLimit += 100; renderMyListings(); });
+                more.textContent = `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
+                more.addEventListener('click', () => { renderLimit += SCRIPT_MARKET_PAGE_SIZE; renderMyListings(); });
                 list.appendChild(more);
             }
         };
@@ -14670,9 +14922,9 @@
                 more.type = 'button';
                 more.className = 'mk-bulk-btn';
                 more.style.cssText = 'margin:5px auto;padding:8px 18px;';
-                more.textContent = `${tr('loadMore')} (+${Math.min(100, filtered.length - visible.length)})`;
+                more.textContent = `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
                 more.addEventListener('click', () => {
-                    renderLimit += 100;
+                    renderLimit += SCRIPT_MARKET_PAGE_SIZE;
                     render();
                 });
                 list.appendChild(more);
@@ -14746,7 +14998,7 @@
                 pokemonFilters.style.display = (marketMode === 'buy' || marketMode === 'mine' || marketMode === 'featured') && activeCategory === 'Pokemon' ? 'flex' : 'none';
                 buyQualityTiers.classList.toggle('visible', (marketMode === 'buy' || marketMode === 'featured') && activeCategory === 'Pokemon');
                 mineQualityTiers.classList.toggle('visible', marketMode === 'mine' && (activeCategory === 'All' || activeCategory === 'Pokemon'));
-                renderLimit = 100;
+                renderLimit = SCRIPT_MARKET_PAGE_SIZE;
                 populateHeldMarketFilters();
                  updateHeldMarketFilters();
                  populateRequestCatalog();
@@ -14973,7 +15225,7 @@
             updateMarketCategoryRail();
             updateHeldMarketFilters();
             itemRarityFilter.value = '';
-            renderLimit = 100;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (activeCategory !== 'Pokemon' && ['iv-desc', 'power-desc', 'level-desc', 'quality-desc'].includes(sortSelect.value)) {
                 sortSelect.value = 'recent';
             }
@@ -14985,12 +15237,12 @@
             renderMarketFavorites();
         });
         [search, sortSelect, itemRarityFilter, showGold, showDiamonds, shinyOnly, ivMin, ivMax, levelMin, levelMax, qualityMin, qualityMax, typeSelect].forEach(control => control.addEventListener('input', () => {
-            renderLimit = 100;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (marketMode === 'mine') renderMyListings();
             else render();
         }));
         [heldItemFilter, heldTierFilter, heldQuantityMin].forEach(control => control.addEventListener('input', () => {
-            renderLimit = 100;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (marketMode === 'mine') renderMyListings();
             else render();
         }));
