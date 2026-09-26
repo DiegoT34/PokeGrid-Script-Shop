@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.20.5
+// @version      10.20.7
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
