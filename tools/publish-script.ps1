@@ -97,38 +97,65 @@ if ($operationMode -eq 'New') {
 $targetName = "$Id.user.js"
 $targetDir = Join-Path $repoRoot 'scripts'
 $target = Join-Path $targetDir $targetName
-New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-$publishedCode = [regex]::Replace($code, '(?im)^(\s*//\s*@version\s+).+?\s*$', "`${1}$version", 1)
-$publishedCode = $publishedCode -replace "\r\n?", "`n"
-[IO.File]::WriteAllText($target, $publishedCode, [Text.UTF8Encoding]::new($false))
-$sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
-$publishedAt = if ($operationMode -eq 'Update' -and $existingById.publishedAt) { [string]$existingById.publishedAt } else { [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') }
-$entry = [ordered]@{
-  id = $Id
-  name = $name
-  namespace = $namespace
-  version = $version
-  author = $(if ($Author) { $Author } elseif ($metadataAuthor) { $metadataAuthor } else { 'DiegoT34' })
-  summary = $(if ($Summary) { $Summary } elseif ($metadataDescription) { $metadataDescription } else { $name })
-  description = $(if ($Description) { $Description } elseif ($metadataDescription) { $metadataDescription } else { $name })
-  category = $Category
-  tags = @($Tags)
-  games = @($games)
-  permissions = @($Permissions)
-  minLauncherVersion = $MinLauncherVersion
-  downloadUrl = "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/$targetName"
-  sha256 = $sha256
-  homepage = 'https://github.com/DiegoT34/PokeGrid-Script-Shop'
-  changelog = $(if ($Changelog) { $Changelog } else { "Publicación $version" })
-  icon = $Icon
-  featured = [bool]$Featured
-  publishedAt = $publishedAt
+
+# Estado previo: si la escritura del catalogo falla tras copiar el userscript,
+# el repositorio queda con un archivo que ningun SHA-256 del catalogo describe.
+$catalogExisted = Test-Path -LiteralPath $catalogPath -PathType Leaf
+$catalogBytes = if ($catalogExisted) { [IO.File]::ReadAllBytes($catalogPath) } else { $null }
+$targetExisted = Test-Path -LiteralPath $target -PathType Leaf
+$targetBytes = if ($targetExisted) { [IO.File]::ReadAllBytes($target) } else { $null }
+
+try {
+  New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+  $publishedCode = [regex]::Replace($code, '(?im)^(\s*//\s*@version\s+).+?\s*$', "`${1}$version", 1)
+  $publishedCode = $publishedCode -replace "\r\n?", "`n"
+  [IO.File]::WriteAllText($target, $publishedCode, [Text.UTF8Encoding]::new($false))
+  $sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+  $publishedAt = if ($operationMode -eq 'Update' -and $existingById.publishedAt) { [string]$existingById.publishedAt } else { [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') }
+  $entry = [ordered]@{
+    id = $Id
+    name = $name
+    namespace = $namespace
+    version = $version
+    author = $(if ($Author) { $Author } elseif ($metadataAuthor) { $metadataAuthor } else { 'DiegoT34' })
+    summary = $(if ($Summary) { $Summary } elseif ($metadataDescription) { $metadataDescription } else { $name })
+    description = $(if ($Description) { $Description } elseif ($metadataDescription) { $metadataDescription } else { $name })
+    category = $Category
+    tags = @($Tags)
+    games = @($games)
+    permissions = @($Permissions)
+    minLauncherVersion = $MinLauncherVersion
+    downloadUrl = "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/$targetName"
+    sha256 = $sha256
+    homepage = 'https://github.com/DiegoT34/PokeGrid-Script-Shop'
+    changelog = $(if ($Changelog) { $Changelog } else { "Publicación $version" })
+    icon = $Icon
+    featured = [bool]$Featured
+    publishedAt = $publishedAt
+  }
+  $remaining = @($catalog.scripts | Where-Object { $_.id -ne $Id })
+  $catalog.scripts = @([pscustomobject]$entry) + $remaining
+  $catalog.updatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $catalogJson = $catalog | ConvertTo-Json -Depth 12
+  [IO.File]::WriteAllText($catalogPath, $catalogJson, [Text.UTF8Encoding]::new($false))
+} catch {
+  # El userscript es la garantia critica: describiria un estado que ningun
+  # SHA-256 del catalogo cubre. El catalogo suele estar intacto, porque su
+  # escritura es la que fallo, pero se intenta restaurar sin dejar que un
+  # segundo fallo tape el error original.
+  try {
+    if ($targetExisted) { [IO.File]::WriteAllText($target, $targetBytes) }
+    elseif (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+  } catch {
+    Write-Host "AVISO  No se pudo deshacer scripts\$Id.user.js: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+  try {
+    if ($catalogExisted) { [IO.File]::WriteAllText($catalogPath, $catalogBytes) }
+  } catch {
+    Write-Host "AVISO  No se pudo restaurar catalog.json: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+  throw
 }
-$remaining = @($catalog.scripts | Where-Object { $_.id -ne $Id })
-$catalog.scripts = @([pscustomobject]$entry) + $remaining
-$catalog.updatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$catalogJson = $catalog | ConvertTo-Json -Depth 12
-[IO.File]::WriteAllText($catalogPath, $catalogJson, [Text.UTF8Encoding]::new($false))
 
 $operationLabel = $(if ($operationMode -eq 'New') { 'script nuevo' } else { 'actualización' })
 Write-Host "Preparado como ${operationLabel}: $targetName" -ForegroundColor Green
