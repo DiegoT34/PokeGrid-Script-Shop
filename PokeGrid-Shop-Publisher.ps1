@@ -234,7 +234,7 @@ function Clear-PublicationFields {
   $script:loaded = $null; $script:existing = $null; $script:publicationMode = 'New'
   $idBox.ReadOnly = $false
   @($pathBox,$nameValue,$namespaceValue,$versionValue,$idBox,$authorBox,$tagsBox,$summaryBox,$descriptionBox,$permissionsBox,$changelogBox) | ForEach-Object { $_.Clear() }
-  $categoryBox.Text = 'Utilidades'; $iconBox.Text = '🧩'; $minLauncherBox.Text = '0.22.3'; $featuredBox.Checked = $false
+  $categoryBox.Text = 'Utilidades'; $iconBox.Text = '🧩'; $minLauncherBox.Text = '0.22.1'; $featuredBox.Checked = $false
   $sourceHint.Text = 'Arrastra un archivo aquí o utiliza Examinar.'
   Refresh-Preview; Log 'Formulario limpio. Selecciona un userscript para comenzar.'
 }
@@ -252,7 +252,7 @@ function Load-SelectedScript {
     $script:loaded = Read-Script $pathBox.Text; $script:existing = $null; $script:publicationMode = 'New'
     $idBox.ReadOnly = $false
     @($idBox,$authorBox,$tagsBox,$summaryBox,$descriptionBox,$permissionsBox,$changelogBox) | ForEach-Object { $_.Clear() }
-    $categoryBox.Text='Utilidades';$iconBox.Text='🧩';$minLauncherBox.Text='0.22.3';$featuredBox.Checked=$false
+    $categoryBox.Text='Utilidades';$iconBox.Text='🧩';$minLauncherBox.Text = '0.22.1';$featuredBox.Checked=$false
     $nameValue.Text=$script:loaded.Name; $namespaceValue.Text=$script:loaded.Namespace; $versionValue.Text=$script:loaded.Version
     $catalogPath=Join-Path $repoRoot 'catalog.json'; $entry=$null; $catalog=[pscustomobject]@{scripts=@()}
     if(Test-Path -LiteralPath $catalogPath){
@@ -484,12 +484,12 @@ $pathRow.Controls.Add($pathBox,0,0);$pathRow.Controls.Add($browseButton,1,0);$pa
 $detectedGrid=[Windows.Forms.TableLayoutPanel]::new();$detectedGrid.Dock='Fill';$detectedGrid.ColumnCount=3;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',16))|Out-Null
 $nameValue=New-TextBox -ReadOnly;$namespaceValue=New-TextBox -ReadOnly;$versionValue=New-TextBox -ReadOnly
 $detectedGrid.Controls.Add((New-Field 'NOMBRE DETECTADO' $nameValue),0,0);$detectedGrid.Controls.Add((New-Field 'NAMESPACE' $namespaceValue),1,0);$detectedGrid.Controls.Add((New-Field 'VERSIÓN' $versionValue),2,0);$sourceLayout.Controls.Add($detectedGrid,0,2)
-$sourceHint=New-Label 'Arrastra un archivo aquí o utiliza Examinar.' 8 $palette.Dim;$sourceHint.Dock='Fill';$sourceHint.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$sourceLayout.Controls.Add($sourceHint,0,3);$sourceCard.Controls.Add($sourceLayout)
+$sourceHint=New-Label 'Arrastra un archivo aquí o utiliza Examinar. Tamaño máximo: 10 MB.' 8 $palette.Dim;$sourceHint.Dock='Fill';$sourceHint.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$sourceLayout.Controls.Add($sourceHint,0,3);$sourceCard.Controls.Add($sourceLayout)
 
 $publicationCard=New-Card 493;$publicationLayout=[Windows.Forms.TableLayoutPanel]::new();$publicationLayout.Dock='Fill';$publicationLayout.ColumnCount=1;$publicationLayout.RowCount=6
 foreach($height in @(55,66,66,126,89,45)){ $publicationLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null };$publicationLayout.Controls.Add((New-SectionHeader '02' 'Completa la ficha de la Shop' 'Esta información será visible para todos los usuarios del launcher.'),0,0)
 $identityGrid=[Windows.Forms.TableLayoutPanel]::new();$identityGrid.Dock='Fill';$identityGrid.ColumnCount=4;foreach($width in @(32,27,13,28)){ $identityGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',$width))|Out-Null }
-$idBox=New-TextBox;$categoryBox=[Windows.Forms.ComboBox]::new();Style-Input $categoryBox|Out-Null;$categoryBox.DropDownStyle='DropDown';[void]$categoryBox.Items.AddRange(@('Market','Crianza','Calculadoras','Interfaz','Comunicación','Notificaciones','Utilidades'));$categoryBox.Text='Utilidades';$iconBox=New-TextBox;$iconBox.Font=[Drawing.Font]::new('Segoe UI Emoji',10);$iconBox.Text='🧩';$minLauncherBox=New-TextBox;$minLauncherBox.Text='0.22.3'
+$idBox=New-TextBox;$categoryBox=[Windows.Forms.ComboBox]::new();Style-Input $categoryBox|Out-Null;$categoryBox.DropDownStyle='DropDown';[void]$categoryBox.Items.AddRange(@('Market','Crianza','Calculadoras','Interfaz','Comunicación','Notificaciones','Utilidades'));$categoryBox.Text='Utilidades';$iconBox=New-TextBox;$iconBox.Font=[Drawing.Font]::new('Segoe UI Emoji',10);$iconBox.Text='🧩';$minLauncherBox=New-TextBox;$minLauncherBox.Text = '0.22.1'
 $identityGrid.Controls.Add((New-Field 'ID ESTABLE' $idBox 'Conserva exactamente el mismo ID en cada actualización.'),0,0);$identityGrid.Controls.Add((New-Field 'CATEGORÍA' $categoryBox),1,0);$identityGrid.Controls.Add((New-Field 'ICONO' $iconBox 'Emoji que aparecerá en la tarjeta.'),2,0);$identityGrid.Controls.Add((New-Field 'LAUNCHER MÍNIMO' $minLauncherBox),3,0);$publicationLayout.Controls.Add($identityGrid,0,1)
 $summaryGrid=[Windows.Forms.TableLayoutPanel]::new();$summaryGrid.Dock='Fill';$summaryGrid.ColumnCount=3;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',24))|Out-Null;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',35))|Out-Null;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',41))|Out-Null
 $authorBox=New-TextBox;$tagsBox=New-TextBox;$summaryBox=New-TextBox;$summaryGrid.Controls.Add((New-Field 'AUTOR' $authorBox),0,0);$summaryGrid.Controls.Add((New-Field 'ETIQUETAS' $tagsBox 'Sepáralas mediante comas.'),1,0);$summaryGrid.Controls.Add((New-Field 'RESUMEN PARA LA TARJETA' $summaryBox),2,0);$publicationLayout.Controls.Add($summaryGrid,0,2)
