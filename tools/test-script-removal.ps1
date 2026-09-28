@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $remover = Join-Path $PSScriptRoot 'remove-script.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('pokegrid-remove-script-' + [guid]::NewGuid().ToString('N'))
 $utf8 = [Text.UTF8Encoding]::new($false)
