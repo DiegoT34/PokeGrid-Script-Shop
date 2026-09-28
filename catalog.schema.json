@@ -17,8 +17,21 @@
           "name": { "type": "string", "maxLength": 120 },
           "namespace": { "type": "string", "maxLength": 240 },
           "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$" },
+          "summary": { "type": "string", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 4000 },
+          "category": { "type": "string", "maxLength": 60 },
+          "minLauncherVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+          "downloadUrl": { "type": "string", "format": "uri" },
           "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "downloadUrl": { "type": "string", "format": "uri" }
+          "author": { "type": "string", "maxLength": 120 },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 40 } },
+          "games": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 80 } },
+          "permissions": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+          "changelog": { "type": "string", "maxLength": 2000 },
+          "icon": { "type": "string", "maxLength": 8 },
+          "featured": { "type": "boolean" },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "homepage": { "type": "string", "format": "uri" }
         },
         "additionalProperties": true
       }
