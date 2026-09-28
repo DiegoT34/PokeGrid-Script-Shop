@@ -281,6 +281,21 @@ function Verify-OnlinePublication([string]$id,[string]$version){
   return $false
 }
 
+function Get-PushFailureMessage([string]$Name, [string]$Version, [string]$ErrorText) {
+  return @(
+    "El commit de $Name v$Version se creó correctamente en el repositorio local, pero no se pudo subir a GitHub.",
+    '',
+    'El catálogo online NO ha cambiado: los usuarios siguen viendo la versión anterior.',
+    'El trabajo no se ha perdido. Es un problema de autenticación o de red: revisa la sesión de GitHub CLI.',
+    'Para completar la publicación, ejecuta en esa carpeta:',
+    '',
+    '    git push',
+    '',
+    'Detalle del error:',
+    $ErrorText
+  ) -join "`r`n"
+}
+
 function Verify-OnlineRemoval([string]$id){
   for($attempt=1;$attempt -le 6;$attempt+=1){
     try{
@@ -705,7 +720,17 @@ $publishButton.Add_Click({
     Log 'Generando archivo publicado, catálogo y SHA-256…';$publisherOutput=& $cliPublisher @parameters 2>&1|Out-String;Log $publisherOutput.Trim()
     $target="scripts/$($idBox.Text).user.js";[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target));$diffResult=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('diff','--cached','--quiet') -AllowFailure
     if($diffResult.ExitCode -eq 0){Log 'No hay cambios nuevos para publicar.' 'ok';return};if($diffResult.ExitCode -ne 1){throw $(if($diffResult.Output){$diffResult.Output}else{'No se pudieron comprobar los cambios preparados.'})}
-    $message="Publicar $($script:loaded.Name) $($script:loaded.Version)";Log 'Creando commit local…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$message,'--','catalog.json',$target));Log 'Subiendo la publicación a GitHub…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('push'))
+    $message="Publicar $($script:loaded.Name) $($script:loaded.Version)";Log 'Creando commit local…'
+    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$message,'--','catalog.json',$target))
+    Log 'Subiendo la publicación a GitHub…'
+    try {
+      [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('push'))
+    } catch {
+      $detail = $_.Exception.Message
+      Log 'El commit es local; la publicación online no se actualizó.' 'error'
+      [Windows.Forms.MessageBox]::Show((Get-PushFailureMessage $script:loaded.Name $script:loaded.Version $detail),'Publicación pendiente de subir','OK','Warning')|Out-Null
+      return
+    }
     Log 'Verificando que el catálogo ya sea visible online…'
     if(Verify-OnlinePublication $idBox.Text $script:loaded.Version){Log "$($script:loaded.Name) v$($script:loaded.Version) está visible en la Shop." 'ok';[Windows.Forms.MessageBox]::Show('El script fue publicado y ya aparece en el catálogo online.','Publicación completada','OK','Information')|Out-Null}else{Log 'GitHub recibió la publicación; la propagación del catálogo aún está en curso.' 'ok';[Windows.Forms.MessageBox]::Show('La publicación fue subida correctamente. GitHub puede tardar unos segundos en reflejarla en el catálogo.','Publicación enviada','OK','Information')|Out-Null}
   }catch{Log $_.Exception.Message 'error';[Windows.Forms.MessageBox]::Show($_.Exception.Message,'No se pudo publicar','OK','Error')|Out-Null}finally{Set-Busy $false}
@@ -729,6 +754,8 @@ if($SmokeTest){
   if($catalogGrid.Rows.Count -ne 1 -or $catalogCountValue.Text -ne '1' -or -not $catalogDeleteButton.Enabled){throw 'La vista visual del catálogo no pudo representar una publicación seleccionable.'}
   [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('status','--porcelain=v1'))
   if($script:MaxScriptBytes -ne 10MB){throw 'El límite de userscripts del publicador no está configurado en 10 MB.'}
+  $pushMessage = Get-PushFailureMessage 'Script de Ejemplo' '1.2.3' 'fatal: Authentication failed'
+  foreach($required in @('1.2.3','git push','autentic')){ if($pushMessage -notmatch [regex]::Escape($required)){throw "El aviso de push fallido no menciona '$required'."} }
   Write-Output 'PokeGrid Publisher 1.3.1 catalog management, 10 MB userscripts, removal controls, publication tabs, responsive GUI and Git smoke passed.';$form.Dispose();exit 0
 }
 
