@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.20.7
+// @version      10.20.8
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -86,6 +86,12 @@
         }
         if (message?.type === 'pokes') {
             latestPokemon = message.list || [];
+            /* Auto-venta del deposito. Sin void el manejador devolveria una
+               promesa y el resto del script notaria el retorno; con void sigue
+               su curso y el error lo come el catch de dentro. */
+            /* Apoyo: si el servidor SI empuja pokes al capturar, esto lo coge al
+               vuelo. Ya no es la unica via, porque no siempre lo empuja. */
+            void handleMarketAutoSellTick(message.list || []);
             if (updateCachedLeaderPokemon(latestPokemon)) {
                 lastMapRenderSignature = '';
                 setTimeout(buildSimpleList, 0);
@@ -838,15 +844,137 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotMoveVisible:'Transferir visibles', depotMoveAllShort:'Todo', depotMoveVisibleConfirm:'¿Transferir todos los elementos visibles de este lado?', depotVisibleMoved:'Elementos visibles transferidos', depotNothingMovable:'No hay elementos visibles que se puedan transferir', depotFamilyFrozen:'El depósito familiar está congelado', depotMoveLimit:'Se alcanzó el límite diario de movimientos familiares' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotMoveVisible:'Transferir visíveis', depotMoveAllShort:'Tudo', depotMoveVisibleConfirm:'Transferir todos os elementos visíveis deste lado?', depotVisibleMoved:'Elementos visíveis transferidos', depotNothingMovable:'Não há elementos visíveis que possam ser transferidos', depotFamilyFrozen:'O depósito da família está congelado', depotMoveLimit:'O limite diário de movimentos familiares foi atingido' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotMoveVisible:'Move visible', depotMoveAllShort:'All', depotMoveVisibleConfirm:'Move every visible entry from this side?', depotVisibleMoved:'Visible entries moved', depotNothingMovable:'There are no visible entries that can be moved', depotFamilyFrozen:'The family depot is frozen', depotMoveLimit:'The daily family movement limit has been reached' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros y evoluciones especiales de Eevee, disponibles desde cualquier zona.', casinoRefresh:'Actualizar', casinoLoading:'Consultando las ofertas de Marlon…', casinoEmpty:'Marlon no tiene ofertas disponibles en este momento.', casinoLoadError:'No se pudo consultar a Marlon.', casinoTeam:'Equipo', casinoTeamFull:'Tu equipo está lleno. Libera un espacio antes de recibir otro Pokémon.', casinoEvolution:'EVOLUCIÓN', casinoBuy:'Comprar', casinoTrade:'Intercambiar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Necesitas un Eevee', casinoNeedStone:'Falta la Stone requerida', casinoNoRoom:'Equipo lleno', casinoUnavailable:'No disponible', casinoEeveeRequirement:'Eevee disponible', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar intercambio', casinoConfirmBuyText:'¿Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'¿Intercambiar tu Eevee{stone} y pagar 💲 {gold} para recibir {name}?', casinoBought:'Compraste {name} por 💲 {gold}.', casinoTraded:'Intercambio completado: recibiste {name} y pagaste 💲 {gold}.', casinoActionError:'No se pudo completar la operación con Marlon.', casinoClose:'Cerrar Cassino' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoSubtitle:'Pokémon raros e evoluções especiais do Eevee, disponíveis de qualquer área.', casinoRefresh:'Atualizar', casinoLoading:'Consultando as ofertas de Marlon…', casinoEmpty:'Marlon não possui ofertas disponíveis neste momento.', casinoLoadError:'Não foi possível consultar Marlon.', casinoTeam:'Equipe', casinoTeamFull:'Sua equipe está cheia. Libere um espaço antes de receber outro Pokémon.', casinoEvolution:'EVOLUÇÃO', casinoBuy:'Comprar', casinoTrade:'Trocar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Você precisa de um Eevee', casinoNeedStone:'Falta a Stone necessária', casinoNoRoom:'Equipe cheia', casinoUnavailable:'Indisponível', casinoEeveeRequirement:'Eevee disponível', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar troca', casinoConfirmBuyText:'Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'Trocar seu Eevee{stone} e pagar 💲 {gold} para receber {name}?', casinoBought:'Você comprou {name} por 💲 {gold}.', casinoTraded:'Troca concluída: você recebeu {name} e pagou 💲 {gold}.', casinoActionError:'Não foi possível concluir a operação com Marlon.', casinoClose:'Fechar Cassino' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { casino:'Casino', casinoTitle:'Casino · Marlon', casinoSubtitle:'Rare Pokémon and special Eevee evolutions, available from any area.', casinoRefresh:'Refresh', casinoLoading:'Checking Marlon’s offers…', casinoEmpty:'Marlon has no offers available right now.', casinoLoadError:'Marlon could not be reached.', casinoTeam:'Team', casinoTeamFull:'Your team is full. Free a slot before receiving another Pokémon.', casinoEvolution:'EVOLUTION', casinoBuy:'Buy', casinoTrade:'Trade', casinoNeedGold:'Not enough gold', casinoNeedEevee:'You need an Eevee', casinoNeedStone:'Required Stone missing', casinoNoRoom:'Team full', casinoUnavailable:'Unavailable', casinoEeveeRequirement:'Eevee available', casinoConfirmBuy:'Confirm purchase', casinoConfirmTrade:'Confirm trade', casinoConfirmBuyText:'Buy {name} for 💲 {gold}?', casinoConfirmTradeText:'Trade your Eevee{stone} and pay 💲 {gold} to receive {name}?', casinoBought:'You bought {name} for 💲 {gold}.', casinoTraded:'Trade completed: you received {name} and paid 💲 {gold}.', casinoActionError:'The operation with Marlon could not be completed.', casinoClose:'Close Casino' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Datos de cada Pokémon comprado, capturados antes de ir al depósito.', casinoTeamEmpty:'Aún no has comprado Pokémon.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkStored:'Se guardaron {count} Pokémon comprados.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', casinoBulkPartial:'Se procesaron {done} de {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Dados de cada Pokémon comprado, capturados antes de irem ao depósito.', casinoTeamEmpty:'Você ainda não comprou Pokémon.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoStoreAll:'Guardar comprados', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkStored:'{count} Pokémon comprados foram guardados.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', casinoBulkPartial:'Foram processados {done} de {total} Pokémon.' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Purchased Pokémon', casinoTeamSubtitle:'Data from each purchased Pokémon, captured before it goes to storage.', casinoTeamEmpty:'You have not purchased any Pokémon yet.', casinoNewPokemon:'NEWLY OBTAINED', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoStoreAll:'Store purchased', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkStored:'Stored {count} purchased Pokémon.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', casinoBulkPartial:'Processed {done} of {total} Pokémon.' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casino:'Casino', casinoTitle:'Casino · Marlon', casinoRefresh:'Refresh', casinoLoading:'Checking Marlon’s offers…', casinoEmpty:'Marlon has no offers available right now.', casinoLoadError:'Marlon could not be reached.', casinoEvolution:'EVOLUTION', casinoBuy:'Buy', casinoTrade:'Trade', casinoNeedGold:'Not enough gold', casinoNeedEevee:'You need an Eevee', casinoNeedStone:'Required Stone missing', casinoNoRoom:'Team full', casinoUnavailable:'Unavailable', casinoEeveeRequirement:'Eevee available', casinoConfirmBuy:'Confirm purchase', casinoConfirmTrade:'Confirm trade', casinoConfirmBuyText:'Buy {name} for 💲 {gold}?', casinoConfirmTradeText:'Trade your Eevee{stone} and pay 💲 {gold} to receive {name}?', casinoBought:'You bought {name} for 💲 {gold}.', casinoTraded:'Trade completed: you received {name} and paid 💲 {gold}.', casinoActionError:'The operation with Marlon could not be completed.', casinoClose:'Close Casino' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoRefresh:'Atualizar', casinoLoading:'Consultando as ofertas de Marlon…', casinoEmpty:'Marlon não possui ofertas disponíveis neste momento.', casinoLoadError:'Não foi possível consultar Marlon.', casinoEvolution:'EVOLUÇÃO', casinoBuy:'Comprar', casinoTrade:'Trocar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Você precisa de um Eevee', casinoNeedStone:'Falta a Stone necessária', casinoNoRoom:'Equipe cheia', casinoUnavailable:'Indisponível', casinoEeveeRequirement:'Eevee disponível', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar troca', casinoConfirmBuyText:'Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'Trocar seu Eevee{stone} e pagar 💲 {gold} para receber {name}?', casinoBought:'Você comprou {name} por 💲 {gold}.', casinoTraded:'Troca concluída: você recebeu {name} e pagou 💲 {gold}.', casinoActionError:'Não foi possível concluir a operação com Marlon.', casinoClose:'Fechar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoRefresh:'Actualizar', casinoLoading:'Consultando las ofertas de Marlon…', casinoEmpty:'Marlon no tiene ofertas disponibles en este momento.', casinoLoadError:'No se pudo consultar a Marlon.', casinoEvolution:'EVOLUCIÓN', casinoBuy:'Comprar', casinoTrade:'Intercambiar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Necesitas un Eevee', casinoNeedStone:'Falta la Stone requerida', casinoNoRoom:'Equipo lleno', casinoUnavailable:'No disponible', casinoEeveeRequirement:'Eevee disponible', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar intercambio', casinoConfirmBuyText:'¿Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'¿Intercambiar tu Eevee{stone} y pagar 💲 {gold} para recibir {name}?', casinoBought:'Compraste {name} por 💲 {gold}.', casinoTraded:'Intercambio completado: recibiste {name} y pagaste 💲 {gold}.', casinoActionError:'No se pudo completar la operación con Marlon.', casinoClose:'Cerrar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Datos de cada Pokémon comprado, capturados antes de ir al depósito.', casinoTeamEmpty:'Aún no has comprado Pokémon.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', marketSellPokemonNotFound:'El Pokémon no apareció en la lista de venta', });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Dados de cada Pokémon comprado, capturados antes de irem ao depósito.', casinoTeamEmpty:'Você ainda não comprou Pokémon.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', marketSellPokemonNotFound:'O Pokémon não apareceu na lista de venda', });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Purchased Pokémon', casinoTeamSubtitle:'Data from each purchased Pokémon, captured before it goes to storage.', casinoTeamEmpty:'You have not purchased any Pokémon yet.', casinoNewPokemon:'NEWLY OBTAINED', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', marketSellPokemonNotFound:'The Pokémon did not appear in the sell list', });
     Object.assign(SCRIPT_EXTRA_I18N.es, { casinoQuantity:'Cantidad', casinoBuyingProgress:'Procesando {current} de {total}: {name}…', casinoBatchBought:'Compraste {done} de {total} {name}.', casinoBatchTraded:'Completaste {done} de {total} intercambios de {name}.', casinoBatchPartial:'Solo se procesaron {done} de {total} {name}.', });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoQuantity:'Quantidade', casinoBuyingProgress:'Processando {current} de {total}: {name}…', casinoBatchBought:'Você comprou {done} de {total} {name}.', casinoBatchTraded:'Você concluiu {done} de {total} trocas de {name}.', casinoBatchPartial:'Apenas {done} de {total} {name} foram processados.', });
     Object.assign(SCRIPT_EXTRA_I18N.en, { casinoQuantity:'Quantity', casinoBuyingProgress:'Processing {current} of {total}: {name}…', casinoBatchBought:'Bought {done} of {total} {name}.', casinoBatchTraded:'Completed {done} of {total} {name} trades.', casinoBatchPartial:'Only processed {done} of {total} {name}.', });
+    /* Filtros, auto-venta y alerta por tier del Cassino. */
+    Object.assign(SCRIPT_EXTRA_I18N.es, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'Todos', casinoFilterClear:'Limpiar', casinoFilterShowing:'Mostrando {shown} de {total}',
+        casinoFilterIvHint:'140 o más',
+        casinoFilterNone:'Ningún Pokémon comprado coincide con el filtro.',
+        casinoAutoSell:'Auto-venta', casinoAutoSellOn:'ACTIVA', casinoAutoSellOff:'Inactiva',
+        casinoMarketSell:'Vender en el market', casinoStoringForMarket:'Guardando {name}…',
+        casinoMarketError:'No se pudo preparar para el market',
+        casinoAutoSellEnable:'Activar auto-venta', casinoAutoSellAlertTier:'Alertar por tier',
+        casinoAutoSellMinIv:'Vender con menos IVs', casinoAutoSellMinTier:'Vender por debajo de tier', casinoAutoSellMinTierAny:'cualquier tier',
+        casinoAutoSellRule:'IV menor al corte <b>y</b> tier inferior al corte. Si cumple solo uno, se conserva.',
+        casinoAutoSellScope:'IV menor que {iv} y tier inferior a {tier}.',
+        casinoAutoSellRuleOff:'Con la auto-venta desactivada no se vende nada automáticamente.',
+        casinoAutoSellPreview:'Se venderán {count} de {total} Pokémon comprados en esta sesión.',
+        casinoAutoSellSell:'Guardar configuración', casinoAutoSellCancel:'Cancelar',
+        casinoAutoSellClose:'Cerrar configuración', casinoAutoSellTitle:'Auto-venta del Cassino',
+        casinoAutoSellSold:'Auto-vendido: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} y tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} y Q {quality} cumplen el rango',
+        casinoAutoSellProtected:'{name} está protegido y no se auto-vende.',
+        casinoAutoSellSessionSold:'Auto-venta: {count} Pokémon vendidos por 💲 {gold}.',
+        casinoTierAlert:'¡Tier {tier} comprado!', casinoTierAlertDetail:'{name} es {tier}.',
+        casinoTierAlertAndGoal:'y alcanzó {iv}/192 (meta {goal}).',
+        casinoTierAll:'Todos los tiers',
+        casinoAutoSellLog:'Historial de auto-ventas', casinoAutoSellLogTitle:'Auto-vendidos de la sesión',
+        casinoAutoSellLogHint:'Solo lo vendido automáticamente en esta sesión.',
+        casinoAutoSellLogEmpty:'Nada auto-vendido en esta sesión.',
+        casinoAutoSellLogTotal:'{count} vendidos · recibido 💲 {gold} · gastado 💲 {spent} · saldo 💲 {net}',
+        casinoAutoSellLogClear:'Vaciar historial',
+        casinoAutoSellSessionNet:'{count} vendidos · saldo 💲 {net}',
+        casinoAutoSellSessionFailed:'Fallaron {count} ventas.',
+        casinoAutoSellLogValue:'Catálogo 💲 {value} · diferencia 💲 {diff}',
+        casinoAutoSellLogNet:'Costo 💲 {spent} · devolvió 💲 {gold} · saldo 💲 {net}',
+        /* La tira de resultados va en celdas propias, no en la barra de estado. */
+        casinoResultNet:'Saldo', casinoResultLoss:'Pérdida total', casinoResultSpent:'Gastado', casinoResultEarned:'Recuperado',
+        casinoResultSold:'{count} vendidos',
+        casinoTabBuy:'Comprables', casinoTabEvolve:'Evoluciones',
+        casinoTabBuyEmpty:'No hay Pokémon comprables ahora mismo.',
+        casinoTabEvolveEmpty:'No hay evoluciones de Eevee disponibles.',
+        casinoItemHave:'Tienes', casinoItemBadge:'ITEM'
+    });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'Todos', casinoFilterClear:'Limpar', casinoFilterShowing:'Mostrando {shown} de {total}',
+        casinoFilterIvHint:'140 ou mais',
+        casinoFilterNone:'Nenhum Pokémon comprado corresponde ao filtro.',
+        casinoAutoSell:'Auto-venda', casinoAutoSellOn:'ATIVA', casinoAutoSellOff:'Inativa',
+        casinoMarketSell:'Vender no market', casinoStoringForMarket:'Guardando {name}…',
+        casinoMarketError:'Não foi possível preparar para o market',
+        casinoAutoSellEnable:'Ativar auto-venda', casinoAutoSellAlertTier:'Alertar por tier',
+        casinoAutoSellMinIv:'Vender com menos IVs', casinoAutoSellMinTier:'Vender abaixo do tier', casinoAutoSellMinTierAny:'qualquer tier',
+        casinoAutoSellRule:'IV menor que o corte <b>e</b> tier inferior ao corte. Se cumprir só um, é conservado.',
+        casinoAutoSellScope:'IV menor que {iv} e tier inferior a {tier}.',
+        casinoAutoSellRuleOff:'Com a auto-venda desativada nada é vendido automaticamente.',
+        casinoAutoSellPreview:'Serão vendidos {count} de {total} Pokémon comprados nesta sessão.',
+        casinoAutoSellSell:'Salvar configuração', casinoAutoSellCancel:'Cancelar',
+        casinoAutoSellClose:'Fechar configuração', casinoAutoSellTitle:'Auto-venda do Cassino',
+        casinoAutoSellSold:'Auto-vendido: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} e tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} e Q {quality} atendem ao range',
+        casinoAutoSellProtected:'{name} está protegido e não é vendido automaticamente.',
+        casinoAutoSellSessionSold:'Auto-venda: {count} Pokémon vendidos por 💲 {gold}.',
+        casinoTierAlert:'¡Tier {tier} comprado!', casinoTierAlertDetail:'{name} é {tier}.',
+        casinoTierAlertAndGoal:'e alcançou {iv}/192 (meta {goal}).',
+        casinoTierAll:'Todos os tiers',
+        casinoAutoSellLog:'Histórico de auto-vendas', casinoAutoSellLogTitle:'Auto-vendidos da sessão',
+        casinoAutoSellLogHint:'Só o vendido automaticamente nesta sessão.',
+        casinoAutoSellLogEmpty:'Nada auto-vendido nesta sessão.',
+        casinoAutoSellLogTotal:'{count} vendidos · recebido 💲 {gold} · gasto 💲 {spent} · saldo 💲 {net}',
+        casinoAutoSellLogClear:'Esvaziar histórico',
+        casinoAutoSellSessionNet:'{count} vendidos · saldo 💲 {net}',
+        casinoAutoSellSessionFailed:'Falharam {count} vendas.',
+        casinoAutoSellLogValue:'Catálogo 💲 {value} · diferença 💲 {diff}',
+        casinoAutoSellLogNet:'Custou 💲 {spent} · devolveu 💲 {gold} · saldo 💲 {net}',
+        casinoResultNet:'Saldo', casinoResultLoss:'Perda total', casinoResultSpent:'Gasto', casinoResultEarned:'Recuperado',
+        casinoResultSold:'{count} vendidos',
+        casinoTabBuy:'Compráveis', casinoTabEvolve:'Evoluções',
+        casinoTabBuyEmpty:'Nenhum Pokémon comprável no momento.',
+        casinoTabEvolveEmpty:'Nenhuma evolução de Eevee disponível.',
+        casinoItemHave:'Você tem', casinoItemBadge:'ITEM'
+    });
+    Object.assign(SCRIPT_EXTRA_I18N.en, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'All', casinoFilterClear:'Clear', casinoFilterShowing:'Showing {shown} of {total}',
+        casinoFilterIvHint:'140 or more',
+        casinoFilterNone:'No purchased Pokémon matches the filter.',
+        casinoAutoSell:'Auto-sell', casinoAutoSellOn:'ON', casinoAutoSellOff:'Off',
+        casinoMarketSell:'Sell on market', casinoStoringForMarket:'Storing {name}…',
+        casinoMarketError:'Could not prepare it for the market',
+        casinoAutoSellEnable:'Enable auto-sell', casinoAutoSellAlertTier:'Alert by tier',
+        casinoAutoSellMinIv:'Sell below IVs', casinoAutoSellMinTier:'Sell below tier', casinoAutoSellMinTierAny:'any tier',
+        casinoAutoSellRule:'IV below the cutoff <b>and</b> tier below the cutoff. Meeting only one keeps it.',
+        casinoAutoSellScope:'IV below {iv} and tier below {tier}.',
+        casinoAutoSellRuleOff:'With auto-sell disabled nothing is sold automatically.',
+        casinoAutoSellPreview:'{count} of {total} Pokémon purchased this session will be sold.',
+        casinoAutoSellSell:'Save configuration', casinoAutoSellCancel:'Cancel',
+        casinoAutoSellClose:'Close configuration', casinoAutoSellTitle:'Casino auto-sell',
+        casinoAutoSellSold:'Auto-sold: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} and tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} and Q {quality} meet the range',
+        casinoAutoSellProtected:'{name} is protected and is not auto-sold.',
+        casinoAutoSellSessionSold:'Auto-sell: {count} Pokémon sold for 💲 {gold}.',
+        casinoTierAlert:'Tier {tier} purchased!', casinoTierAlertDetail:'{name} is {tier}.',
+        casinoTierAlertAndGoal:'and reached {iv}/192 (goal {goal}).',
+        casinoTierAll:'All tiers',
+        casinoAutoSellLog:'Auto-sell history', casinoAutoSellLogTitle:'Auto-sold this session',
+        casinoAutoSellLogHint:'Only what was auto-sold in this session.',
+        casinoAutoSellLogEmpty:'Nothing auto-sold this session.',
+        casinoAutoSellLogTotal:'{count} sold · received 💲 {gold} · spent 💲 {spent} · balance 💲 {net}',
+        casinoAutoSellLogClear:'Clear history',
+        casinoAutoSellSessionNet:'{count} sold · balance 💲 {net}',
+        casinoAutoSellSessionFailed:'{count} sales failed.',
+        casinoAutoSellLogValue:'Catalog 💲 {value} · diff 💲 {diff}',
+        casinoAutoSellLogNet:'Cost 💲 {spent} · returned 💲 {gold} · balance 💲 {net}',
+        casinoResultNet:'Balance', casinoResultLoss:'Total loss', casinoResultSpent:'Spent', casinoResultEarned:'Recovered',
+        casinoResultSold:'{count} sold',
+        casinoTabBuy:'Buyable', casinoTabEvolve:'Evolutions',
+        casinoTabBuyEmpty:'No buyable Pokémon right now.',
+        casinoTabEvolveEmpty:'No Eevee evolutions available.',
+        casinoItemHave:'You have', casinoItemBadge:'ITEM'
+    });
     Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'VENDER STONE', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'VENDER STONES', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'SELL STONES', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
@@ -2276,6 +2404,1074 @@
         return [entry?.locked, entry?.isLocked, entry?.protected, entry?.sellLocked, entry?.lock, entry?.is_locked]
             .some(value => value === true || value === 1 || /^(?:true|1|locked)$/i.test(String(value ?? '')));
     }
+
+    /* Los cuatro siguientes vivian dentro de showPortableCasino. Se suben aqui
+       porque la auto-venta del market los necesita tambien, y duplicarlos
+       haria que las dos copias tuvieran que coincidir para siempre, que es
+       una forma silenciosa de que se separen. Son funciones puras: subirlas no
+       cambia lo que hacen. El Casino sigue resolviendo estos mismos nombres. */
+
+    const getPokeId = poke => String(poke?.id ?? poke?.capturedId ?? poke?.pokeId ?? '');
+
+    const tierOrder = id => {
+        const index = MARKET_QUALITY_TIER_DEFINITIONS.findIndex(d => d.id === id);
+        return index < 0 ? -1 : index;
+    };
+
+    const getPokemonTierId = poke => getMarketPokemonQualityTheme(poke?.quality)?.id || '';
+
+    const isTeamPokemonProtected = poke => Boolean(
+        poke?.starter || isNativeLocked(poke) || poke?.shiny || poke?.market || poke?.listed
+    );
+
+    /* ================= SEPARACION DE DOMINIO CON EL CASSINO =================
+       Hay DOS auto-ventas distintas y las dos pueden estar encendidas a la vez:
+         1. Esta: la de CAPTURAS. Se dispara sola con cada 'pokes' que llega, y
+            decide sobre todo lo que no este en su registro de vistos.
+         2. La del Cassino: solo sobre lo que TU acaba de comprarle a Marlon, y
+            solo cuando la compra termina.
+
+       Sin separacion se pisan. La compra del Cassino hace que el servidor
+       empuje 'pokes' (L9678) en el mismo instante en que el Pokemon ya esta en
+       la cuenta pero todavia NO se ha identificado. Esta auto-venta lo ve
+       como nuevo, le aplica SU regla y lo vende; el Cassino llega despues,
+       no lo encuentra, y su venta falla. El Pokemon se vendio una vez, pero
+       fuera del lote que el usuario estaba mirando, y el Casino no lo sabe.
+
+       Y no es solo una carrera: las dos reglas NO son la misma. La del Cassino
+       (shouldAutoSell) exige ademas que el tier este en alertTiers, que actsua
+       como lista blanca. Por eso hay Pokemon que el Cassino CONSERVA a proposito
+       y esta, sin saber de donde vino, se lleva. Ese Pokemon se ha vendido
+       contra la voluntad de quien lo compro.
+
+       Asi que se registra de quien es cada Pokemon. El Cassino declara la
+       compra ANTES de llamar al servidor (marcando la especie) y en cuanto
+       conoce el id, y la auto-venta de capturas consulta ese registro antes de
+       decidir nada. Lo que es del Cassino no se toca aqui, se resuelve alli.
+
+       El registro es de ids, no de Pokemon, y persiste: si se recarga con
+       compras del Cassino sin resolver, siguen siendo suyas. Sin eso, al
+       recargar la siembra ya se consumio y estas las venderia esta. */
+    const casinoOwnedPokemonKey = 'script_casino_owned_pokemon_v1';
+    /* Tope alto a proposito. Un lote de compra son muchas, y lo que se guarda
+       son solo las que siguen sin resolver; las vendidas se olvidan al
+       confirmarse. Si se llega al tope se recorta por antiguedad, nunca por lo
+       reciente. */
+    const casinoOwnedPokemonCap = 400;
+    const casinoClaimTtlMs = 10 * 60 * 1000;
+    /* Espejo del registro de vistos de esta auto-venta, pero del otro lado:
+       { id: momento de la compra }. Se ordena por antiguedad al recortar. */
+    let casinoOwnedPokemon = new Map(
+        readStoredJSON(casinoOwnedPokemonKey, [])
+            .filter(entry => Array.isArray(entry) && entry.length >= 2)
+            .map(([id, at]) => [String(id), Number(at) || 0])
+            .filter(([id, at]) => id && id !== 'undefined' && at)
+    );
+    /* Compras en vuelo. Mientras haya una, esta auto-venta no vende nada: es la
+       ventana en la que todavia no se sabe de quien es cada Pokemon, y adivinar
+       es justo el error que se quiere evitar. No se pierde ninguna captura: los
+       'pokes' siguen llegando y la siguiente pasada la recoge. */
+    let casinoPurchasesInFlight = 0;
+    /* Especie que se esta comprando ahora mismo. Cubre la ventana entre el POST
+       y el momento en que se conoce el id, que es cuando el registro por id
+       todavia no puede decir nada. */
+    let casinoPendingSpecies = new Map();
+
+    const saveCasinoOwnedPokemon = () => {
+        const entradas = [...casinoOwnedPokemon.entries()].sort((a, b) => a[1] - b[1]);
+        const recorte = entradas.length > casinoOwnedPokemonCap
+            ? entradas.slice(entradas.length - casinoOwnedPokemonCap)
+            : entradas;
+        casinoOwnedPokemon = new Map(recorte);
+        try { localStorage.setItem(casinoOwnedPokemonKey, JSON.stringify(recorte)); } catch (_) {}
+    };
+
+    const pruneCasinoClaims = ahora => {
+        let sucio = false;
+        for (const [id, at] of casinoOwnedPokemon) {
+            if (ahora - at > casinoClaimTtlMs) { casinoOwnedPokemon.delete(id); sucio = true; }
+        }
+        for (const [speciesId, at] of casinoPendingSpecies) {
+            if (ahora - at > casinoClaimTtlMs) { casinoPendingSpecies.delete(speciesId); sucio = true; }
+        }
+        if (sucio) saveCasinoOwnedPokemon();
+    };
+
+    const markCasinoPurchaseStarted = speciesId => {
+        const ahora = Date.now();
+        pruneCasinoClaims(ahora);
+        casinoPurchasesInFlight += 1;
+        const id = Number(speciesId || 0);
+        if (id) casinoPendingSpecies.set(id, ahora);
+    };
+
+    const markCasinoPurchaseFinished = speciesId => {
+        casinoPurchasesInFlight = Math.max(0, casinoPurchasesInFlight - 1);
+        /* El marcador por especie se jubila aqui porque para cuando termina la
+           iteracion los ids ya estan registrados uno a uno, y es mas preciso.
+           Se retira y no se deja pudrir: si se quedara, cada Pokemon de esa
+           especie capturado durante los proximos minutos dejaria de venderse. */
+        const id = Number(speciesId || 0);
+        if (id) casinoPendingSpecies.delete(id);
+    };
+
+    const casinoHasPendingSpecies = poke => {
+        const speciesId = Number(poke?.speciesId || 0);
+        return speciesId > 0 && casinoPendingSpecies.has(speciesId);
+    };
+
+    /* El Pokemon ya es del Cassino. Se anota el id y, sobre todo, se mete en el
+       registro de vistos de ESTA auto-venta: asi queda ignorado de forma
+       permanente, no solo mientras la compra siga viva. Sin esto, un Pokemon
+       del Cassino que la regla de aqui no reachzaria volveria a salir como
+       nuevo en el siguiente 'pokes' y acabaria vendido igual. */
+    const claimCasinoPokemon = poke => {
+        const pokeId = getPokeId(poke);
+        if (!pokeId) return;
+        const ahora = Date.now();
+        pruneCasinoClaims(ahora);
+        casinoOwnedPokemon.set(pokeId, ahora);
+        saveCasinoOwnedPokemon();
+        if (!marketAutoSellSeenLoaded) loadMarketAutoSellSeen();
+        if (!marketAutoSellSeen.has(pokeId)) {
+            marketAutoSellSeen.add(pokeId);
+            saveMarketAutoSellSeen();
+        }
+    };
+
+    /* Solo se olvida lo que el Cassino confirmo que vendio. Un Pokemon que
+       sigue en la cuenta porque la venta fallo se queda registrado a proposito:
+       es el unico sitio donde se puede vender bien. */
+    const forgetCasinoPokemon = poke => {
+        const pokeId = getPokeId(poke);
+        if (!pokeId || !casinoOwnedPokemon.delete(pokeId)) return;
+        saveCasinoOwnedPokemon();
+    };
+
+    /* La pregunta que hace la auto-venta de capturas antes de decidir. Vale por
+       el id cuando ya se conoce y por la especie mientras la compra vuela, que
+       son los dos momentos en los que puede aparecer un Pokemon ajeno. */
+    const isCasinoOwnedPokemon = poke => {
+        if (!poke) return false;
+        if (casinoPurchasesInFlight > 0 && casinoHasPendingSpecies(poke)) return true;
+        const pokeId = getPokeId(poke);
+        return Boolean(pokeId && casinoOwnedPokemon.has(pokeId));
+    };
+    /* ================= FIN SEPARACION DE DOMINIO CON EL CASSINO ================= */
+
+    /* ================= AUTO-VENTA DEL DEPOSITO =================
+       La regla. Espejo de shouldAutoSell del Cassino, con los dos mismos cortes:
+       umbrales que se exigen A LA VEZ con un "y", de modo que un Pokemon que
+       conserve IVs buenos o un tier alto no se vende aunque el otro valor sea
+       malo.
+
+       Lo del equipo: el Pokemon recien cazado entra en el equipo, asi que para
+       venderlo hay que sacarlo de ahi. Por eso la regla NO lo veta. Lo que veta
+       es tocar un Pokemon del equipo que YA HABIAMOS VISTO: ese es el equipo de
+       caza que elegiste, y no se toca. Un Pokemon del equipo que no estaba en el
+       registro es, por definicion, uno que acaba de entrar, y ese si se vende.
+
+       esNuevo lo decide el llamante, y es true cuando el id no estaba en el
+       registro de vistos. Como el registro se siembra con todo lo que hay al
+       ENCENDER, el equipo que tienes ese dia ya cuenta como visto desde el
+       principio y no se toca nunca.
+
+       shiny, starter, bloqueado y ya anunciado quedan fuera por
+       isTeamPokemonProtected, igual que en el Cassino. */
+    /* Decide Y EXPLICA. Devuelve { sell, motivo }. Es UNA sola funcion a
+       proposito: si el texto del aviso saliera de otra copia de la regla, se
+       separarian y el aviso acabaria mintiendo sobre por que no se vendio, que
+       es peor que no avisar. shouldAutoSellPokemon es solo un envoltorio. */
+    const autoSellDecision = (poke, config, isProtected, esNuevo = false) => {
+        if (!config?.enabled) return { sell: false, motivo: 'la auto-venta esta apagada' };
+        if (!poke) return { sell: false, motivo: 'el Pokemon no tiene datos' };
+        /* Lo primero, antes que el equipo y antes que los cortes: un Pokemon
+           comprado en el Cassino no es de esta lista. Se resuelve alli, con sus
+           propios cortes y su propio historial, y meterlo aqui vendia contra la
+           decision de quien lo compro. */
+        if (isCasinoOwnedPokemon(poke)) return { sell: false, motivo: 'es del Cassino' };
+        if (poke.team && !esNuevo) return { sell: false, motivo: 'es del equipo de caza' };
+        if (isProtected(poke)) return { sell: false, motivo: 'esta protegido: shiny, inicial, bloqueado o ya anunciado' };
+        if (Number(poke.sellValue || 0) <= 0) return { sell: false, motivo: 'el juego no paga nada por el' };
+        if (Number(poke.ivTotal || 0) >= Number(config.minIv || 0)) {
+            return { sell: false, motivo: 'sus IV son ' + Number(poke.ivTotal || 0) + ' y el corte esta en ' + Number(config.minIv || 0) };
+        }
+        if (config.minTier) {
+            const actual = tierOrder(getPokemonTierId(poke));
+            const corte = tierOrder(config.minTier);
+            if (actual < 0 || actual >= corte) {
+                const etiqueta = (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === config.minTier)?.label) || config.minTier;
+                const suya = (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === getPokemonTierId(poke))?.label) || 'desconocida';
+                return { sell: false, motivo: 'es ' + suya + ' y el corte esta en ' + etiqueta };
+            }
+        }
+        return { sell: true, motivo: '' };
+    };
+
+    const shouldAutoSellPokemon = (poke, config, isProtected, esNuevo = false) =>
+        autoSellDecision(poke, config, isProtected, esNuevo).sell;
+
+    /* Que hacer con la lista que acaba de llegar por el socket. Devuelve dos
+       listas y no una, porque hay una diferencia que importa: lo que se vende se
+       marca como visto, y lo que se salta NO. Un Pokemon del equipo ya visto se
+       salta sin marcarse, asi que el dia que lo saques del equipo vuelve a ser
+       candidato y se vende. Uno de la caja que no cumple los cortes, igual: se
+       salta sin marcarse, para que un cambio en los cortes lo alcance. */
+    const reconcileAutoSellSeen = (entries, seenIds, config, isProtected) => {
+        const candidatos = [];
+        const saltados = [];
+        (Array.isArray(entries) ? entries : []).forEach(poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || seenIds.has(pokeId)) return;
+            if (shouldAutoSellPokemon(poke, config, isProtected, true)) candidatos.push(poke);
+            else saltados.push(poke);
+        });
+        /* Un id repetido en la misma pasada se vende una sola vez. */
+        const unicos = new Map(candidatos.map(poke => [getPokeId(poke), poke]));
+        return { sell: [...unicos.values()], skip: saltados };
+    };
+
+    /* ================= FIN AUTO-VENTA DEL DEPOSITO ================= */
+
+    /* ================= AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
+    const marketAutoSellConfigKey = 'script_market_auto_sell_v1';
+    const marketAutoSellSeenKey = 'script_market_auto_sell_seen_v1';
+    const marketAutoSellSeededKey = 'script_market_auto_sell_seeded_v1';
+
+    /* Por defecto INERTE: enabled apagado y los cortes a cero, que no venden
+       nada porque ivTotal < 0 no se cumple. Mejor esto que un interruptor que
+       al encender te venda la caja entera.
+
+       OJO, aqui NO se usa readStoredJSON: esa devuelve el valor por defecto para
+       todo lo que no sea un ARRAY, porque esta hecha para las listas de vistos.
+       La configuracion es un objeto, asi que con ella se leia siempre {} y los
+       cortes del menu no se guardarian nunca. Por eso lee el objeto directo. */
+    const readMarketAutoSellConfig = () => {
+        let guardado = {};
+        try {
+            const bruto = localStorage.getItem(marketAutoSellConfigKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (parseado && typeof parseado === 'object' && !Array.isArray(parseado)) guardado = parseado;
+            }
+        } catch (_) {}
+        const minIv = Number(guardado.minIv ?? 0);
+        return {
+            enabled: guardado.enabled === true,
+            minIv: Number.isFinite(minIv) ? Math.min(192, Math.max(0, Math.floor(minIv))) : 0,
+            minTier: typeof guardado.minTier === 'string' ? guardado.minTier : ''
+        };
+    };
+
+    const writeMarketAutoSellConfig = config => {
+        try { localStorage.setItem(marketAutoSellConfigKey, JSON.stringify(config)); } catch (_) {}
+        /* Al ENCENDER se borra la marca de siembra, para que la siguiente pasada
+           registre lo que hay sin venderlo. Ese es el comportamiento que aprobo
+           el usuario: nada de lo que ya esta en el deposito se vende. */
+        if (config && config.enabled) {
+            try { localStorage.removeItem(marketAutoSellSeededKey); } catch (_) {}
+        }
+        /* Al cambiar los cortes, el motivo de los avisos cambia, asi que los
+           avisados se olvidan y se vuelve a avisar una vez con el motivo nuevo. */
+        try { localStorage.removeItem(marketAutoSellNotifiedKey); } catch (_) {}
+        marketAutoSellSkipAvisados.clear();
+    };
+
+    /* El registro SOLO CRECE. Antes se recortaba con la lista de cada tick, y
+       eso era un fallo grave, comprobado en el navegador: basta que el servidor
+       mande UNA lista mas corta para que se caigan ids de Pokemon que siguen
+       existiendo, y en el siguiente mensaje completo esos Pokemon parecen nuevos
+       y se VENDEN otra vez. Al recargar se vendieron dos Geodude que ya estaban
+       decididos. Un Pokemon que parece nuevo y esta en el equipo es ademas lo
+       primero que se vende, asi que el fallo podia vaciar el equipo de caza.
+
+       Ahora se recorta solo por arriba, y solo si de verdad se pasa del tope:
+       ahi el riesgo es que un id muy viejo vuelva a aparecer, que con 4000
+       entradas es remoto, en vez de perder medio registro por una lista corta.
+
+       No se muta lo que le pasan: se construye uno nuevo. */
+    const marketAutoSellSeenCap = 4000;
+    const capMarketAutoSellSeen = seenIds => {
+        if (!seenIds || typeof seenIds.forEach !== 'function') return new Set();
+        /* Se recoge con forEach y NO con [...seenIds]: asi funciona tanto con un
+           Set de verdad como con cualquier cosa que se comporte como uno, que es
+           lo que usan los tests. */
+        const lista = [];
+        seenIds.forEach(id => lista.push(id));
+        return new Set(lista.length > marketAutoSellSeenCap
+            ? lista.slice(lista.length - marketAutoSellSeenCap)
+            : lista);
+    };
+
+    let marketAutoSellSeen = new Set();
+    let marketAutoSellSeenLoaded = false;
+
+    const loadMarketAutoSellSeen = () => {
+        const crudo = readStoredJSON(marketAutoSellSeenKey, []) || [];
+        marketAutoSellSeen = new Set(
+            (Array.isArray(crudo) ? crudo : []).map(v => String(v || '')).filter(Boolean)
+        );
+        marketAutoSellSeenLoaded = true;
+    };
+
+    const saveMarketAutoSellSeen = () => {
+        try { localStorage.setItem(marketAutoSellSeenKey, JSON.stringify([...marketAutoSellSeen])); } catch (_) {}
+    };
+
+    const replaceMarketAutoSellSeen = siguiente => {
+        marketAutoSellSeen = siguiente instanceof Set ? siguiente : new Set();
+        saveMarketAutoSellSeen();
+    };
+
+    /* Devuelve true SOLO la primera pasada despues de encender. El detector
+       siembra y devuelve false mientras siga siendo true, para que la siembra
+       no se repita en cada pokes. */
+    const consumeMarketAutoSellSeed = () => {
+        try {
+            if (localStorage.getItem(marketAutoSellSeededKey) === '1') return false;
+            localStorage.setItem(marketAutoSellSeededKey, '1');
+            return true;
+        } catch (_) { return false; }
+    };
+    /* ================= FIN AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
+
+    /* ================= AUTO-VENTA: VENDER Y EL DETECTOR ================= */
+    const marketAutoSellLogKey = 'script_market_auto_sell_log_v1';
+
+    /* Una venta por fila. El log SIEMPRE se guarda: es la unica forma de que el
+       jugador vea que algo fallo y por que, ya que un fallo no se reintenta. */
+    const marketAutoSellLogEntryFor = (poke, config, extra) => ({
+        at: Date.now(),
+        id: getPokeId(poke),
+        name: poke?.name || 'Pokemon ' + (poke?.speciesId ?? ''),
+        speciesId: Number(poke?.speciesId || 0),
+        level: Number(poke?.level || 0),
+        iv: Number(poke?.ivTotal || 0),
+        quality: Number(poke?.quality || 0),
+        catalogValue: Number(poke?.sellValue || 0),
+        minIv: Number(config?.minIv || 0),
+        minTier: config?.minTier || '',
+        ...extra
+    });
+
+    /* OJO: aqui NO se usa readStoredJSON, por lo mismo que en la configuracion.
+       Esa devuelve el valor por defecto para todo lo que no sea un ARRAY, y el
+       historial es un OBJETO. Con ella, el historial se leia vacio en cada
+       recarga y la primera venta nueva lo sobrescribia entero: se perdia todo
+       lo anterior. */
+    const readMarketAutoSellLog = () => {
+        try {
+            const bruto = localStorage.getItem(marketAutoSellLogKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (parseado && Array.isArray(parseado.entries)) return parseado;
+            }
+        } catch (_) {}
+        return { sessionId: '', entries: [] };
+    };
+    let marketAutoSellLog = readMarketAutoSellLog();
+    const saveMarketAutoSellLog = () => {
+        try { localStorage.setItem(marketAutoSellLogKey, JSON.stringify(marketAutoSellLog)); } catch (_) {}
+    };
+    const addMarketAutoSellLogEntry = entry => {
+        if (!Array.isArray(marketAutoSellLog.entries)) marketAutoSellLog.entries = [];
+        marketAutoSellLog.entries.push(entry);
+        /* Tope de 200 como el log del Casino. Aqui si es seguro: unlike el registro
+           de vistos, perder una fila vieja solo cuesta no verla en el historico. */
+        if (marketAutoSellLog.entries.length > 200) {
+            marketAutoSellLog.entries = marketAutoSellLog.entries.slice(-200);
+        }
+        saveMarketAutoSellLog();
+        /* Todo contador de la sesion pasa por aqui. Se engancha al log y no a
+           sellPokemonForGold a proposito: el log ya recibe una fila por venta,
+           con acierto o con fallo, y es el unico sitio por el que pasan todas.
+           Contar en un segundo sitio dejaria un camino sin contar. */
+        if (entry?.ok) {
+            marketAutoSellPanelSession.sold += 1;
+            marketAutoSellPanelSession.gold += Math.max(0, Number(entry.gold || 0));
+        } else if (entry && !entry.ok) {
+            marketAutoSellPanelSession.failed += 1;
+        }
+        saveMarketAutoSellPanelSession();
+        renderMarketAutoSellPanel(true);
+    };
+
+    /* ================= PANEL DE SESION DE LA AUTO-VENTA =================
+       Un contador de "cuanto ha dado esta hunt": cuantos Pokemon se han
+       vendido por la auto-venta y cuanto oro han traido. Se borra al empezar
+       una hunt nueva, que es lo que lo hace util: mientras cazando no hay forma
+       de saber el total de otra manera, y al terminar la hunt ya no interesa.
+
+       Solo se ve con la auto-venta ENCENDIDA y DENTRO de una hunt. Fuera de las
+       dos cosas no aporta nada y taparia la pantalla. */
+
+    const STORAGE_AUTOSELL_PANEL_SESSION = 'script_market_autosell_panel_session_v1';
+    const STORAGE_AUTOSELL_PANEL_POSITION = 'script_market_autosell_panel_position_v1';
+
+    /* La sesion vive en memoria y se guarda en localStorage. Se guarda porque
+       recargar a mitad de hunt no es empezar una hunt nueva, y perder el numero
+       al recargar seria el fallo mas molesto de todos. */
+    const readMarketAutoSellPanelSession = () => {
+        try {
+            const bruto = localStorage.getItem(STORAGE_AUTOSELL_PANEL_SESSION);
+            if (bruto) {
+                const p = JSON.parse(bruto);
+                if (p && typeof p === 'object' && !Array.isArray(p) && Number(p.startedAt) > 0) {
+                    return {
+                        loc: String(p.loc || ''),
+                        startedAt: Number(p.startedAt) || 0,
+                        sold: Math.max(0, Number(p.sold) || 0),
+                        gold: Math.max(0, Number(p.gold) || 0),
+                        failed: Math.max(0, Number(p.failed) || 0)
+                    };
+                }
+            }
+        } catch (_) {}
+        return { loc:'', startedAt:0, sold:0, gold:0, failed:0 };
+    };
+    let marketAutoSellPanelSession = readMarketAutoSellPanelSession();
+    const saveMarketAutoSellPanelSession = () => {
+        try { localStorage.setItem(STORAGE_AUTOSELL_PANEL_SESSION, JSON.stringify(marketAutoSellPanelSession)); } catch (_) {}
+    };
+
+    /* El estado de "estamos en una hunt" va aparte de la sesion guardada, y a
+       proposito NO se persiste. Si se guardara, recargar dentro de una hunt se
+       leeria como "ya estabamos dentro" y la sesion no se crearia; entonces el
+       panel aparecia con el total en cero hasta la siguiente venta. Al no
+       persistir, arrancar siempre empieza con la sesion cerrada y la primera
+       vez que se detecta una hunt se decide si se hereda la guardada o no. */
+    let marketAutoSellPanelInsideHunt = false;
+    let marketAutoSellPanelHuntLoc = '';
+    let marketAutoSellPanelTicker = null;
+    let marketAutoSellPanelFirma = '';
+
+    /* Una sesion guardada de mas de 3 horas se da por caduca. Es una red de
+       seguridad para el caso raro de que la deteccion de hunt falle y deje el
+       panel colgado dias con el total de una hunt vieja. */
+    const marketAutoSellPanelMaxAgeMs = 3 * 60 * 60 * 1000;
+
+    const formatAutoSellPanelDuration = ms => {
+        const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const dosDig = n => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${dosDig(m)}:${dosDig(s)}` : `${dosDig(m)}:${dosDig(s)}`;
+    };
+
+    const getMarketAutoSellPanelNode = () => document.getElementById('script-market-autosell-panel');
+
+    /* Solo se repinta si algo cambio de verdad. El ticker va a 1 Hz y repintar
+       sin motivo reconstruye el DOM y reinicia el arrastre en curso. */
+    const renderMarketAutoSellPanel = forzar => {
+        const nodo = getMarketAutoSellPanelNode();
+        if (!nodo) return;
+        const sesion = marketAutoSellPanelSession;
+        const tiempo = formatAutoSellPanelDuration(sesion.startedAt ? Date.now() - sesion.startedAt : 0);
+        const firma = `${sesion.sold}|${sesion.gold}|${sesion.failed}|${tiempo}|${sesion.loc}`;
+        if (!forzar && firma === marketAutoSellPanelFirma) return;
+        marketAutoSellPanelFirma = firma;
+        nodo.querySelector('[data-campo="tiempo"]').textContent = tiempo;
+        nodo.querySelector('[data-campo="vendidos"]').textContent = formatNumber(sesion.sold);
+        nodo.querySelector('[data-campo="oro"]').textContent = formatNumber(sesion.gold);
+        const fallos = nodo.querySelector('[data-campo="fallos"]');
+        fallos.textContent = sesion.failed > 0 ? `${sesion.failed} sin vender` : '';
+        fallos.hidden = sesion.failed <= 0;
+        const sitio = nodo.querySelector('[data-campo="sitio"]');
+        sitio.textContent = sesion.loc || 'Hunt';
+        sitio.hidden = !sesion.loc;
+    };
+
+    /* Posicion: se guarda en pixeles de viewport. Se recorta al ventana para
+       que un panel arrastrado a una pantalla grande no quede fuera cuando se
+       cambia de monitor o se redimensiona. */
+    const readMarketAutoSellPanelPosition = () => {
+        try {
+            const bruto = localStorage.getItem(STORAGE_AUTOSELL_PANEL_POSITION);
+            if (!bruto) return null;
+            const p = JSON.parse(bruto);
+            if (p && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))) {
+                return { x:Number(p.x), y:Number(p.y) };
+            }
+        } catch (_) {}
+        return null;
+    };
+    const clampMarketAutoSellPanel = () => {
+        const nodo = getMarketAutoSellPanelNode();
+        if (!nodo || nodo.hidden) return;
+        const caja = nodo.getBoundingClientRect();
+        const maxX = Math.max(0, window.innerWidth - caja.width);
+        const maxY = Math.max(0, window.innerHeight - caja.height);
+        const x = Math.min(Math.max(0, Number(nodo.dataset.posX) || 0), maxX);
+        const y = Math.min(Math.max(0, Number(nodo.dataset.posY) || 0), maxY);
+        nodo.dataset.posX = String(x);
+        nodo.dataset.posY = String(y);
+        nodo.style.left = `${x}px`;
+        nodo.style.top = `${y}px`;
+    };
+    const startMarketAutoSellPanelDrag = (nodo, asa) => {
+        /* pointerdown, no mousedown: asi un dedo en movil y un raton en PC
+           pasan por el mismo camino, y setPointerCapture sigue al puntero aunque
+           se salga del asa. Sin el, al arrastrar rapido el puntero se escapa del
+           elemento y el arrastre se queda pegado. */
+        asa.addEventListener('pointerdown', event => {
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            const caja = nodo.getBoundingClientRect();
+            const dx = event.clientX - caja.left;
+            const dy = event.clientY - caja.top;
+            /* setPointerCapture puede lanzar NotFoundError si el puntero ya no
+               esta activo (por ejemplo si el panel se reinserta entre el gesto y
+               este momento, o en algun WebView). Sin este try el arrastre
+               muriria aqui, sin mover nada y sin avisar, y como los listeners
+               de abajo se enganchan DESPUES, el arrastre se quedaria muerto para
+               siempre. Con el, se degrada a arrastre sin captura: funciona
+               mientras el puntero este encima del asa, que es el caso normal. */
+            try { asa.setPointerCapture(event.pointerId); } catch (_) { /* sin captura */ }
+            const mover = move => {
+                const x = Math.min(Math.max(0, move.clientX - dx), Math.max(0, window.innerWidth - caja.width));
+                const y = Math.min(Math.max(0, move.clientY - dy), Math.max(0, window.innerHeight - caja.height));
+                nodo.dataset.posX = String(x);
+                nodo.dataset.posY = String(y);
+                nodo.style.left = `${x}px`;
+                nodo.style.top = `${y}px`;
+            };
+            const soltar = () => {
+                asa.removeEventListener('pointermove', mover);
+                asa.removeEventListener('pointerup', soltar);
+                asa.removeEventListener('pointercancel', soltar);
+                if (asa.hasPointerCapture?.(event.pointerId)) {
+                    try { asa.releasePointerCapture(event.pointerId); } catch (_) { /* ya no estaba */ }
+                }
+                try {
+                    localStorage.setItem(STORAGE_AUTOSELL_PANEL_POSITION, JSON.stringify({
+                        x:Number(nodo.dataset.posX) || 0, y:Number(nodo.dataset.posY) || 0
+                    }));
+                } catch (_) {}
+            };
+            asa.addEventListener('pointermove', mover);
+            asa.addEventListener('pointerup', soltar);
+            asa.addEventListener('pointercancel', soltar);
+        });
+    };
+
+    const buildMarketAutoSellPanel = () => {
+        if (getMarketAutoSellPanelNode()) return getMarketAutoSellPanelNode();
+        const nodo = document.createElement('div');
+        nodo.id = 'script-market-autosell-panel';
+        nodo.className = 'script-market-autosell-panel';
+        nodo.setAttribute('role', 'status');
+        nodo.innerHTML = `
+            <div class="script-market-autosell-panel-grip" data-asa>
+              <svg class="script-market-autosell-panel-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+              <span class="script-market-autosell-panel-title">Auto venta</span>
+              <span class="script-market-autosell-panel-sitio" data-campo="sitio" hidden></span>
+              <span class="script-market-autosell-panel-tiempo" data-campo="tiempo">00:00</span>
+            </div>
+            <div class="script-market-autosell-panel-body">
+              <div class="script-market-autosell-panel-stat">
+                <b data-campo="vendidos">0</b>
+                <small>vendidos</small>
+              </div>
+              <div class="script-market-autosell-panel-stat">
+                <b class="es-oro" data-campo="oro">0</b>
+                <small>oro</small>
+              </div>
+            </div>
+            <div class="script-market-autosell-panel-fallos" data-campo="fallos" hidden></div>`;
+        document.body.appendChild(nodo);
+        startMarketAutoSellPanelDrag(nodo, nodo.querySelector('[data-asa]'));
+        const guardada = readMarketAutoSellPanelPosition();
+        if (guardada) {
+            nodo.dataset.posX = String(guardada.x);
+            nodo.dataset.posY = String(guardada.y);
+        } else {
+            /* Por defecto arriba a la derecha, debajo del dock. La izquierda
+               esta peor: el mapa y sus filtros van ahi y el panel los tapaba. */
+            nodo.dataset.posX = String(Math.max(8, window.innerWidth - 200));
+            nodo.dataset.posY = '72';
+        }
+        clampMarketAutoSellPanel();
+        window.addEventListener('resize', clampMarketAutoSellPanel, { passive:true });
+        return nodo;
+    };
+
+    /* El corazon: decide si lo que se ve es la misma hunt o una nueva. */
+    const syncMarketAutoSellPanel = () => {
+        const config = readMarketAutoSellConfig();
+        const enHunt = isInHuntContext();
+        const activa = Boolean(config.enabled && enHunt);
+        const nodo = buildMarketAutoSellPanel();
+        if (!activa) {
+            nodo.hidden = true;
+            /* Al salir de la hunt se cierra la sesion en memoria, pero NO se
+               borra el total: si el usuario abre un panel o el auto-reconnect
+               teletransporta y vuelve, la hunt sigue siendo la misma y perder el
+               numero seria falso. El borrado de verdad ocurre al entrar en OTRA
+               hunt, o al caducar. */
+            marketAutoSellPanelInsideHunt = false;
+            return;
+        }
+        const loc = (typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '')
+            || marketAutoSellPanelHuntLoc
+            || '';
+        /* Cambio de hunt: entrar cuando no estabamos dentro, o saltar de una
+           zona a otra. Salir sin volver NO borra nada (ver arriba). */
+        const cambioDeHunt = !marketAutoSellPanelInsideHunt
+            || (marketAutoSellPanelHuntLoc && loc && marketAutoSellPanelHuntLoc !== loc);
+        if (cambioDeHunt) {
+            const guardada = marketAutoSellPanelSession;
+            const hereda = Boolean(
+                guardada.startedAt
+                && guardada.loc === loc
+                && Date.now() - guardada.startedAt < marketAutoSellPanelMaxAgeMs
+            );
+            /* Se hereda solo si es LA MISMA hunt. Si el total guardado es de
+               otra zona, o de una hunt que ya caduco, empieza de cero: ese es
+               el "al iniciar una nueva sesion se borra la anterior". */
+            marketAutoSellPanelSession = hereda
+                ? { ...guardada, startedAt: Date.now() }
+                : { loc, startedAt:Date.now(), sold:0, gold:0, failed:0 };
+            saveMarketAutoSellPanelSession();
+            marketAutoSellPanelFirma = '';
+        }
+        marketAutoSellPanelInsideHunt = true;
+        marketAutoSellPanelHuntLoc = loc;
+        nodo.hidden = false;
+        clampMarketAutoSellPanel();
+        renderMarketAutoSellPanel(true);
+    };
+
+    const startMarketAutoSellPanel = () => {
+        if (marketAutoSellPanelTicker) return;
+        marketAutoSellPanelTicker = setInterval(() => {
+            /* Toda la deteccion va aqui y no en el observer del DOM: este va a
+               1 Hz, que es la frecuencia del reloj del panel, y no dispara
+               ninguna busquedaexpensive. El observer llega a 6,6 por segundo
+               durante una hunt y hacia el mismo trabajo siete veces. */
+            try { syncMarketAutoSellPanel(); } catch (_) { /* un fallo no para el reloj */ }
+        }, 1000);
+    };
+    /* ================= FIN PANEL DE SESION DE LA AUTO-VENTA ================= */
+
+    /* Mover del equipo a la caja. Protocolo copiado de storeTeamPokemon (8416),
+       sin lo especifico del Casino: sin recargar el catalogo de Marlon, sin
+       repintar el panel y sin tocar su estado. */
+    const storePokemonToDepot = async pokeId => {
+        if (!pokeId) throw new Error('Pokemon sin identificador.');
+        if (!await waitForGameSocket(2200)) throw new Error('La conexion del juego no esta disponible.');
+        /* Este SI usa el canal compartido, porque poke-store solo se puede pedir
+           por ahi. El riesgo es que otra espera de pokes se quede con la
+           respuesta; por eso el resultado se verifica unas lineas mas abajo y se
+           lanza si el Pokemon sigue en el equipo. Quien llama lo reintenta. */
+        let updated = await requestGameEvent('pokes', { type: 'poke-store', pokeId }, null, 3200);
+        if (!updated.length) updated = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs: 2200, attempts: 1 });
+        const guardado = updated.find(entry => getPokeId(entry) === pokeId);
+        if (!updated.length || guardado?.team) throw new Error('No se pudo guardar el Pokemon en el deposito.');
+        return true;
+    };
+
+    /* Vende por oro al juego. El precio lo pone el juego: aqui no hay ninguno, que
+       es justo lo que distingue esto de la auto-compra del market. El oro es
+       result.goldGained y NUNCA poke.sellValue, que es solo el valor teorico del
+       catalogo. El guardado va antes por si el Pokemon llegara en el equipo.
+
+       Un fallo se anota con su motivo y NO se reintenta solo. */
+    const sellPokemonForGold = async (poke, config) => {
+        const pokeId = getPokeId(poke);
+        try {
+            if (poke?.team) await storePokemonToDepot(pokeId);
+            const result = await gameApiRequest('/api/game/pokemon/sell', {
+                method: 'POST', body: JSON.stringify({ pokeIds: [pokeId] })
+            });
+            const goldGained = Number(result?.goldGained ?? 0);
+            addMarketAutoSellLogEntry(marketAutoSellLogEntryFor(poke, config, { ok: true, gold: goldGained, error: '' }));
+            return { ok: true, goldGained, error: '' };
+        } catch (error) {
+            const motivo = String(error?.message || error || 'error desconocido');
+            addMarketAutoSellLogEntry(marketAutoSellLogEntryFor(poke, config, { ok: false, gold: 0, error: motivo }));
+            return { ok: false, goldGained: 0, error: motivo };
+        }
+    };
+
+    /* Aviso emergente de la auto-venta. Cola de uno en uno, como el de ventas del
+       market: sin cola, dos Pokemon vendidos seguidos montan dos avisos encima.
+       Va a document.body con z-index altisimo, asi que se ve con cualquier otra
+       ventana abierta por encima. */
+    const marketAutoSellToastQueue = [];
+    let marketAutoSellToastBusy = false;
+    /* Los que no se venden NO se marcan en el registro de vistos, a proposito,
+       para que un cambio en los cortes los alcance despues. Pero eso significa
+       que siguen apareciendo como no vistos, asi que hay que acordarse de a
+       quien ya se aviso. En memoria no basta: se repetian TODOS en cada recarga. */
+    const marketAutoSellNotifiedKey = 'script_market_auto_sell_notified_v1';
+    const readMarketAutoSellNotified = () => {
+        try {
+            const bruto = localStorage.getItem(marketAutoSellNotifiedKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (Array.isArray(parseado)) return new Set(parseado.map(String));
+            }
+        } catch (_) {}
+        return new Set();
+    };
+    const saveMarketAutoSellNotified = () => {
+        try { localStorage.setItem(marketAutoSellNotifiedKey, JSON.stringify([...marketAutoSellSkipAvisados])); } catch (_) {}
+    };
+    const marketAutoSellSkipAvisados = readMarketAutoSellNotified();
+
+    const queueMarketAutoSellToast = aviso => {
+        marketAutoSellToastQueue.push(aviso);
+        if (marketAutoSellToastBusy) return;
+        const mostrarSiguiente = () => {
+            const siguiente = marketAutoSellToastQueue.shift();
+            if (!siguiente) { marketAutoSellToastBusy = false; return; }
+            marketAutoSellToastBusy = true;
+            const nodo = document.createElement('div');
+            nodo.className = 'script-market-autosell-toast is-' + (siguiente.tono || 'ok');
+            const icono = siguiente.tono === 'ok' ? '✓' : (siguiente.tono === 'error' ? '!' : '×');
+            nodo.innerHTML = '<span>' + icono + '</span><b>' + escapeHTML(siguiente.titulo || '') + '</b><small>' + escapeHTML(siguiente.detalle || '') + '</small>';
+            document.body.appendChild(nodo);
+            requestAnimationFrame(() => nodo.classList.add('show'));
+            setTimeout(() => {
+                nodo.classList.remove('show');
+                setTimeout(() => { nodo.remove(); mostrarSiguiente(); }, 180);
+            }, 2600);
+        };
+        mostrarSiguiente();
+    };
+
+    let marketAutoSellBusy = false;
+
+    /* Se engancha al evento pokes, que salta cada vez que cambia la lista de
+       Pokemon del juego, y una captura completada la cambia. No hay sondeo: el
+       servidor empuja el evento, y por eso no hay ventana en la que se escape
+       una captura. */
+    const handleMarketAutoSellTick = async list => {
+        if (marketAutoSellBusy) return;
+        const config = readMarketAutoSellConfig();
+        if (!config.enabled) return;
+        /* Hay una compra del Cassino en marcha. Esta pasada no vende nada, y
+           sobre todo NO consume la semilla: consumirla aqui registraria como
+           vistos los Pokemon que aún no son de nadie, que es exactamente el
+           fallo que hacia que el equipo de caza pareciera nuevo. Los 'pokes'
+           siguen llegando, asi que la captura se recoge en la siguiente. */
+        if (casinoPurchasesInFlight > 0) return;
+        if (!marketAutoSellSeenLoaded) loadMarketAutoSellSeen();
+
+        const presentes = (Array.isArray(list) ? list : []).map(poke => getPokeId(poke)).filter(Boolean);
+        /* NO se recorta con la lista que llega: una lista corta borraria el
+           registro y haria vender Pokemon ya decididos. Solo se aplica el tope
+           alto, que no depende de lo que traiga este mensaje. */
+        replaceMarketAutoSellSeen(capMarketAutoSellSeen(marketAutoSellSeen));
+
+        /* La siembra: solo la primera pasada despues de encender. Registra lo que
+           hay y NO vende nada. Es la regla de seguridad que aprobo el usuario:
+           nada de lo que ya esta en el deposito se vende. */
+        if (consumeMarketAutoSellSeed()) {
+            presentes.forEach(id => marketAutoSellSeen.add(id));
+            saveMarketAutoSellSeen();
+            return;
+        }
+
+        const { sell, skip } = reconcileAutoSellSeen(list, marketAutoSellSeen, config, isTeamPokemonProtected);
+
+        /* Los que no se venden se avisan UNA vez por id y sesion: como a los
+           saltados no se les marca como vistos, volverian a salir en cada pokes y
+           el aviso se repetiria sin parar. La marca vive en memoria, asi que al
+           recargar se vuelve a avisar de lo que siga ahi, que es lo que se quiere. */
+        skip.forEach(poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || marketAutoSellSkipAvisados.has(pokeId)) return;
+            marketAutoSellSkipAvisados.add(pokeId);
+            saveMarketAutoSellNotified();
+            const decision = autoSellDecision(poke, config, isTeamPokemonProtected, true);
+            queueMarketAutoSellToast({
+                tono: 'no',
+                titulo: 'No vendido: ' + (poke?.name || 'Pokemon'),
+                detalle: decision.motivo
+            });
+        });
+
+        if (!sell.length) return;
+
+        marketAutoSellBusy = true;
+        try {
+            for (const poke of sell) {
+                const pokeId = getPokeId(poke);
+                /* ANTES de la peticion, no despues: si la venta falla y se marcase
+                   al final, el mismo Pokemon se reintentaria en la siguiente
+                   pasada y se vendria dos veces. */
+                marketAutoSellSeen.add(pokeId);
+                saveMarketAutoSellSeen();
+                const resultado = await sellPokemonForGold(poke, config);
+                if (resultado && resultado.ok) {
+                    queueMarketAutoSellToast({
+                        tono: 'ok',
+                        titulo: 'Vendido: ' + (poke?.name || 'Pokemon'),
+                        detalle: 'IV ' + Number(poke?.ivTotal || 0) + ' · ' + Number(resultado.goldGained || 0).toLocaleString() + ' de oro'
+                    });
+                } else {
+                    queueMarketAutoSellToast({
+                        tono: 'error',
+                        titulo: 'No se pudo vender: ' + (poke?.name || 'Pokemon'),
+                        detalle: (resultado && resultado.error) || 'error desconocido'
+                    });
+                }
+                if (!resultado || !resultado.ok) {
+                    /* Se retira: el Pokemon sigue ahi y tiene que poder volver a
+                       intentarse cuando llegue otro pokes. */
+                    marketAutoSellSeen.delete(pokeId);
+                    saveMarketAutoSellSeen();
+                }
+            }
+        } catch (_) {
+            /* sellPokemonForGold ya captura sus errores y los anota. Si algo se
+               escapa hasta aqui, se traga: un fallo no puede romper el manejador
+               del socket, que comparte con todo el script. */
+        } finally {
+            marketAutoSellBusy = false;
+        }
+    };
+
+    /* ================= AUTO-VENTA: BOTON Y MENU =================
+
+    /* Las opciones del corte salen de la tabla real de rarezas, con el ID como
+       valor y la etiqueta como texto. Poner las etiquetas a mano seria una forma
+       de guardar algo que tierOrder no reconoce, y ahi no se venderia nunca sin
+       ningun error a la vista. */
+    const marketAutoSellTierOptions = () => [
+        ['', 'Cualquier rareza'],
+        ...MARKET_QUALITY_TIER_DEFINITIONS.map(d => [d.id, d.label])
+    ];
+
+    /* Se busca en document y NO con backdrop.querySelector: esta funcion vive a
+       nivel de modulo, y backdrop solo existe dentro de showGlobalMarketWindow.
+       Usar backdrop aqui lanzaba ReferenceError al abrir el market, y como se
+       llama durante el montaje de la ventana, la ventana no llegaba a aparecer.
+       El boton es unico en la pagina, asi que buscar en document es equivalente. */
+    const refrescarMarketAutoSellButton = (raiz = document) => {
+        const boton = raiz.querySelector('.script-market-autosell-btn');
+        if (!boton) return;
+        const config = readMarketAutoSellConfig();
+        boton.classList.toggle('is-on', config.enabled);
+        boton.title = config.enabled
+            ? `Auto-venta activa: por debajo de ${config.minIv} IV${config.minTier ? ' y de ' + (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === config.minTier)?.label || config.minTier) : ''}`
+            : 'Auto-venta del deposito';
+    };
+
+    /* El dialogo se inyecta en document.body y NO en el backdrop: el Casino
+       tiene ese gotcha documentado y un dialogo dentro se queda tapado. */
+    const openMarketAutoSellConfig = () => {
+        document.querySelector('.script-market-autosell-config-backdrop')?.remove();
+        const config = readMarketAutoSellConfig();
+        const capa = document.createElement('div');
+        capa.className = 'script-market-autosell-config-backdrop';
+        const opciones = marketAutoSellTierOptions()
+            .map(([valor, texto]) => `<option value="${escapeHTML(valor)}"${valor === config.minTier ? ' selected' : ''}>${escapeHTML(texto)}</option>`)
+            .join('');
+        capa.innerHTML = `
+            <div class="script-market-autosell-config" role="dialog" aria-modal="true" aria-label="Auto-venta del deposito">
+              <div class="script-market-autosell-config-head">
+                <h3>
+                  <svg class="script-market-autosell-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+                  <span>Auto-venta</span>
+                </h3>
+                <button class="script-market-autosell-config-close" data-accion="cerrar" type="button" aria-label="Cerrar">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6"/></svg>
+                </button>
+              </div>
+              <div class="script-market-autosell-config-body">
+                <p class="script-market-autosell-config-note">Cada <b> Pokemon cazado</b> que entre en el deposito y se quede por debajo de <b>los dos cortes</b> se vende solo por oro. El <b>equipo de caza no se toca</b>, y los Pokemon del <b>Cassino</b> se resuelven con la regla de ahi.</p>
+                <div class="script-market-autosell-config-group">
+                  <h4>General</h4>
+                  <label class="script-market-autosell-config-check">
+                    <input type="checkbox" class="script-market-autosell-input-enabled"${config.enabled ? ' checked' : ''}>
+                    <span>Activar la auto-venta</span>
+                  </label>
+                </div>
+                <div class="script-market-autosell-config-group">
+                  <h4>Cortes</h4>
+                  <div class="script-market-autosell-config-row">
+                    <label class="script-market-autosell-config-field">
+                      <label>IV maximos</label>
+                      <input class="script-market-autosell-input-iv" type="number" min="0" max="192" inputmode="numeric" value="${config.minIv}">
+                    </label>
+                    <label class="script-market-autosell-config-field">
+                      <label>Rareza por debajo de</label>
+                      <select class="script-market-autosell-input-tier">${opciones}</select>
+                    </label>
+                  </div>
+                </div>
+                <div class="script-market-autosell-config-preview" data-preview></div>
+                <div class="script-market-autosell-config-actions">
+                  <button class="script-market-autosell-config-btn is-cancel" data-accion="cancelar" type="button">Cancelar</button>
+                  <button class="script-market-autosell-config-btn is-primary" data-accion="guardar" type="button">Guardar</button>
+                </div>
+              </div>
+            </div>`;
+        document.body.appendChild(capa);
+        return {
+            capa,
+            enabledInput: capa.querySelector('.script-market-autosell-input-enabled'),
+            ivInput: capa.querySelector('.script-market-autosell-input-iv'),
+            tierInput: capa.querySelector('.script-market-autosell-input-tier'),
+            preview: capa.querySelector('[data-preview]'),
+            botonGuardar: capa.querySelector('[data-accion="guardar"]')
+        };
+    };
+
+    const wireMarketAutoSellConfig = (manejadores, refrescarBoton) => {
+        const { capa, enabledInput, ivInput, tierInput, preview, botonGuardar } = manejadores;
+        const trial = () => ({
+            enabled: enabledInput.checked, minIv: Number(ivInput.value || 0), minTier: tierInput.value
+        });
+        const refrescarPreview = () => {
+            const actual = trial();
+            const enElDeposito = (latestPokemon || []).filter(poke => poke && !poke.team);
+            /* El preview llama a shouldAutoSellPokemon, la MISMA que vende. El del
+               Cassino la reimplementa a mano y por eso puede mentir en cuanto las
+               dos copias se separan. */
+            const candidatos = enElDeposito.filter(poke => shouldAutoSellPokemon(poke, actual, isTeamPokemonProtected, false));
+            if (!enElDeposito.length) {
+                preview.innerHTML = 'No hay Pokemon en el deposito todavia.';
+            } else if (!candidatos.length) {
+                preview.innerHTML = `Ninguno de los <b>${enElDeposito.length}</b> Pokemon del deposito entra por estos cortes.`;
+            } else {
+                /* El oro sale de sellValue, el mismo campo que usa autoSellDecision
+                   para decidir si el Pokemon vale algo. Se muestra porque un
+                   numero es lo que convierte un corte en una decision: sin el,
+                   "8 de 210" no dice si merece la pena. */
+                const oro = candidatos.reduce(
+                    (suma, poke) => suma + Math.max(0, Number(poke.sellValue || 0)), 0
+                );
+                const regla = [
+                    `IV < ${Number(actual.minIv || 0)}`,
+                    actual.minTier
+                        ? `rareza < ${(MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === actual.minTier)?.label || actual.minTier)}`
+                        : 'cualquier rareza'
+                ].join(' y ');
+                const apagada = actual.enabled
+                    ? ''
+                    : '<br><span class="script-market-autosell-preview-warn">La auto-venta esta apagada: no se vendra nada.</span>';
+                preview.innerHTML = `<b>${candidatos.length}</b> de ${enElDeposito.length} Pokemon del deposito cumplen ahora mismo.<br>`
+                    + `${regla} &rarr; unos <b>${oro.toLocaleString('es-VE')}</b> de oro.${apagada}`;
+            }
+            botonGuardar.disabled = false;
+        };
+        [enabledInput, ivInput, tierInput].forEach(controlo => {
+            controlo.addEventListener('input', refrescarPreview);
+            controlo.addEventListener('change', refrescarPreview);
+        });
+        refrescarPreview();
+        /* Escape cierra, como en el Casino. El listener se quita al cerrar: este
+           manejador vive en document y, sin limpiarlo, cada apertura dejaba uno
+           mas apuntando a una capa ya borrada. */
+        const cerrar = () => {
+            document.removeEventListener('keydown', onTecla);
+            capa.remove();
+        };
+        const onTecla = event => {
+            if (event.key === 'Escape') cerrar();
+        };
+        document.addEventListener('keydown', onTecla);
+        capa.addEventListener('click', event => {
+            const accion = event.target?.getAttribute?.('data-accion');
+            if (event.target === capa || accion === 'cerrar' || accion === 'cancelar') {
+                cerrar();
+                return;
+            }
+            if (accion === 'guardar') {
+                const siguiente = trial();
+                siguiente.minIv = Math.min(192, Math.max(0, Math.floor(Number(siguiente.minIv || 0))));
+                /* writeMarketAutoSellConfig borra la marca de siembra cuando
+                   enabled es true, asi que encender desde aqui siembra y no vende
+                   nada de lo que ya hay. */
+                writeMarketAutoSellConfig(siguiente);
+                cerrar();
+                refrescarBoton();
+            }
+        });
+    };
+    /* ================= FIN AUTO-VENTA: BOTON Y MENU ================= */
+
+
+    /* ================= AUTO-VENTA: EL DISPARADOR ES LA CAPTURA =================
+
+    /* El evento pokes NO se empuja al capturar: se pide. Las ventas salian en
+       rafagas que coincidian con abrir un panel, no con cazar. Por eso el
+       disparador de verdad es el registro de capturas del juego: si no hay
+       captura nueva, esto no llama a nada. Es justo lo contrario de un
+       temporizador que procesa lo que encuentre. */
+    const marketAutoSellCapturePollMs = 4000;
+    let marketAutoSellCaptureInterval = null;
+    let marketAutoSellCaptureBusy = false;
+    let marketAutoSellLastCaptureKey = null;
+
+    /* La primera fila del registro es la captura mas reciente. La API no da un
+       id, asi que se identifica por sus datos. Si cambian, hubo captura. */
+    const marketAutoSellCaptureKey = rows => {
+        const primera = Array.isArray(rows) && rows.length ? rows[0] : null;
+        if (!primera) return '';
+        return [
+            primera.name, primera.level, primera.quality,
+            primera.ivTotal ?? primera.totalIv ?? primera.iv ?? primera.growth,
+            primera.caughtAt ?? primera.at ?? primera.time ?? primera.date
+        ].join('|');
+    };
+
+    /* Con una captura nueva, se pide la lista fresca y se decide. No hace falta
+       saber CUAL se cazo: el diff de no vistos ya la encuentra sola. */
+    const handleMarketAutoSellCapture = async () => {
+        try {
+            /* Se pide por el CONTEXTO del juego y NO con requestFreshGameEvent.
+               Ese otro usa el mismo canal de espera que la auto-venta del Casino
+               y que la del propio market, y el mensaje pokes resuelve TODAS las
+               esperas de ese tipo a la vez, sin distinguir quien pidio que. Con
+               el, la respuesta de este sondeo le robaba la respuesta al Casino a
+               mitad de un guardado y le salia "No se pudo vender el Pokemon".
+               El contexto tiene su propia suscripcion y no toca esa cola. */
+            let fresca = [];
+            try { fresca = await requestPokemonTeamFromGameContext(2200); } catch (_) { fresca = []; }
+            await handleMarketAutoSellTick(fresca.length ? fresca : (latestPokemon || []));
+        } catch (_) {
+            /* Si el juego no responde, la captura se perdio para la auto-venta.
+               Es preferible perder una a vender algo que no se cazo. */
+        }
+    };
+
+    const pollMarketAutoSellCaptures = async () => {
+        if (marketAutoSellCaptureBusy) return;
+        if (!readMarketAutoSellConfig().enabled) return;
+        marketAutoSellCaptureBusy = true;
+        try {
+            const payload = await gameApiRequest('/api/game/capture-log?filter=all');
+            const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+            const clave = marketAutoSellCaptureKey(rows);
+            if (!clave) return;
+            /* La primera vuelta solo toma nota: si no, al arrancar venderia por
+               capturas viejas. */
+            if (marketAutoSellLastCaptureKey === null) { marketAutoSellLastCaptureKey = clave; return; }
+            if (clave === marketAutoSellLastCaptureKey) return;
+            marketAutoSellLastCaptureKey = clave;
+            await handleMarketAutoSellCapture();
+        } catch (_) {
+            /* 401 si aun no hay sesion, o un corte de red. Se reintenta solo. */
+        } finally {
+            marketAutoSellCaptureBusy = false;
+        }
+    };
+
+    /* Arranca siempre, y la propia funcion no hace nada si la auto-venta esta
+       apagada. Cuando se enciende, el reloj ya estaba andando. */
+    const startMarketAutoSellCaptureWatch = () => {
+        if (marketAutoSellCaptureInterval) return;
+        marketAutoSellCaptureInterval = setInterval(pollMarketAutoSellCaptures, marketAutoSellCapturePollMs);
+    };
+    /* ================= FIN AUTO-VENTA: EL DISPARADOR ES LA CAPTURA ================= */
+    /* ================= FIN AUTO-VENTA: VENDER Y EL DETECTOR ================= */
+
+
 
 
     function parseGameNumber(value) {
@@ -3776,132 +4972,516 @@
         .script-menu-sprite-img.is-switching { opacity:0;transform:scale(.72) rotate(-8deg);filter:brightness(1.35); }
         .script-shop-menu .poke-menu-item:hover .script-shop-menu-icon { background:#ffffff12;border-color:#b6924660;filter:drop-shadow(0 3px 3px #000a) saturate(1.2);transform:translateY(-1px) scale(1.06); }
         .script-shop-wrap .poke-menu[hidden] { display: none !important; }
+        /* ================= CASSINO =================
+           Cristal, tipografia y escala.
+
+           Los tokens viven en :root y no en el backdrop porque el panel de
+           configuracion, el del historial y las alertas son hermanos del backdrop
+           dentro de document.body, no hijos suyos: puestos aqui los heredan los
+           cuatro. El prefijo --casino- evita chocar con el resto del script.
+
+           Sobre la transparencia: la superficie va a .46 y el velo del backdrop a
+           .34, de modo que el juego se ve difuminado detras. Ese margen no es
+           gratuito, asi que cada elemento con texto lleva su propio velo: la
+           tarjeta es una capa clara, y los inputs son un pozo MAS oscuro que la
+           tarjeta que los contiene. Con cristal claro detras, un texto de 9px se
+           pierde contra lo que haya del juego. */
+        :root {
+            --casino-glass: blur(16px) saturate(120%);
+            --casino-glass-edge: inset 0 1px rgba(255,255,255,.20), 0 6px 16px rgba(0,0,0,.24);
+            --casino-surface: rgba(14,30,44,.46);
+            --casino-surface-deep: rgba(8,18,28,.52);
+            --casino-surface-head: rgba(255,255,255,.06);
+            --casino-card: rgba(255,255,255,.075);
+            --casino-card-line: rgba(170,210,235,.20);
+            --casino-well: rgba(3,9,15,.62);
+            --casino-well-line: rgba(170,210,235,.24);
+            --casino-fg: #eef5fa;
+            --casino-fg-strong: #fbfdff;
+            --casino-muted: #b3c8d6;
+            --casino-dim: #9db2c1;
+            --casino-accent: #7fd8f7;
+            --casino-gold: #6ee79a;
+            --casino-danger: #ffa3a3;
+            --casino-warn: #ffdcab;
+
+            /* Pila propia del sistema. El Cassino deja de heredar la fuente del
+               juego, que es la que producia elasono de tipografia. */
+            --casino-font: 'Inter var', Inter, 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+            /* Escala de 7 pasos. Antes habia 27 tamanos distintos y el 57% estaba
+               por debajo de 9px, con algunos de 5.5 y 6px que eran ilegibles. */
+            --casino-fs-label: 8.5px;
+            --casino-fs-chip: 9.5px;
+            --casino-fs-body: 10.5px;
+            --casino-fs-value: 12px;
+            --casino-fs-name: 12.5px;
+            --casino-fs-section: 14px;
+            --casino-fs-title: 20px;
+            --casino-r: 9px;
+        }
+
+        /* --- ICONOS ---
+           Sprite unico con los simbolos. Todos los dibujos van con
+           stroke: currentColor, asi que heredan el color del elemento que los
+           contiene y no hay ningun color en el JS. */
+        .casino-sprite { position:absolute;width:0;height:0;overflow:hidden;pointer-events:none; }
+        .casino-ic {
+            width:1.05em;height:1.05em;display:inline-block;vertical-align:-.16em;
+            fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;
+            flex:0 0 auto;pointer-events:none;
+        }
+        .casino-ic-wrap { display:grid;place-items:center;color:var(--casino-dim);font-size:18px; }
+
         .script-casino-backdrop {
             position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;
-            box-sizing:border-box;padding:14px;background:rgba(2,7,12,.78);backdrop-filter:blur(4px);
+            box-sizing:border-box;padding:14px;
+            background:radial-gradient(circle at 50% 12%,rgba(30,64,100,.26),transparent 52%),rgba(2,8,16,.34);
+            backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);
         }
         .script-marlon-window {
             width:min(1120px,96vw) !important;max-width:96vw !important;height:min(690px,90dvh) !important;max-height:90dvh !important;
-            display:flex;flex-direction:column;overflow:hidden;color:#edf5fb;background:#0b1722 !important;
-            border:1px solid #2b6680 !important;border-radius:12px !important;box-shadow:0 22px 60px #000d !important;
+            display:flex;flex-direction:column;overflow:hidden;
+            font-family:var(--casino-font);
+            /* Cifras de ancho fijo: sin esto, cada actualizacion de saldo hace que
+               los numeros bailen de ancho y la fila da escalones. */
+            font-feature-settings:'tnum' 1,'cv05' 1,'ss01' 1;
+            font-variant-numeric:tabular-nums;
+            color:var(--casino-fg);
+            background:var(--casino-surface) !important;
+            border:1px solid var(--casino-card-line) !important;border-radius:14px !important;
+            box-shadow:var(--casino-glass-edge),0 22px 60px rgba(0,0,0,.42) !important;
+            backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);
         }
-        .script-casino-head { flex:none;display:flex;align-items:center;gap:10px;min-height:58px;padding:10px 13px;background:#11283a;border-bottom:1px solid #28546a; }
-        .script-casino-head-copy { min-width:0;display:flex;flex-direction:column;gap:2px; }
-        .script-casino-kicker { color:#55c8ee;font-size:8px;font-weight:900;letter-spacing:1.5px; }
-        .script-casino-title { margin:0;color:#f5f8fb;font-size:18px;font-weight:900;line-height:1.1; }
-        .script-casino-balance { margin-left:auto;flex:none;padding:7px 10px;color:#58e28c;background:#091923;border:1px solid #2a596b;border-radius:7px;font-size:12px;font-weight:900; }
-        .script-casino-refresh,.script-casino-close { flex:none;min-height:34px;color:#dbe8f1;background:#172b3a;border:1px solid #36566a;border-radius:7px;font-size:12.7px;font-weight:800;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease; }
-        .script-casino-refresh { padding:0 10px; }
-        .script-casino-close { width:34px;font-size:19px; }
-        .script-casino-refresh:hover,.script-casino-close:hover { color:#fff;background:#203b4e;border-color:#4d829c;box-shadow:0 4px 9px #0006;transform:translateY(-1px); }
-        .script-casino-refresh:disabled { opacity:.5;cursor:wait; }
+        .script-casino-backdrop *,.script-casino-config-backdrop *,.script-casino-goal-alert * {
+            font-family:var(--casino-font);
+            font-feature-settings:'tnum' 1,'cv05' 1,'ss01' 1;
+            font-variant-numeric:tabular-nums;
+        }
+        .script-casino-head { flex:none;display:flex;align-items:center;gap:10px;min-height:62px;padding:11px 14px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-casino-head-copy { min-width:0;display:flex;flex-direction:column;gap:3px; }
+        .script-casino-kicker { color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.16em;text-transform:uppercase; }
+        .script-casino-title { display:flex;align-items:center;gap:8px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-title);font-weight:800;letter-spacing:-.015em;line-height:1.1; }
+        .script-casino-title .casino-ic { color:var(--casino-accent);font-size:.82em; }
+        .script-casino-balance { margin-left:auto;flex:none;display:flex;align-items:center;gap:6px;padding:8px 12px;color:var(--casino-gold);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-value);font-weight:800;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-balance .casino-ic { font-size:.85em; }
+        .script-casino-refresh,.script-casino-close {
+            flex:none;min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+            color:var(--casino-fg);border-radius:8px;font-size:var(--casino-fs-value);font-weight:700;cursor:pointer;
+            background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.05));
+            border:1px solid var(--casino-card-line);box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);
+            backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+            transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease;
+        }
+        .script-casino-refresh { padding:0 12px; }
+        .script-casino-close { width:36px;font-size:13px; }
+        .script-casino-refresh:hover,.script-casino-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.2),rgba(255,255,255,.09));border-color:rgba(180,220,245,.36);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 9px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-refresh:disabled { opacity:.6;cursor:wait; }
         .script-casino-layout { flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.85fr);overflow:hidden; }
-        .script-casino-catalog { min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid #294657; }
-        .script-casino-summary { flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;color:#91a9b9;background:#0c1b27;border-bottom:1px solid #203d4e;font-size:9px; }
-        .script-casino-team { flex:none;color:#d9c788;font-weight:800;white-space:nowrap; }
-        .script-casino-warning { flex:none;margin:7px 9px 0;padding:7px 9px;color:#ffd5a1;background:#332315;border:1px solid #805b2e;border-radius:6px;font-size:8px;font-weight:750; }
-        .script-casino-status { flex:none;min-height:16px;padding:5px 10px;color:#9bc7d8;background:#091722;border-bottom:1px solid #1d3847;font-size:8px; }
-        .script-casino-status.is-error { color:#ff9b9b; }
-        .script-casino-status.is-success { color:#63e69b; }
-        .script-casino-list { min-height:150px;overflow:auto;padding:8px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-content:start; }
-        .script-casino-empty { grid-column:1/-1;min-height:170px;display:grid;place-items:center;padding:20px;color:#8098a9;text-align:center;font-size:11px; }
-        .script-casino-card { min-width:0;display:grid;grid-template-columns:50px minmax(0,1fr);gap:5px 7px;padding:7px;background:#122538;border:1px solid #31546c;border-radius:7px; }
-        .script-casino-card.is-disabled { opacity:.68;background:#101d29;border-color:#2a3c49; }
-        .script-casino-art { grid-row:1/3;width:48px;height:48px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:#081522;border:1px solid #2c5369;border-radius:6px;overflow:hidden; }
-        .script-casino-art img { width:45px;height:45px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-catalog { min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--casino-card-line); }
+        .script-casino-team .casino-ic { color:#e3d293;font-size:.9em; }
+        .script-casino-status { flex:none;min-height:20px;padding:6px 12px;color:var(--casino-accent);background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line);font-size:var(--casino-fs-body); }
+        .script-casino-status.is-error { color:var(--casino-danger); }
+        .script-casino-status.is-success { color:var(--casino-gold); }
+
+        /* Tira de resultados de la tanda. El saldo va el primero, en grande y
+           con color, porque es el unico numero que explica el saldo de la cuenta. */
+        .script-casino-results { flex:none;display:flex;align-items:stretch;gap:1px;padding:9px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        /* Mismo motivo que la tira de proceso y que las cartas: el display:flex de
+           arriba le gana a la regla [hidden] del navegador, y sin esto la tira se
+           veria desde el principio con los guiones de relleno. */
+        .script-casino-results[hidden] { display:none !important; }
+        .script-casino-result { flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:6px 9px;background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:7px; }
+        /* Esta etiqueta es el texto mas pequeno del panel (8.5 px) y va sobre la
+           superficie mas clara: la tarjeta, la tira, la ventana y el velo del
+           backdrop, todo apilado. Con solo el velo del elemento se quedaba en
+           4.36:1 y con el radial del backdrop a la vista, 4.46:1. Asi que lleva
+           su propio velo, como el chip de tier: se oscurece el elemento, no se
+           baja la opacidad de la superficie. */
+        .script-casino-result-label { align-self:flex-start;padding:1px 6px;color:var(--casino-dim);background:rgba(0,0,0,.22);border-radius:5px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.06em;text-transform:uppercase; }
+        .script-casino-result-value { color:var(--casino-fg);font-size:var(--casino-fs-value);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-result.is-net { flex:1.5; }
+        .script-casino-result.is-net .script-casino-result-value { font-size:17px; }
+        .script-casino-result.is-net.is-positive { border-color:rgba(110,231,154,.4); }
+        .script-casino-result.is-net.is-positive .script-casino-result-value { color:var(--casino-gold); }
+        .script-casino-result.is-net.is-negative { border-color:rgba(255,163,163,.38); }
+        .script-casino-result.is-net.is-negative .script-casino-result-value { color:var(--casino-danger); }
+        .script-casino-result-chip { flex:none;align-self:center;padding:5px 10px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:999px;font-size:var(--casino-fs-chip);font-weight:800;white-space:nowrap; }
+
+        /* Pestanas del catalogo. */
+        .script-casino-tabs { flex:none;display:flex;gap:5px;padding:9px 10px 0; }
+        .script-casino-tab { display:inline-flex;align-items:center;gap:6px;min-height:31px;padding:0 11px;color:var(--casino-muted);background:rgba(255,255,255,.04);border:1px solid transparent;border-radius:8px;font-size:var(--casino-fs-body);font-weight:700;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.1);transition:color .16s ease,background .16s ease,border-color .16s ease; }
+        .script-casino-tab:hover { color:var(--casino-fg);background:rgba(255,255,255,.09); }
+        .script-casino-tab.is-active { color:var(--casino-fg-strong);background:var(--casino-card);border-color:var(--casino-card-line);box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-tab.is-active .casino-ic { color:var(--casino-accent); }
+        .script-casino-tab-count { min-width:19px;padding:1px 5px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:999px;font-size:var(--casino-fs-label);font-weight:800;text-align:center; }
+        .script-casino-tab.is-active .script-casino-tab-count { color:var(--casino-accent); }
+
+        /* La rejilla decide 2, 3 o 4 columnas segun el ancho en vez de fijar 3. */
+        .script-casino-list { min-height:150px;overflow:auto;padding:9px;display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:8px;align-content:start; }
+        .script-casino-empty { grid-column:1/-1;min-height:170px;display:grid;place-items:center;padding:22px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-value); }
+        .script-casino-card {
+            min-width:0;display:grid;grid-template-columns:52px minmax(0,1fr);gap:6px 8px;padding:9px;
+            background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:var(--casino-r);
+            box-shadow:inset 0 1px rgba(255,255,255,.14);
+        }
+        /* Sin hover a proposito: las cartas se leen como una ficha, no como algo
+           pulsable. El hover queda en botones, selects y filas del historial. */
+        .script-casino-card.is-disabled { opacity:.6; }
+        .script-casino-art { grid-row:1/3;width:50px;height:50px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
         .script-casino-info { min-width:0; }
         .script-casino-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
-        .script-casino-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f4f7fa;font-size:11px;font-weight:900; }
-        .script-casino-evolution { flex:none;padding:1px 4px;color:#d8b8ff;background:#33234c;border:1px solid #7652a4;border-radius:3px;font-size:6px;font-weight:900;letter-spacing:.45px; }
-        .script-casino-price { margin-top:2px;color:#58e28c;font-size:10px;font-weight:900; }
-        .script-casino-item-have { margin-top:3px;color:#9fb6c4;font-size:8px;font-weight:800; }
-        .script-casino-item-qty { color:#f4c95d;font-weight:900; }
-        .script-casino-item-have b { color:#f4c95d; }
-        .script-casino-item-description { display:-webkit-box;margin-top:4px;overflow:hidden;color:#8fa8b8;font-size:7.5px;line-height:1.3;-webkit-box-orient:vertical;-webkit-line-clamp:3; }
-        .script-casino-requirements { margin-top:3px;display:flex;flex-wrap:wrap;gap:3px; }
-        .script-casino-requirement { min-height:19px;display:inline-flex;align-items:center;gap:3px;padding:1px 4px;color:#a9e8c1;background:#102c23;border:1px solid #2f7055;border-radius:4px;font-size:6.5px;font-weight:750; }
-        .script-casino-requirement.is-missing { color:#ffb0aa;background:#321d20;border-color:#774048; }
-        .script-casino-requirement img { width:15px;height:15px;object-fit:contain;image-rendering:pixelated; }
-        .script-casino-action-row { grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:5px;min-width:0; }
-        .script-casino-reason { min-width:0;flex:1;color:#98adba;font-size:7px;line-height:1.15; }
-        .script-casino-purchase-controls { min-width:0;display:grid;grid-template-columns:46px minmax(70px,auto);align-items:end;gap:4px; }
-        .script-casino-quantity-label { display:flex;flex-direction:column;gap:2px;color:#8fa8b8;font-size:6.5px;font-weight:850; }
-        .script-casino-quantity { box-sizing:border-box;width:46px;height:27px;padding:2px 4px;color:#f4f8fb;background:#091923;border:1px solid #36596c;border-radius:5px;font-size:9px;font-weight:900;text-align:center;outline:none; }
-        .script-casino-quantity:focus { border-color:#69d5f8;box-shadow:0 0 0 2px #32bee52b; }
-        .script-casino-quantity:disabled { opacity:.45;cursor:not-allowed; }
-        .script-casino-buy { flex:none;min-width:70px;min-height:27px;padding:0 8px;color:#16200c;background:linear-gradient(180deg,#f1d571,#d9b84d);border:1px solid #ffe290;border-radius:5px;font-size:9.2px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0005;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
-        .script-casino-buy:hover:not(:disabled) { filter:brightness(1.08);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
-        .script-casino-buy:disabled { color:#71808a;background:#1a2a35;border-color:#344b59;cursor:not-allowed; }
-        .script-casino-team-panel { min-width:0;min-height:0;display:flex;flex-direction:column;background:#091621; }
-        .script-casino-team-head { flex:none;padding:10px 11px;background:#102334;border-bottom:1px solid #294657; }
+        .script-casino-name { min-width:0;display:flex;align-items:baseline;gap:3px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-name>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-evolution { flex:none;display:inline-flex;align-items:center;gap:3px;padding:1px 5px;color:#e0cdff;background:rgba(60,40,90,.5);border:1px solid rgba(160,120,215,.5);border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.04em; }
+        .script-casino-evolution .casino-ic { font-size:.95em; }
+        .script-casino-evolution.is-item { color:#cfe6f5;background:rgba(28,60,84,.5);border-color:rgba(120,180,220,.45); }
+        .script-casino-price { display:flex;align-items:center;gap:4px;margin-top:3px;color:var(--casino-gold);font-size:var(--casino-fs-value);font-weight:800; }
+        .script-casino-price .casino-ic { font-size:.78em; }
+        .script-casino-item-have { margin-top:3px;color:var(--casino-muted);font-size:var(--casino-fs-chip);font-weight:700; }
+        .script-casino-item-qty { color:#f6d572;font-weight:800; }
+        .script-casino-item-have b { color:#f6d572; }
+        .script-casino-item-description { display:-webkit-box;margin-top:5px;overflow:hidden;color:var(--casino-dim);font-size:var(--casino-fs-body);line-height:1.4;-webkit-box-orient:vertical;-webkit-line-clamp:2; }
+        .script-casino-requirements { margin-top:4px;display:flex;flex-wrap:wrap;gap:4px; }
+        .script-casino-requirement { min-height:21px;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;color:#b6f0cf;background:rgba(14,54,38,.5);border:1px solid rgba(80,160,120,.5);border-radius:5px;font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-requirement.is-missing { color:#ffb8b2;background:rgba(60,30,34,.5);border-color:rgba(160,76,86,.55); }
+        .script-casino-requirement img { width:16px;height:16px;object-fit:contain;image-rendering:pixelated; }
+        /* La fila de accion envuelve: en una carta estrecha el motivo baja de fila
+           en vez de aplastar el campo de cantidad. */
+        .script-casino-action-row { grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px;min-width:0; }
+        .script-casino-reason { flex:1 1 100%;min-width:0;color:var(--casino-dim);font-size:var(--casino-fs-label);line-height:1.3; }
+        .script-casino-purchase-controls { flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px; }
+        .script-casino-quantity-label { min-width:0;display:flex;flex-direction:column;gap:3px;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-quantity-label>span { letter-spacing:.05em;text-transform:uppercase; }
+        /* El campo de cantidad usa exactamente el mismo tratamiento que los filtros
+           y que los campos de la configuracion: mismo pozo, mismo borde, misma
+           altura y mismo cuerpo. Antes era el unico control que se veia suelto. */
+        .script-casino-quantity,.script-casino-item-quantity { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 8px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;text-align:center;outline:none;transition:border-color .16s ease,box-shadow .16s ease; }
+        .script-casino-quantity:focus,.script-casino-item-quantity:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-quantity:disabled,.script-casino-item-quantity:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-buy { flex:none;min-width:76px;min-height:30px;padding:0 11px;color:#16200c;background:linear-gradient(145deg,#f4dc85,#d9b84d);border:1px solid rgba(255,226,144,.7);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.45),0 2px 5px rgba(0,0,0,.25);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-buy:hover:not(:disabled) { filter:brightness(1.08);box-shadow:inset 0 1px rgba(255,255,255,.5),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-buy:disabled { color:#a6b5bf;background:rgba(255,255,255,.06);border-color:var(--casino-card-line);cursor:not-allowed;box-shadow:none; }
+        .script-casino-team-panel { min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--casino-surface-deep); }
+        .script-casino-team-head { flex:none;padding:11px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
         .script-casino-team-head-line { display:flex;align-items:center;justify-content:space-between;gap:8px; }
-        .script-casino-team-head h3 { margin:0;color:#f2f6f9;font-size:13px;font-weight:900; }
-        .script-casino-team-count { padding:3px 7px;color:#d7c47c;background:#211d10;border:1px solid #62572d;border-radius:999px;font-size:8px;font-weight:900; }
-        .script-casino-team-head p { margin:4px 0 0;color:#7892a4;font-size:8px;line-height:1.3; }
-        .script-casino-team-tools { margin-top:8px;display:grid;grid-template-columns:minmax(105px,.7fr) 1fr 1fr;gap:5px; }
-        .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9edff5;background:#081722;border:1px solid #2b5268;border-radius:5px;font-size:8px;font-weight:900; }
-        .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:24px;padding:2px 5px;color:#f7fbfd;background:#102638;border:1px solid #3a657c;border-radius:4px;font:inherit;text-align:center;outline:none; }
-        .script-casino-iv-goal input:focus { border-color:#66d9ff;box-shadow:0 0 0 2px #31bfe62c; }
-        .script-casino-bulk-action { min-width:0;min-height:32px;padding:4px 6px;border-radius:5px;font-size:8px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
-        .script-casino-bulk-store { color:#d8f4ff;background:linear-gradient(180deg,#1b445c,#143247);border:1px solid #4380a1; }
-        .script-casino-bulk-sell { color:#ffe2e2;background:linear-gradient(180deg,#572833,#3b1b23);border:1px solid #a34e5f; }
-        .script-casino-bulk-action:hover:not(:disabled) { filter:brightness(1.14);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
-        .script-casino-bulk-action:disabled { opacity:.42;cursor:not-allowed;box-shadow:none; }
-        .script-casino-team-list { min-height:0;overflow:auto;padding:7px;display:flex;flex-direction:column;gap:6px; }
-        .script-casino-team-empty { min-height:150px;display:grid;place-items:center;color:#708999;text-align:center;font-size:9px; }
-        .script-casino-team-card { --casino-tier:#64748b;position:relative;display:grid;grid-template-columns:50px minmax(0,1fr);gap:5px 7px;padding:7px;background:color-mix(in srgb,var(--casino-tier) 7%,#102233);border:1px solid color-mix(in srgb,var(--casino-tier) 45%,#2b4c60);border-left:3px solid var(--casino-tier);border-radius:7px; }
-        .script-casino-team-card.is-new { background:color-mix(in srgb,var(--casino-tier) 12%,#12263a); }
-        .script-casino-team-card.is-iv-goal { border-color:#ffe071;border-left-color:#ffe071;background:linear-gradient(135deg,#3a3218 0%,color-mix(in srgb,var(--casino-tier) 13%,#112538) 58%);box-shadow:0 0 0 1px #ffdb5d99,0 0 16px #ffd44752;animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite; }
-        .script-casino-team-card.is-iv-goal::after { content:'★ IV';position:absolute;right:6px;top:-1px;padding:2px 5px;color:#1b1605;background:#ffe071;border-radius:0 0 4px 4px;font-size:6px;font-weight:1000;letter-spacing:.4px; }
-        @keyframes scriptCasinoGoalPulse { 0%,100%{box-shadow:0 0 0 1px #ffdb5d80,0 0 10px #ffd44738} 50%{box-shadow:0 0 0 1px #fff0a8,0 0 20px #ffd44770} }
-        .script-casino-team-art { grid-row:1/3;width:48px;height:48px;display:grid;place-items:center;background:#07131e;border:1px solid #29495c;border-radius:6px;overflow:hidden; }
-        .script-casino-team-art img { width:45px;height:45px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-team-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-team-head h3 .casino-ic { color:var(--casino-accent);font-size:.82em; }
+        .script-casino-team-count { padding:3px 9px;color:#eee0a8;background:rgba(52,45,16,.55);border:1px solid rgba(150,132,62,.5);border-radius:999px;font-size:var(--casino-fs-chip);font-weight:800; }
+        .script-casino-team-head p { margin:5px 0 0;color:var(--casino-dim);font-size:var(--casino-fs-body);line-height:1.35; }
+        .script-casino-team-tools { margin-top:9px;display:grid;grid-template-columns:minmax(100px,.72fr) 1fr 1fr;gap:6px; }
+        .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:6px;padding:5px 7px;color:#b2e6f8;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:7px;font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:27px;padding:2px 6px;color:var(--casino-fg-strong);background:rgba(0,0,0,.34);border:1px solid var(--casino-well-line);border-radius:5px;font:inherit;text-align:center;outline:none; }
+        .script-casino-iv-goal input:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-bulk-action { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:34px;padding:4px 8px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-bulk-action>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-bulk-action .casino-ic { font-size:.9em; }
+        .script-casino-bulk-sell { color:#ffe9e9;background:linear-gradient(145deg,rgba(132,58,74,.7),rgba(78,34,44,.6));border:1px solid rgba(200,105,125,.55); }
+        /* El boton de historial. Sin entradas se ve apagado; con entradas, el borde
+           coge color para que se note que hay algo que mirar. */
+        .script-casino-log-btn { color:var(--casino-muted);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line); }
+        .script-casino-log-btn.has-entries { color:var(--casino-fg);border-color:rgba(127,216,247,.42); }
+        .script-casino-log-btn.has-entries .casino-ic { color:var(--casino-accent); }
+        .script-casino-bulk-action:hover:not(:disabled) { filter:brightness(1.16);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-bulk-action:disabled { opacity:.6;cursor:not-allowed;box-shadow:none; }
+        .script-casino-team-list { min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:7px; }
+        .script-casino-team-empty { min-height:150px;display:grid;place-items:center;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body); }
+
+        /* --- FILTROS Y AUTO-VENTA --- */
+        .script-casino-filters { flex:none;display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;padding:8px 8px 0; }
+        .script-casino-filter { min-width:0;display:grid;gap:3px; }
+        .script-casino-filter>span { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-casino-filter select { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 7px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-filter select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-filter select option { color:#eef5fa;background:#0d1f2e; }
+        /* El filtro de IVs es un input numerico, con el mismo aspecto que los
+           selectores para que la fila se lea como un bloque. */
+        .script-casino-filter input { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 7px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-filter input:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-filter input::placeholder { color:var(--casino-dim); }
+        .script-casino-filter-clear { align-self:end;min-height:30px;padding:0 11px;color:var(--casino-muted);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.14); }
+        .script-casino-filter-clear:hover:not(:disabled) { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.16),rgba(255,255,255,.07)); }
+        /* Este boton necesita mas que los otros: su etiqueta es --casino-muted sobre
+           un degradado claro, y a 9.5 px ya estaba en 4.95:1 sin atenuar nada. Con
+           opacity .6 se queda en 3.39:1, y subir la opacidad hasta .8 lo pasaria
+           pero dejaria el boton apagado igual que uno habilitado, que es justo lo
+           que la opacidad tiene que decir. Asi que lleva su propio velo, como el
+           chip de tier y la etiqueta de resultados: se oscurece el elemento, no se
+           baja la opacidad de la superficie. */
+        .script-casino-filter-clear:disabled { opacity:.6;cursor:not-allowed;background:rgba(0,0,0,.7); }
+        .script-casino-filters-info { grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 2px 0;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-filters-info b { color:var(--casino-fg); }
+        .script-casino-filters-empty { padding:24px 14px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body);font-weight:800; }
+
+        /* Boton que abre la configuracion de auto-venta y alertas por tier.
+           Va en dos lineas: arriba el nombre con su pastilla, abajo los cortes y el
+           saldo. Antes era una sola linea con las tres cosas encajadas. */
+        .script-casino-autosell-btn { grid-column:1/-1;display:grid;gap:3px;margin:7px 0 0;padding:8px 10px;text-align:left;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line);border-radius:9px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16),0 2px 5px rgba(0,0,0,.2);transition:background .16s ease,border-color .16s ease,transform .16s ease; }
+        .script-casino-autosell-top { display:flex;align-items:center;gap:7px; }
+        .script-casino-autosell-top>.casino-ic { color:var(--casino-dim);font-size:.95em; }
+        .script-casino-autosell-label { color:var(--casino-fg-strong);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-badge { margin-left:auto;padding:2px 8px;color:var(--casino-dim);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:999px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em;text-transform:uppercase; }
+        .script-casino-autosell-badge.is-on { color:#0c1c11;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border-color:rgba(166,243,198,.7); }
+        .script-casino-autosell-detail { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-autosell-btn:hover { background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.06));transform:translateY(-1px); }
+        .script-casino-autosell-btn.is-on { background:linear-gradient(145deg,rgba(88,190,132,.24),rgba(40,96,66,.16));border-color:rgba(110,231,154,.36); }
+        .script-casino-autosell-btn.is-on .script-casino-autosell-top>.casino-ic { color:var(--casino-gold); }
+        .script-casino-autosell-btn.is-on .script-casino-autosell-detail { color:var(--casino-muted); }
+        .script-casino-config-wide { width:min(520px,calc(100vw - 32px)); }
+        .script-casino-autosell-log-head { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+        .script-casino-autosell-log-total { color:var(--casino-fg);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-log-clear { padding:5px 10px;color:#ffe2e2;background:linear-gradient(145deg,rgba(124,52,68,.7),rgba(70,28,38,.6));border:1px solid rgba(180,90,110,.55);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.14); }
+        .script-casino-autosell-log-clear:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-autosell-log-list { max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:6px; }
+        .script-casino-autosell-log-empty { padding:24px 14px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-log-row { --casino-tier:#64748b;display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px;background:color-mix(in srgb,var(--casino-tier) 9%,rgba(255,255,255,.05));border:1px solid color-mix(in srgb,var(--casino-tier) 44%,var(--casino-card-line));border-left:3px solid var(--casino-tier);border-radius:8px;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-autosell-log-art { width:38px;height:38px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;overflow:hidden; }
+        .script-casino-autosell-log-art img { width:34px;height:34px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-autosell-log-info { min-width:0; }
+        .script-casino-autosell-log-name { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-autosell-log-name b { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-autosell-log-name b .casino-ic { color:#ffe98a;font-size:.82em; }
+        .script-casino-autosell-log-name b>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-autosell-log-tier { flex:none;padding:1px 5px;color:color-mix(in srgb,var(--casino-tier) 65%,#e8f2f8);background:color-mix(in srgb,var(--casino-tier) 14%,rgba(0,0,0,.3));border:1px solid color-mix(in srgb,var(--casino-tier) 65%,rgba(255,255,255,.12));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-autosell-log-meta { display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:3px;color:var(--casino-muted);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-autosell-log-meta b { color:var(--casino-fg); }
+        .script-casino-autosell-log-reason { margin-top:3px;color:var(--casino-danger);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-autosell-log-net { margin-top:2px;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:700;font-variant-numeric:tabular-nums; }
+        .script-casino-autosell-log-side { display:flex;flex-direction:column;align-items:flex-end;gap:2px; }
+        .script-casino-autosell-log-gold { display:flex;align-items:center;gap:3px;color:var(--casino-gold);font-size:var(--casino-fs-value);font-weight:800;white-space:nowrap; }
+        .script-casino-autosell-log-gold .casino-ic { font-size:.74em; }
+        .script-casino-autosell-log-time { color:var(--casino-dim);font-size:var(--casino-fs-label);font-variant-numeric:tabular-nums; }
+
+        /* Panel emergente de configuracion */
+        .script-casino-config-backdrop { position:fixed;inset:0;z-index:2147483600;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:rgba(2,8,16,.42);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-casino-config { width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;color:var(--casino-fg);background:rgba(12,26,38,.72);border:1px solid var(--casino-card-line);border-radius:12px;box-shadow:var(--casino-glass-edge),0 18px 50px rgba(0,0,0,.46);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-casino-config-head { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-casino-config-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-config-head h3 .casino-ic { color:var(--casino-accent);font-size:.8em; }
+        .script-casino-config-close { display:grid;place-items:center;width:29px;height:29px;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;font-size:11px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-config-close .casino-ic { width:13px;height:13px; }
+        .script-casino-config-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
+        .script-casino-config-body { display:grid;gap:12px;padding:12px; }
+        .script-casino-config-note { margin:0;padding:8px 9px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.45; }
+        .script-casino-config-note b { color:var(--casino-fg-strong);font-weight:800; }
+        .script-casino-config-group { display:grid;gap:7px; }
+        .script-casino-config-group>h4 { margin:0;color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.1em; }
+        .script-casino-config-row { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+        .script-casino-config-field { display:grid;gap:4px; }
+        .script-casino-config-field label { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-casino-config-field input,.script-casino-config-field select { box-sizing:border-box;width:100%;height:32px;padding:3px 7px;color:var(--casino-fg-strong);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-config-field input:focus,.script-casino-config-field select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-config-checks { display:grid;grid-template-columns:repeat(3,1fr);gap:6px; }
+        .script-casino-config-check { display:flex;align-items:center;gap:6px;padding:6px 7px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:6px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-config-check:hover { border-color:rgba(170,210,235,.32); }
+        .script-casino-config-check input { width:auto;height:auto;margin:0;accent-color:#4cc07e; }
+        .script-casino-config-actions { display:flex;gap:7px; }
+        .script-casino-config-btn { flex:1;min-height:34px;padding:5px 9px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.2),0 2px 5px rgba(0,0,0,.22); }
+        .script-casino-config-save { color:#08160e;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border:1px solid rgba(166,243,198,.7); }
+        .script-casino-config-cancel { color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line); }
+        .script-casino-config-btn:hover { filter:brightness(1.1); }
+        .script-casino-config-preview { padding:8px 9px;color:var(--casino-fg);background:var(--casino-well);border:1px dashed var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.5; }
+        .script-casino-config-preview b { color:var(--casino-danger); }
+        .script-casino-team-card { --casino-tier:#64748b;position:relative;display:grid;grid-template-columns:52px minmax(0,1fr);gap:6px 8px;padding:9px;background:color-mix(in srgb,var(--casino-tier) 9%,rgba(255,255,255,.05));border:1px solid color-mix(in srgb,var(--casino-tier) 46%,var(--casino-card-line));border-left:3px solid var(--casino-tier);border-radius:var(--casino-r);box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-team-card.is-new { background:color-mix(in srgb,var(--casino-tier) 14%,rgba(255,255,255,.06)); }
+        .script-casino-team-card.is-iv-goal { border-color:rgba(255,224,113,.75);border-left-color:#ffe071;background:linear-gradient(135deg,rgba(74,64,26,.6) 0%,color-mix(in srgb,var(--casino-tier) 15%,rgba(255,255,255,.06)) 58%);box-shadow:0 0 0 1px rgba(255,219,93,.6),0 0 16px rgba(255,212,71,.32);animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite; }
+        .script-casino-team-card.is-iv-goal::after { content:'★ IV';position:absolute;right:7px;top:-1px;padding:2px 6px;color:#1b1605;background:#ffe071;border-radius:0 0 5px 5px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em; }
+        /* La carta lleva display:grid, y eso gana a la regla [hidden] del
+           navegador (el CSS de autor siempre le gana al del agente de usuario).
+           Sin esta regla, ocultar una carta por el filtro no la ocultaria: se
+           quedaria a la vista. Es el mismo apano que usan las demas listas. */
+        .script-casino-team-card[hidden] { display:none !important; }
+        @keyframes scriptCasinoGoalPulse { 0%,100%{box-shadow:0 0 0 1px rgba(255,219,93,.5),0 0 10px rgba(255,212,71,.22)} 50%{box-shadow:0 0 0 1px rgba(255,240,168,.8),0 0 20px rgba(255,212,71,.44)} }
+        .script-casino-team-art { grid-row:1/3;width:50px;height:50px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-team-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
         .script-casino-team-info { min-width:0; }
-        .script-casino-team-name-line { display:flex;align-items:center;gap:5px;min-width:0; }
-        .script-casino-team-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f5f7f9;font-size:11px;font-weight:900; }
-        .script-casino-team-tier { flex:none;padding:1px 4px;color:var(--casino-tier);background:color-mix(in srgb,var(--casino-tier) 12%,#0a1722);border:1px solid color-mix(in srgb,var(--casino-tier) 65%,#263c4a);border-radius:3px;font-size:6.3px;font-weight:950;text-transform:uppercase;letter-spacing:.25px; }
-        .script-casino-new-tag { flex:none;padding:1px 4px;color:#10170c;background:#6be394;border-radius:3px;font-size:5.5px;font-weight:1000;letter-spacing:.4px; }
-        .script-casino-team-meta { margin-top:2px;display:flex;flex-wrap:wrap;gap:3px 7px;color:#a8bbc7;font-size:7px; }
-        .script-casino-team-meta b { color:#e5edf2; }
-        .script-casino-team-types { display:flex;flex-wrap:wrap;gap:3px;margin-top:3px; }
-        .script-casino-team-type { --casino-type:#91a3b7;padding:1px 4px;color:#fff;background:color-mix(in srgb,var(--casino-type) 25%,#0b1925);border:1px solid color-mix(in srgb,var(--casino-type) 72%,#294657);border-radius:3px;font-size:5.5px;font-weight:900;text-transform:uppercase; }
-        .script-casino-team-stats { grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px; }
-        .script-casino-team-stat { min-width:0;padding:2px;color:#91a8b7;background:#081722;border:1px solid #223f50;border-radius:3px;text-align:center;font-size:5.5px; }
-        .script-casino-team-stat b { display:block;margin-top:1px;color:#e6eef3;font-size:7px; }
-        .script-casino-team-actions { grid-column:1/-1;display:grid;grid-template-columns:1fr;gap:5px;padding-top:2px; }
-        .script-casino-team-action { min-height:26px;border-radius:5px;font-size:9.2px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
-        .script-casino-sell { color:#ffe0e0;background:linear-gradient(180deg,#512530,#391a22);border:1px solid #9b4a5a; }
-        .script-casino-team-action:hover:not(:disabled) { filter:brightness(1.14);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
-        .script-casino-team-action:disabled { opacity:.45;cursor:not-allowed; }
-        .script-casino-team-value { grid-column:1/-1;color:#62dd91;text-align:right;font-size:7px;font-weight:850; }
-        .script-casino-goal-alert { position:fixed;z-index:2147483550;left:50%;top:18px;transform:translateX(-50%);width:min(420px,calc(100vw - 24px));box-sizing:border-box;display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 11px;color:#fff5c7;background:#182532;border:1px solid #ffe071;border-radius:8px;box-shadow:0 12px 36px #000c,0 0 18px #ffd44745;animation:scriptCasinoGoalEnter .22s ease-out; }
-        .script-casino-goal-alert img { width:40px;height:40px;object-fit:contain;image-rendering:pixelated;background:#09141d;border:1px solid #5b604e;border-radius:6px; }
-        .script-casino-goal-alert b { display:block;color:#ffe071;font-size:13px; }
-        .script-casino-goal-alert span { display:block;margin-top:2px;color:#e7eef2;font-size:10px; }
-        .script-casino-goal-alert button { align-self:start;width:25px;height:25px;color:#e8eef2;background:#243746;border:1px solid #496275;border-radius:5px;cursor:pointer; }
+        .script-casino-team-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-team-name { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-team-name>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-team-name .casino-ic { color:#ffe98a;font-size:.85em; }
+        .script-casino-team-tier { flex:none;padding:1px 5px;color:color-mix(in srgb,var(--casino-tier) 65%,#e8f2f8);background:color-mix(in srgb,var(--casino-tier) 14%,rgba(0,0,0,.3));border:1px solid color-mix(in srgb,var(--casino-tier) 65%,rgba(255,255,255,.12));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-new-tag { flex:none;padding:1px 5px;color:#0d1a0a;background:#6be394;border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em; }
+        .script-casino-team-meta { margin-top:3px;display:flex;flex-wrap:wrap;gap:3px 8px;color:var(--casino-muted);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-team-meta b { color:var(--casino-fg); }
+        .script-casino-team-types { display:flex;flex-wrap:wrap;gap:4px;margin-top:4px; }
+        .script-casino-team-type { --casino-type:#91a3b7;padding:1px 5px;color:#fff;background:color-mix(in srgb,var(--casino-type) 30%,rgba(0,0,0,.34));border:1px solid color-mix(in srgb,var(--casino-type) 72%,rgba(255,255,255,.1));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-team-stats { grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px; }
+        .script-casino-team-stat { min-width:0;padding:3px 2px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:4px;text-align:center;font-size:var(--casino-fs-label); }
+        .script-casino-team-stat b { display:block;margin-top:1px;color:var(--casino-fg);font-size:var(--casino-fs-chip); }
+        .script-casino-team-actions { grid-column:1/-1;display:grid;grid-template-columns:1fr;gap:6px;padding-top:3px; }
+        .script-casino-team-action { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:29px;border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-team-action .casino-ic { font-size:.85em; }
+        /* Este selector va DESPUES de .script-casino-team-action a proposito: los
+           dos estan a 0,1,0 y .script-casino-sell va justo detras, asi que si el
+           nuevo se pusiera antes perderia en silencio y el boton saldria con los
+           colores del de vender. */
+        /* Auto-venta del deposito: boton y menu. Prefijo propio; NO se reutilizan
+           las .script-casino-config-* porque viven junto a las reglas del Casino y
+           mezclarlas haria que un retoque del Casino moviera este dialogo. */
+        .script-market-autosell-btn { display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;height:27px;min-width:0;padding:0 9px 0 8px;border-radius:8px;cursor:pointer;color:var(--casino-muted, #b3c8d6);background:linear-gradient(145deg,rgba(255,255,255,.10),rgba(255,255,255,.035));border:1px solid var(--casino-card-line, rgba(170,210,235,.20));box-shadow:inset 0 1px rgba(255,255,255,.16);font:inherit;font-size:11px;font-weight:800;letter-spacing:.02em;line-height:1;transition:filter .15s ease,color .15s ease,background .15s ease,border-color .15s ease;backdrop-filter:var(--casino-glass, blur(16px) saturate(120%));-webkit-backdrop-filter:var(--casino-glass, blur(16px) saturate(120%)); }
+        .script-market-autosell-btn:hover { filter:brightness(1.14);color:var(--casino-fg-strong, #fbfdff); }
+        .script-market-autosell-btn .script-market-autosell-ic { width:15px;height:15px;display:block;flex:0 0 auto;color:var(--casino-accent, #7fd8f7); }
+        .script-market-autosell-label { min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        /* El punto dice el estado sin ocupar ancho con texto: apagado es un anillo
+           tenue, encendido un verde solido con halo. El color va con el del
+           Casino para que los dos interruptores se lean igual. */
+        .script-market-autosell-dot { width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:transparent;border:1.5px solid rgba(170,210,235,.45);box-sizing:border-box;transition:background .15s ease,border-color .15s ease,box-shadow .15s ease; }
+        .script-market-autosell-btn.is-on { color:var(--casino-fg-strong, #fbfdff);background:linear-gradient(145deg,rgba(76,192,126,.26),rgba(28,86,58,.22));border-color:rgba(166,243,198,.5); }
+        .script-market-autosell-btn.is-on .script-market-autosell-ic { color:#8bf0b6; }
+        .script-market-autosell-btn.is-on .script-market-autosell-dot { background:#4cc07e;border-color:#8bf0b6;box-shadow:0 0 7px rgba(76,192,126,.9); }
+        /* El aviso va arriba y por debajo del de ventas del market, que ocupa el
+           top:18px. z-index por encima de todo para que se vea con cualquier
+           ventana abierta. */
+        .script-market-autosell-toast { position:fixed;left:50%;top:74px;z-index:2147483646;display:grid;grid-template-columns:auto 1fr;grid-template-areas:"icon title" "icon meta";gap:0 9px;align-items:center;padding:9px 14px 9px 11px;border-radius:11px;background:linear-gradient(150deg,#12283e,#0a1826);border:1px solid rgba(120,180,230,.4);box-shadow:0 10px 30px rgba(0,0,0,.55);opacity:0;transform:translate(-50%,-10px);transition:opacity .18s ease,transform .18s ease;pointer-events:none; }
+        .script-market-autosell-toast.show { opacity:1;transform:translate(-50%,0); }
+        .script-market-autosell-toast > span { grid-area:icon;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:700; }
+        .script-market-autosell-toast > b { grid-area:title;font-size:12px; }
+        .script-market-autosell-toast > small { grid-area:meta;font-size:11px;color:#c4d8df; }
+        .script-market-autosell-toast.is-ok > span { background:rgba(53,208,91,.2);color:#7bf0a2; }
+        .script-market-autosell-toast.is-ok > b { color:#7bf0a2; }
+        .script-market-autosell-toast.is-no > span { background:rgba(250,204,21,.18);color:#f5dc7a; }
+        .script-market-autosell-toast.is-no > b { color:#f5dc7a; }
+        .script-market-autosell-toast.is-error > span { background:rgba(239,68,68,.2);color:#ff9d9d; }
+        .script-market-autosell-toast.is-error > b { color:#ff9d9d; }
+        /* Cristal, con los mismos tokens que el Casino. Las clases NO se
+           comparten con el Casino a proposito (ver el aviso de mas arriba): lo
+           que se comparte son las variables --casino-*, que estan en :root y son
+           el sistema de diseno del script. Un retoque del Casino no puede
+           mover este dialogo, y este dialogo no puede arrastrar al Casino. */
+        .script-market-autosell-config-backdrop { position:fixed;inset:0;z-index:2147483500;display:grid;place-items:center;box-sizing:border-box;padding:16px;background:radial-gradient(circle at 50% 12%,rgba(30,64,100,.26),transparent 52%),rgba(2,8,16,.34);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-market-autosell-config { width:min(460px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;color:var(--casino-fg);background:var(--casino-surface);border:1px solid var(--casino-card-line);border-radius:12px;box-shadow:var(--casino-glass-edge),0 18px 50px rgba(0,0,0,.46);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);font-family:var(--casino-font);font-feature-settings:'tnum' 1; }
+        .script-market-autosell-config-head { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-market-autosell-config-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-market-autosell-config-head h3 .script-market-autosell-ic { width:16px;height:16px;color:var(--casino-accent); }
+        .script-market-autosell-config-close { display:grid;place-items:center;width:29px;height:29px;flex:0 0 auto;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-market-autosell-config-close svg { width:13px;height:13px; }
+        .script-market-autosell-config-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
+        .script-market-autosell-config-body { display:grid;gap:12px;padding:12px; }
+        .script-market-autosell-config-note { margin:0;padding:8px 9px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.45; }
+        .script-market-autosell-config-note b { color:var(--casino-fg-strong);font-weight:800; }
+        .script-market-autosell-config-group { display:grid;gap:7px; }
+        .script-market-autosell-config-group>h4 { margin:0;color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.1em; }
+        /* El interruptor es una tarjeta, no una fila de texto: es lo unico que
+           cambia de estado y tiene que verse de un vistazo. */
+        .script-market-autosell-config-check { display:flex;align-items:center;gap:7px;padding:8px 9px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-market-autosell-config-check:hover { border-color:rgba(170,210,235,.32); }
+        .script-market-autosell-config-check input { width:auto;height:auto;margin:0;flex:0 0 auto;accent-color:#4cc07e; }
+        .script-market-autosell-config-row { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+        .script-market-autosell-config-field { display:grid;gap:4px; }
+        .script-market-autosell-config-field>label { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-market-autosell-config-field input,.script-market-autosell-config-field select { box-sizing:border-box;width:100%;height:32px;padding:3px 7px;color:var(--casino-fg-strong);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-market-autosell-config-field input:focus,.script-market-autosell-config-field select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-market-autosell-config-preview { padding:8px 9px;color:var(--casino-fg);background:var(--casino-well);border:1px dashed var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.5; }
+        .script-market-autosell-config-preview b { color:var(--casino-gold);font-weight:800; }
+        .script-market-autosell-config-preview .script-market-autosell-preview-warn { color:var(--casino-warn); }
+        .script-market-autosell-config-actions { display:flex;gap:7px; }
+        .script-market-autosell-config-btn { flex:1;min-height:34px;padding:5px 9px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.2),0 2px 5px rgba(0,0,0,.22); }
+        .script-market-autosell-config-btn.is-primary { color:#08160e;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border:1px solid rgba(166,243,198,.7); }
+        .script-market-autosell-config-btn.is-cancel { color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line); }
+        .script-market-autosell-config-btn:hover { filter:brightness(1.1); }
+        /* Los deshabilitados heredarian .45, que a 10.5 px deja el texto en 2.80:1.
+           Se sube a .6, que es lo que ya se hizo en el Casino. */
+        .script-market-autosell-config-btn:disabled { opacity:.6;cursor:not-allowed; }
+        /* Pantallas estrechas. Los dos cortes en dos columnas salen de 213 px
+           cada una a tamano normal; por debajo de eso cada campo se queda sin
+           sitio para su etiqueta y se apilan. */
+        @media (max-width:420px) {
+            .script-market-autosell-btn { padding:0 7px;gap:5px; }
+            .script-market-autosell-btn .script-market-autosell-label { font-size:10px; }
+            .script-market-autosell-config-row { grid-template-columns:1fr; }
+            .script-market-autosell-config-actions { flex-wrap:wrap; }
+        }
+        /* --- PANEL DE SESION ---
+           Cristal pequeno, en la misma familia que el dialogo pero sin capas
+           propias: es un aviso, no una ventana. Va por debajo de los avisos de
+           venta, que ocupan la franja superior. */
+        /* El atributo hidden no gana a un display:flex, asi que se dice
+           explicitamente. Sin esta regla el panel NUNCA se ocultaria. */
+        .script-market-autosell-panel[hidden] { display:none; }
+        .script-market-autosell-panel { position:fixed;left:0;top:72px;z-index:2147483440;width:186px;box-sizing:border-box;display:grid;gap:0;overflow:hidden;color:var(--casino-fg);background:var(--casino-surface);border:1px solid var(--casino-card-line);border-radius:11px;box-shadow:var(--casino-glass-edge),0 10px 28px rgba(0,0,0,.42);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);font-family:var(--casino-font);font-feature-settings:'tnum' 1;font-variant-numeric:tabular-nums; }
+        /* El asa es la cabecera: es lo unico que arrastra. */
+        .script-market-autosell-panel-grip { display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none; }
+        .script-market-autosell-panel-grip:active { cursor:grabbing; }
+        .script-market-autosell-panel-ic { width:14px;height:14px;flex:0 0 auto;color:var(--casino-accent); }
+        .script-market-autosell-panel-title { color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-market-autosell-panel-sitio { min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-market-autosell-panel-tiempo { flex:0 0 auto;margin-left:auto;padding:1px 5px;color:var(--casino-accent);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:5px;font-size:var(--casino-fs-chip);font-weight:800; }
+        .script-market-autosell-panel-body { display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--casino-card-line); }
+        .script-market-autosell-panel-stat { display:grid;gap:1px;padding:8px 9px;background:rgba(14,30,44,.5); }
+        .script-market-autosell-panel-stat b { color:var(--casino-fg-strong);font-size:var(--casino-fs-title);font-weight:800;line-height:1.1; }
+        .script-market-autosell-panel-stat b.es-oro { color:var(--casino-gold); }
+        .script-market-autosell-panel-stat small { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.06em; }
+        .script-market-autosell-panel-fallos { padding:5px 9px;color:var(--casino-danger);background:rgba(74,26,32,.5);border-top:1px solid rgba(255,163,163,.3);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-market-autosell-panel-fallos[hidden] { display:none; }
+        @media (max-width:420px) { .script-market-autosell-panel { width:158px; } .script-market-autosell-panel-stat b { font-size:17px; } }
+        .script-casino-market { color:#d8ecff;background:linear-gradient(145deg,rgba(58,116,168,.72),rgba(32,66,98,.62));border:1px solid rgba(120,180,230,.55); }
+        .script-casino-sell { color:#ffe9e9;background:linear-gradient(145deg,rgba(142,64,80,.72),rgba(78,34,44,.62));border:1px solid rgba(200,105,125,.6); }
+        .script-casino-team-action:hover:not(:disabled) { filter:brightness(1.16);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-team-action:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-team-value { grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:4px;color:var(--casino-gold);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-team-value .casino-ic { font-size:.95em; }
+        .script-casino-goal-alert { position:fixed;z-index:2147483550;left:50%;top:18px;transform:translateX(-50%);width:min(420px,calc(100vw - 24px));box-sizing:border-box;display:grid;grid-template-columns:46px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;color:var(--casino-fg);background:rgba(22,34,46,.72);border:1px solid rgba(255,224,113,.7);border-radius:10px;box-shadow:inset 0 1px rgba(255,255,255,.2),0 12px 36px rgba(0,0,0,.48),0 0 18px rgba(255,212,71,.27);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);animation:scriptCasinoGoalEnter .22s ease-out; }
+        .script-casino-goal-alert img { width:44px;height:44px;object-fit:contain;image-rendering:pixelated;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:7px; }
+        .script-casino-goal-alert b { display:flex;align-items:center;gap:6px;color:#ffe071;font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-goal-alert b .casino-ic { font-size:.86em; }
+        .script-casino-goal-alert span { display:block;margin-top:3px;color:var(--casino-fg);font-size:var(--casino-fs-body); }
+        /* El nombre del tier va mezclado con el color de texto y no tal cual. El
+           color del tier lo pone el JS y va del gris pizarra al morado: a 12.5 px
+           en negrita, tres de los nueve (#64748b, #a855f7, #d946ef) se quedan por
+           debajo de 4.5:1 sobre este fondo. Mezclarlo al 70% con el color de
+           texto sube el mas flojo a 4.9:1 y deja el tono del tier reconocible. */
+        .script-casino-goal-alert.is-tier b { color:color-mix(in srgb,var(--casino-alert-tier,#a855f7) 70%,var(--casino-fg)); }
+        .script-casino-goal-alert.is-tier img { border-color:color-mix(in srgb,var(--casino-alert-tier,#a855f7) 55%,var(--casino-card-line)); }
+        .script-casino-goal-alert button { align-self:start;display:grid;place-items:center;width:27px;height:27px;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-goal-alert button .casino-ic { width:12px;height:12px; }
+        .script-casino-goal-alert button:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
         @keyframes scriptCasinoGoalEnter { from{opacity:0;transform:translate(-50%,-12px)} to{opacity:1;transform:translate(-50%,0)} }
-        .script-casino-kicker { font-size:9.2px; }
-        .script-casino-title { font-size:20.7px; }
-        .script-casino-balance { font-size:13.8px; }
-        .script-casino-summary { font-size:10.4px; }
-        .script-casino-warning,.script-casino-status { font-size:9.2px; }
-        .script-casino-empty { font-size:12.7px; }
-        .script-casino-name { font-size:12.7px; }
-        .script-casino-evolution { font-size:6.9px; }
-        .script-casino-price { font-size:11.5px; }
-        .script-casino-requirement { font-size:7.5px; }
-        .script-casino-reason { font-size:8.1px; }
-        .script-casino-team-head h3 { font-size:15px; }
-        .script-casino-team-count,.script-casino-team-head p { font-size:9.2px; }
-        .script-casino-iv-goal,.script-casino-bulk-action { font-size:9.2px; }
-        .script-casino-team-empty { font-size:10.4px; }
-        .script-casino-team-name { font-size:12.7px; }
-        .script-casino-new-tag { font-size:6.3px; }
-        .script-casino-team-meta { font-size:8.1px; }
-        .script-casino-team-type { font-size:6.3px; }
-        .script-casino-team-stat { font-size:6.3px; }
-        .script-casino-team-stat b { font-size:8.1px; }
-        .script-casino-team-value { font-size:8.1px; }
+
+        /* --- MOVIMIENTO DE LA LISTA Y LA TIRA DE PROCESO ---
+           La entrada dura 240 ms con una curva que frena al final; la salida 180 ms,
+           mas corta, porque una carta que se va no debe retener la mirada. */
+        .script-casino-team-card.is-entering { animation:scriptCasinoCardIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .script-casino-team-card.is-leaving { animation:scriptCasinoCardOut .18s ease-in both; pointer-events:none; }
+        /* Una carta recien comprada puede llegar ademas a la meta de IV, y entonces
+           le tocarian a la vez el pulso y la entrada. Las dos reglas estan a la misma
+           especificidad y en la propiedad animation la cascada NO acumula: se queda con una sola
+           declaracion, asi que sin esto una de las dos se perderia por accidente de
+           orden. Aqui se declaran las dos juntas en el selector compuesto, que ya es
+           mas especifico, y no se pisan porque el pulso solo anima box-shadow y la
+           entrada opacity y transform. Al irse solo cuenta la salida. */
+        .script-casino-team-card.is-iv-goal.is-entering { animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite,scriptCasinoCardIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .script-casino-team-card.is-iv-goal.is-leaving { animation:scriptCasinoCardOut .18s ease-in both; }
+        @keyframes scriptCasinoCardIn { from{opacity:0;transform:translateY(8px) scale(.97)} to{opacity:1;transform:none} }
+        @keyframes scriptCasinoCardOut { from{opacity:1;transform:none} to{opacity:0;transform:scale(.96)} }
+        /* prefers-reduced-motion no es un extra: sin animacion no salta transitionend
+           y la red de seguridad del setTimeout es la unica que queda. La que se va se
+           ancla en opacity:0 y no en animation:none, para que desaparezca de golpe y
+           no se quede clavada a la vista los 400 ms que tarda el setTimeout en
+           retirarla del DOM. El pulso infinito tambien se para: un bucle eterno es
+           justo lo que se pide parar, y el borde dorado y el "★ IV" siguen contando
+           que la meta esta conseguida. */
+        @media (prefers-reduced-motion: reduce) {
+            .script-casino-team-card.is-entering { animation:none !important; }
+            .script-casino-team-card.is-leaving { opacity:0 !important; }
+            .script-casino-team-card.is-iv-goal { animation:none !important; }
+            .script-casino-progress-name.is-in { animation:none !important; }
+            .script-casino-goal-alert { animation:none !important; }
+        }
+        /* La barra se actualiza por propiedad y sin transicion propia: las compras
+           van mas rapido que una transicion y la barra se quedaria siempre
+           retrasada. Solo el nombre lleva fundido, porque es lo unico que cambia en
+           cada paso. */
+        .script-casino-progress { flex:none;display:flex;align-items:center;gap:9px;padding:6px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        /* La tira aparece y desaparece con el atributo hidden, y el display:flex de
+           arriba le gana a la regla [hidden] del navegador: sin esto se veria
+           siempre. Es el mismo apano que necesitan las cartas de comprados. */
+        .script-casino-progress[hidden] { display:none !important; }
+        .script-casino-progress-bar { flex:1;height:4px;border-radius:999px;background:var(--casino-well);overflow:hidden; }
+        .script-casino-progress-bar>i { display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--casino-accent),var(--casino-gold)); }
+        .script-casino-progress-count { flex:none;color:var(--casino-fg);font-size:var(--casino-fs-chip);font-weight:800;font-variant-numeric:tabular-nums; }
+        .script-casino-progress-name { flex:none;min-width:0;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--casino-muted);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-progress-name.is-in { animation:scriptCasinoNameIn .18s ease both; }
+        @keyframes scriptCasinoNameIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
         .script-flint-backdrop { position:fixed;inset:0;z-index:2147483200;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(2,7,12,.78);backdrop-filter:blur(4px); }
         .script-flint-window { width:min(860px,95vw) !important;max-width:95vw !important;height:min(650px,88dvh) !important;max-height:88dvh !important;display:flex;flex-direction:column;overflow:hidden;color:#edf5fb;background:#0b1722 !important;border:1px solid #527b91 !important;border-radius:11px !important;box-shadow:0 22px 60px #000d !important; }
         .script-flint-head { flex:none;display:flex;align-items:center;gap:9px;min-height:58px;padding:10px 13px;background:#11283a;border-bottom:1px solid #31586d; }
@@ -3958,18 +5538,21 @@
             .script-casino-head-copy { flex:1 1 calc(100% - 48px); }
             .script-casino-balance { order:3;margin-left:0; }
             .script-casino-refresh { order:3;flex:1; }
-            .script-casino-summary { align-items:flex-start;flex-direction:column;padding:8px; }
             .script-casino-layout { grid-template-columns:1fr;grid-template-rows:minmax(250px,1fr) minmax(220px,.85fr);overflow:auto; }
-            .script-casino-catalog { border-right:0;border-bottom:1px solid #294657; }
+            .script-casino-catalog { border-right:0;border-bottom:1px solid var(--casino-card-line); }
             .script-casino-list { grid-template-columns:1fr;padding:8px;gap:7px; }
+            .script-casino-results { flex-wrap:wrap; }
+            .script-casino-result { flex:1 1 calc(50% - 2px); }
+            .script-casino-result.is-net { flex:1 1 100%; }
             .script-casino-card { grid-template-columns:50px minmax(0,1fr);padding:7px; }
             .script-casino-art { width:48px;height:48px; }
             .script-casino-art img { width:45px;height:45px; }
             .script-casino-action-row { grid-column:1/-1; }
-            .script-casino-purchase-controls { grid-template-columns:48px minmax(78px,auto); }
+            .script-casino-purchase-controls { grid-template-columns:minmax(0,1fr) auto; }
             .script-casino-team-list { max-height:42dvh; }
             .script-casino-team-tools { grid-template-columns:1fr 1fr; }
             .script-casino-iv-goal { grid-column:1/-1; }
+            .script-casino-progress-name { max-width:30%; }
             .script-flint-backdrop { padding:6px;align-items:stretch; }
             .script-flint-window { width:100% !important;max-width:100% !important;height:calc(100dvh - 12px) !important;max-height:calc(100dvh - 12px) !important;margin:auto; }
             .script-flint-head { min-height:52px;padding:8px;gap:6px;flex-wrap:wrap; }
@@ -4580,6 +6163,13 @@
         .market-sell-tier-buttons { min-width:0;display:flex;align-items:center;gap:5px;flex-wrap:wrap; }
         .market-sell-tier-btn { --sell-tier:#64748b;padding:3px 8px;color:#657884;background:#070d12;border:1px solid #2b3d47;border-radius:999px;cursor:pointer;font-size:8px;font-weight:900;opacity:.4;transition:opacity .15s,border-color .15s,box-shadow .15s,background .15s; }
         .market-sell-tier-btn.on { color:var(--sell-tier);background:color-mix(in srgb,var(--sell-tier) 12%,#070d12);border-color:var(--sell-tier);box-shadow:0 0 7px color-mix(in srgb,var(--sell-tier) 28%,transparent);opacity:1; }
+        /* El destello que marca la ficha que se acaba de mandar desde el
+           Cassino. Va aqui y no en la zona del Cassino porque este elemento es
+           del market. El propio editor ya tiene un box-shadow, asi que el
+           destello lo sustituye y vuelve al final sin dejar rastro. */
+        .market-sell-editor.is-flash { animation:marketSellFlash .9s ease-out; }
+        @keyframes marketSellFlash { from{box-shadow:0 0 0 2px rgba(127,216,247,.9),0 0 22px rgba(127,216,247,.5)} to{box-shadow:0 0 0 0 rgba(127,216,247,0),0 0 0 rgba(127,216,247,0)} }
+        @media (prefers-reduced-motion: reduce) { .market-sell-editor.is-flash { animation:none !important; } }
         .market-sell-editor { position:relative;margin:9px 12px 0;padding:12px;display:grid;grid-template-columns:82px minmax(260px,1fr) minmax(470px,1.45fr);grid-template-areas:"art info form";gap:15px;align-items:center;background:linear-gradient(145deg,#111c24,#080f14);border:1px solid #294150;border-radius:10px;box-shadow:0 8px 22px #0008,inset 0 0 22px #ffffff05; }
         .market-sell-editor[hidden] { display:none !important; }
         .market-sell-editor.market-pokemon-quality { border-color:var(--market-tier-color) !important;background:linear-gradient(145deg,color-mix(in srgb,var(--market-tier-color) 15%,#101a21),#080f14 72%) !important; }
@@ -7286,6 +8876,133 @@
         );
     }
 
+    /* --- ICONOS DEL CASSINO ---
+       Un solo sprite SVG con los simbolos, inyectado una vez. Todos los
+       dibujos van con stroke: currentColor, asi que heredan el color del
+       elemento que los contiene y no hay ningun color en el JS. Sustituye a
+       los emojis, que se veian distintos segun el sistema y no tenian
+       relacion con el tema. */
+    const CASINO_ICON_SYMBOLS = {
+        dice: '<rect x="3.2" y="3.2" width="17.6" height="17.6" rx="3.4"/><circle cx="8.2" cy="8.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="8.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="8.2" cy="15.8" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="15.8" r="1.1" fill="currentColor" stroke="none"/>',
+        coin: '<circle cx="12" cy="12" r="8.4"/><path d="M12 6.9v10.2M9.5 9.4h3.8a1.8 1.8 0 0 1 0 3.6H9.5"/>',
+        swords: '<path d="M6.2 3.4 17.8 15M17.8 3.4 6.2 15"/><path d="M3.6 20.4h4.8M15.6 20.4h4.8"/>',
+        box: '<path d="M20.4 7.6v8.8L12 20.8 3.6 16.4V7.6L12 3.2z"/><path d="m3.6 7.6 8.4 4.4 8.4-4.4M12 12v8.8"/>',
+        gear: '<circle cx="12" cy="12" r="3.1"/><path d="M12 2.8v2.7M12 18.5v2.7M4.6 7.3l2.3 1.3M17.1 15.4l2.3 1.3M4.6 16.7l2.3-1.3M17.1 8.6l2.3-1.3"/>',
+        scroll: '<path d="M6.4 3.4h11.2v14.2a3 3 0 0 1-3 3H6.4a3 3 0 0 1-3-3V6.4a3 3 0 0 1 3-3z"/><path d="M6.8 8.6h10.4M6.8 12.3h10.4M6.8 16h6.4"/>',
+        sparkle: '<path d="M11 2.8c.7 4.2 1.4 4.9 5.6 5.6-4.2.7-4.9 1.4-5.6 5.6-.7-4.2-1.4-4.9-5.6-5.6 4.2-.7 4.9-1.4 5.6-5.6z"/><path d="M17.6 14.2c.4 2.3.8 2.7 3.1 3.1-2.3.4-2.7.8-3.1 3.1-.4-2.3-.8-2.7-3.1-3.1 2.3-.4 2.7-.8 3.1-3.1z"/>',
+        star: '<path d="m12 3.2 2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 17.1l-5.4 2.9 1.1-6.1L3.2 9.6l6.1-.8z"/>',
+        refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.5 4.1v4.7h-4.7"/>',
+        close: '<path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6"/>',
+        evolve: '<path d="M4.4 19.6h5.2M9.6 19.6a5.6 5.6 0 0 1 5.6-5.6 5.6 5.6 0 0 1 5.6 5.6"/><path d="m17.2 16.4 3.2 3.2 3.2-3.2" transform="translate(-3.2 0)"/>',
+        market: '<path d="M3.6 10.2v3.6L12 19.8l8.4-6v-3.6"/><path d="M3.6 10.2 12 4.2l8.4 6L12 16.2z"/><path d="M8.4 13.2h7.2"/>'
+    };
+    function casinoIcon(name, className = '') {
+        const symbol = CASINO_ICON_SYMBOLS[name];
+        if (!symbol) return '';
+        /* href y xlink:href a la vez. href es lo correcto en SVG2, pero algunos
+           WebView siguen exigiendo el atributo con prefijo xlink. Poner los dos
+           cuesta nada y evita que el icono desaparezca segun el navegador. */
+        return `<svg class="casino-ic${className ? ' ' + className : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#casino-ic-${name}" xlink:href="#casino-ic-${name}"></use></svg>`;
+    }
+    function ensureCasinoIcons() {
+        if (document.getElementById('casino-icon-sprite')) return;
+        /* OJO: el sprite se construye con innerHTML sobre un div y no con
+           createElement('svg'). createElement crea el elemento en el namespace
+           HTML, de modo que el navegador no lo reconoce como raiz SVG y ni los
+           <symbol> ni los <use> entran en el arbol grafico: los iconos salian
+           invisibles. El parser de innerHTML si asigna el namespace SVG. */
+        const markup = '<svg id="casino-icon-sprite" class="casino-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">'
+            + Object.entries(CASINO_ICON_SYMBOLS)
+                .map(([name, body]) => `<symbol id="casino-ic-${name}" viewBox="0 0 24 24">${body}</symbol>`)
+                .join('')
+            + '</svg>';
+        const holder = document.createElement('div');
+        holder.innerHTML = markup;
+        const sprite = holder.firstElementChild;
+        if (sprite) document.body.appendChild(sprite);
+    }
+
+    /* --- ARMADO DE LA VISTA DE COMPRADOS ---
+       Decide QUE se ve, no lo dibuja: es pura a proposito, para poder probar
+       en Node que una carta que el filtro aparta sale en la vista como oculta
+       en vez de desaparecer de ella. Si desapareciera, la reconciliacion la
+       retiraria del DOM con animacion, y al quitar el filtro reapareceria
+       animandose otra vez. Dependencias por parametro, no del ambito: asi el
+       test la monta con dobles y mide esta funcion, no una copia.
+
+       Recibe las dos listas y deduce la visibilidad por pertenencia: un id
+       visible si y solo si esta en visibleTeam. Asi el filtro no se recorre dos
+       veces (una para el Set y otra por Pokemon) y no hace falta ningun Set
+       llamado hidden. */
+    function buildTeamView(purchasedTeam, visibleTeam, getPokeId, teamCardSignature) {
+        const visibles = new Set(visibleTeam.map(poke => getPokeId(poke)));
+        return purchasedTeam.map(poke => {
+            const id = getPokeId(poke);
+            return { id, signature: teamCardSignature(poke), visible: visibles.has(id) };
+        });
+    }
+
+    /* --- RECONCILIACION DE LA LISTA DE COMPRADOS ---
+       Devuelve que hay que crear, repintar o retirar para que la lista
+       coincida con la vista. Es una funcion PURA a proposito: decide, no
+       dibuja. Asi se puede probar en Node sin un DOM, y los tests fijan el
+       comportamiento raro (compras repetidas, filtros, vista vacia) sin
+       depender del navegador.
+
+       La lista de comprados se construye con unshift, asi que lo mas nuevo va
+       primero: create() inserta por delante y las cartas que ya existen no se
+       reordenan nunca, para no provocar movimientos en cada compra.
+
+       No hay paso de commit ni transaccion a medias: la cache la mantienen los
+       propios callbacks (create y update escriben, leave y drop la vacian), y
+       si algo falla a mitad la siguiente pasada vuelve a mirar la cache real. */
+    function reconcileTeamCards(view, { existing, existingAllIds, create, update, enter, leave, drop }) {
+        const created = [];
+        const updated = [];
+        const unchanged = [];
+        const left = [];
+        const seen = new Set();
+        for (const item of view) {
+            if (!item || !item.id) continue;
+            const id = String(item.id);
+            const entry = existing(id);
+            if (!item.visible) {
+                /* Oculta por un filtro. Si ya existe se marca hidden y se anota
+                   como vista, para que el filtro la pueda volver a mostrar sin
+                   crearla de nuevo ni animarla otra vez. Si no existe, no se
+                   crea: una carta que nace oculta no aporta nada. */
+                if (entry) { entry.node.hidden = true; seen.add(id); }
+                continue;
+            }
+            seen.add(id);
+            if (entry) entry.node.hidden = false;
+            if (!entry) {
+                const fresh = create(item);
+                created.push(id);
+                if (enter) enter(fresh.node);
+            } else if (String(entry.signature) !== String(item.signature)) {
+                update(entry.node, item);
+                updated.push(id);
+            } else {
+                unchanged.push(id);
+            }
+        }
+        /* Los ids que devuelve la cache se normalizan IGUAL que los de la
+           vista. No es cosmetico: con un Map de claves numericas, '1' y 1 no
+           son la misma clave, y si un lado se normaliza y el otro no, cada
+           pasada daria por retiradas todas las cartas y las volveria a
+           crear. Los ids que se devuelven son siempre texto. */
+        for (const crudo of (existingAllIds ? existingAllIds() : [])) {
+            const id = String(crudo);
+            if (seen.has(id)) continue;
+            const entry = existing(id);
+            if (leave && entry) leave(entry.node, id);
+            if (drop) drop(id);
+            left.push(id);
+        }
+        return { created, updated, left, unchanged };
+    }
+
     function getMarlonOfferReason(offer, payload) {
         if (offer?.canBuy) return '';
         const gold = Number(payload?.gold || 0);
@@ -7306,6 +9023,7 @@
     async function showPortableCasino() {
         document.querySelector('.script-casino-backdrop')?.remove();
 
+        ensureCasinoIcons();
         const backdrop = document.createElement('div');
         backdrop.className = 'script-casino-backdrop';
         backdrop.innerHTML = `
@@ -7313,34 +9031,64 @@
                 <header class="script-casino-head">
                     <div class="script-casino-head-copy">
                         <span class="script-casino-kicker">CASINO SERVICE</span>
-                        <h2 class="script-casino-title">🎰 ${escapeHTML(tr('casinoTitle'))}</h2>
+                        <h2 class="script-casino-title">${casinoIcon('dice')}<span>${escapeHTML(tr('casinoTitle'))}</span></h2>
                     </div>
-                    <span class="script-casino-balance">💲 —</span>
-                    <button class="script-casino-refresh" type="button">↻ ${escapeHTML(tr('casinoRefresh'))}</button>
-                    <button class="script-casino-close" type="button" aria-label="${escapeHTML(tr('casinoClose'))}">×</button>
+                    <span class="script-casino-balance">${casinoIcon('coin')}<span class="script-casino-balance-value">—</span></span>
+                    <button class="script-casino-refresh" type="button">${casinoIcon('refresh')}<span>${escapeHTML(tr('casinoRefresh'))}</span></button>
+                    <button class="script-casino-close" type="button" aria-label="${escapeHTML(tr('casinoClose'))}">${casinoIcon('close')}</button>
                 </header>
                 <div class="script-casino-layout">
                     <div class="script-casino-catalog">
-                        <div class="script-casino-summary">
-                            <span>${escapeHTML(tr('casinoSubtitle'))}</span>
-                            <b class="script-casino-team">${escapeHTML(tr('casinoTeam'))}: —/—</b>
-                        </div>
-                        <div class="script-casino-warning" hidden>${escapeHTML(tr('casinoTeamFull'))}</div>
                         <div class="script-casino-status" aria-live="polite">${escapeHTML(tr('casinoLoading'))}</div>
+                        <div class="script-casino-progress" hidden>
+                            <div class="script-casino-progress-bar"><i></i></div>
+                            <span class="script-casino-progress-count">0 / 0</span>
+                            <span class="script-casino-progress-name"></span>
+                        </div>
+                        <div class="script-casino-results" hidden>
+                            <div class="script-casino-result is-net">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultNet'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <div class="script-casino-result">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultSpent'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <div class="script-casino-result">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultEarned'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <span class="script-casino-result-chip">—</span>
+                        </div>
+                        <div class="script-casino-tabs" role="tablist">
+                            <button class="script-casino-tab is-active" data-tab="buy" role="tab" aria-selected="true" type="button">${escapeHTML(tr('casinoTabBuy'))}<b class="script-casino-tab-count">0</b></button>
+                            <button class="script-casino-tab" data-tab="evolve" role="tab" aria-selected="false" type="button">${casinoIcon('evolve')}<span>${escapeHTML(tr('casinoTabEvolve'))}</span><b class="script-casino-tab-count">0</b></button>
+                        </div>
                         <div class="script-casino-list"><div class="script-casino-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
                     </div>
                     <aside class="script-casino-team-panel">
                         <div class="script-casino-team-head">
                             <div class="script-casino-team-head-line">
-                                <h3>⚔ ${escapeHTML(tr('casinoTeamTitle'))}</h3>
+                                <h3>${casinoIcon('swords')}<span>${escapeHTML(tr('casinoTeamTitle'))}</span></h3>
                                 <span class="script-casino-team-count">0</span>
                             </div>
                             <p>${escapeHTML(tr('casinoTeamSubtitle'))}</p>
                             <div class="script-casino-team-tools">
                                 <label class="script-casino-iv-goal"><span>${escapeHTML(tr('casinoIvGoal'))}</span><input class="script-casino-iv-goal-input" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoIvGoalHint'))}"></label>
-                                <button class="script-casino-bulk-action script-casino-bulk-store" type="button">📦 ${escapeHTML(tr('casinoStoreAll'))}</button>
-                                <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">💲 ${escapeHTML(tr('casinoSellAll'))}</button>
+                                <button class="script-casino-bulk-action script-casino-log-btn" type="button">${casinoIcon('scroll')}<span>${escapeHTML(tr('casinoAutoSellLog'))}</span></button>
+                                <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">${casinoIcon('coin')}<span>${escapeHTML(tr('casinoSellAll'))}</span></button>
                             </div>
+                        </div>
+                        <div class="script-casino-filters">
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterTier'))}</span><select class="script-casino-filter-tier"></select></label>
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterQuality'))}</span><select class="script-casino-filter-quality"></select></label>
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterIv'))}</span><input class="script-casino-filter-iv" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoFilterIvHint'))}"></label>
+                            <button class="script-casino-filter-clear" type="button">${escapeHTML(tr('casinoFilterClear'))}</button>
+                            <div class="script-casino-filters-info"><span class="script-casino-filters-count"></span><span class="script-casino-filters-tierdot"></span></div>
+                            <button class="script-casino-autosell-btn" type="button">
+                                <span class="script-casino-autosell-top">${casinoIcon('gear')}<span class="script-casino-autosell-label">${escapeHTML(tr('casinoAutoSell'))}</span><span class="script-casino-autosell-badge"></span></span>
+                                <span class="script-casino-autosell-detail"></span>
+                            </button>
                         </div>
                         <div class="script-casino-team-list"><div class="script-casino-team-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
                     </aside>
@@ -7351,17 +9099,46 @@
         const windowElement = backdrop.querySelector('.script-marlon-window');
         const list = backdrop.querySelector('.script-casino-list');
         const status = backdrop.querySelector('.script-casino-status');
-        const balance = backdrop.querySelector('.script-casino-balance');
-        const team = backdrop.querySelector('.script-casino-team');
-        const warning = backdrop.querySelector('.script-casino-warning');
+        const balanceValue = backdrop.querySelector('.script-casino-balance-value');
         const refreshButton = backdrop.querySelector('.script-casino-refresh');
         const teamList = backdrop.querySelector('.script-casino-team-list');
         const teamCount = backdrop.querySelector('.script-casino-team-count');
+        /* Cache de cartas de comprados: pokeId -> { key, node, signature }.
+           Permite reconciliar en vez de reconstruir, que es lo que hacia que
+           la lista parpadeara en cada operacion. */
+        const teamCards = new Map();
+        /* Que describe al Pokemon, y nada mas: lo que depende del estado del
+           panel va aparte, en refreshCardVolatileState. El ultimo campo es la
+           bandera de "recien comprado", porque tambien pinta una etiqueta en el
+           marcado y hay que repintar para que se vaya. recentTeamIds se
+           declara unas lineas mas abajo; aqui solo se lee cuando se llama, que
+           es mucho despues, asi que no hay problema. */
+        const teamCardSignature = poke => [
+            poke?.level,
+            poke?.ivTotal,
+            Number(poke?.quality || 0).toFixed(3),
+            poke?.shiny ? 1 : 0,
+            poke?.nature || '',
+            recentTeamIds.has(getPokeId(poke)) ? 1 : 0
+        ].join('|');
         const ivGoalInput = backdrop.querySelector('.script-casino-iv-goal-input');
-        const bulkStoreButton = backdrop.querySelector('.script-casino-bulk-store');
+        const results = backdrop.querySelector('.script-casino-results');
+        const tabBar = backdrop.querySelector('.script-casino-tabs');
+        const tabButtons = [...backdrop.querySelectorAll('.script-casino-tab')];
+        const logButton = backdrop.querySelector('.script-casino-log-btn');
         const bulkSellButton = backdrop.querySelector('.script-casino-bulk-sell');
+        const filterTierSelect = backdrop.querySelector('.script-casino-filter-tier');
+        const filterQualitySelect = backdrop.querySelector('.script-casino-filter-quality');
+        const filterIvInput = backdrop.querySelector('.script-casino-filter-iv');
+        const filterClearButton = backdrop.querySelector('.script-casino-filter-clear');
+        const filtersCount = backdrop.querySelector('.script-casino-filters-count');
+        const autoSellButton = backdrop.querySelector('.script-casino-autosell-btn');
+        const autoSellBadge = backdrop.querySelector('.script-casino-autosell-badge');
+        const autoSellDetail = backdrop.querySelector('.script-casino-autosell-detail');
+        /* Que pestana del catalogo esta abierta. Comprables por defecto, que es
+           lo que se usa casi siempre. */
+        let catalogTab = 'buy';
         let payload = null;
-        let teamPokemon = [];
         let allPokes = [];
         const purchasedPokemon = [];
         const recentTeamIds = new Set();
@@ -7373,6 +9150,247 @@
         let busyItemId = null;
         let closed = false;
         ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+
+        /* --- CONFIGURACION DE AUTO-VENTA Y ALERTA POR TIER ---
+           Se guarda en localStorage y se relee al abrir el Cassino. El mismo
+           panel sirve para la auto-venta y para decidir que tiers avisan. */
+        const autoSellStorageKey = 'script_casino_auto_sell_v1';
+        const readAutoSellConfig = () => {
+            let stored = {};
+            try { stored = JSON.parse(localStorage.getItem(autoSellStorageKey) || '{}') || {}; } catch (_) {}
+            const tierId = String(stored.minTier ?? '');
+            return {
+                enabled: stored.enabled === true,
+                /* Ambos criterios son umbrales de corte, no rangos con dos
+                   extremos: lo que queda por debajo se considera descartable.
+                   En quality el corte es un tier de MARKET_QUALITY_TIER_DEFINITIONS,
+                   asi que se compara por orden y no por el numero suelto. */
+                minIv: Math.max(0, Math.min(192, Number(stored.minIv) || 0)),
+                minTier: MARKET_QUALITY_TIER_DEFINITIONS.some(d => d.id === tierId) ? tierId : '',
+                alertTiers: Array.isArray(stored.alertTiers)
+                    ? stored.alertTiers.filter(id => MARKET_QUALITY_TIER_DEFINITIONS.some(d => d.id === id))
+                    : []
+            };
+        };
+        let autoSellConfig = readAutoSellConfig();
+        const writeAutoSellConfig = () => {
+            try { localStorage.setItem(autoSellStorageKey, JSON.stringify(autoSellConfig)); } catch (_) {}
+        };
+
+        /* --- FILTROS DE LA LISTA DE COMPRADOS ---
+           Solo ocultan tarjetas: purchasedPokemon no se toca, asi que limpiar
+           el filtro devuelve todo. Se aplican sobre purchasedPokemon, que son
+           unicamente los comprados en esta sesion. */
+        const buildQualityFilterOptions = () => {
+            const options = [`<option value="">${escapeHTML(tr('casinoFilterAll'))}</option>`];
+            MARKET_QUALITY_TIER_DEFINITIONS.forEach(definition => {
+                const max = definition.max === Infinity ? '∞' : definition.max.toFixed(2);
+                options.push(`<option value="${escapeHTML(definition.id)}">${escapeHTML(definition.label)} · ${definition.min.toFixed(2)}–${max}</option>`);
+            });
+            filterQualitySelect.innerHTML = options.join('');
+        };
+        const buildTierFilterOptions = () => {
+            const options = [`<option value="">${escapeHTML(tr('casinoFilterAll'))}</option>`];
+            MARKET_QUALITY_TIER_DEFINITIONS.forEach(definition => {
+                options.push(`<option value="${escapeHTML(definition.id)}">${escapeHTML(definition.label)}</option>`);
+            });
+            filterTierSelect.innerHTML = options.join('');
+        };
+        /* El filtro de IVs es un campo de texto, no un select de bandas: se
+           escribe un numero y muestra los Pokemon con esa IV o mas. */
+        const getIvFilterMin = () => {
+            const typed = Number(String(filterIvInput.value ?? '').replace(',', '.').trim());
+            if (!Number.isFinite(typed) || typed <= 0) return null;
+            return Math.max(0, Math.min(192, Math.round(typed)));
+        };
+        const matchesFilters = poke => {
+            const tier = normalizeMarketTier(getMarketPokemonQualityTheme(poke?.quality)?.id || '');
+            if (filterTierSelect.value && tier !== filterTierSelect.value) return false;
+            if (filterQualitySelect.value) {
+                const definition = getMarketQualityTierDefinition(poke?.quality);
+                if (!definition || definition.id !== filterQualitySelect.value) return false;
+            }
+            const ivMin = getIvFilterMin();
+            if (ivMin !== null && Number(poke?.ivTotal || 0) < ivMin) return false;
+            return true;
+        };
+        const hasActiveFilters = () => Boolean(
+            filterTierSelect.value || filterQualitySelect.value || getIvFilterMin() !== null
+        );
+
+        /* Orden de los tiers, de menor a mayor. Permite comparar dos quality
+           por posicion en la escala y no por su numero suelto, que es lo que
+           hace falta para "todo lo que sea inferior a este tier". */
+        const getTierLabel = id => MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === id)?.label || '';
+
+        /* --- REGLA DE AUTO-VENTA ---
+           Los dos criterios son umbrales de corte: se vende lo que queda por
+           debajo, no dentro de un rango con dos extremos. Se exigen los dos a
+           la vez, con un "y" y no un "o": un Pokemon que conserve IVs buenos o
+           un tier alto nunca se vende, aunque el otro valor sea malo. Ese es
+           el freno para no cargarse nada aprovechable. */
+        const shouldAutoSell = poke => {
+            if (!autoSellConfig.enabled) return false;
+            if (isTeamPokemonProtected(poke)) return false;
+            if (Number(poke?.sellValue || 0) <= 0) return false;
+            if (Number(poke?.ivTotal || 0) >= autoSellConfig.minIv) return false;
+            if (autoSellConfig.minTier) {
+                const actual = tierOrder(getPokemonTierId(poke));
+                const corte = tierOrder(autoSellConfig.minTier);
+                /* Sin corte de quality, o con tier igual o superior al del
+                   Pokemon, este se conserva. */
+                if (actual < 0 || actual >= corte) return false;
+            }
+            return true;
+        };
+        const shouldAlertTier = poke => {
+            if (!autoSellConfig.alertTiers.length) return false;
+            const definition = getMarketPokemonQualityTheme(poke?.quality);
+            return Boolean(definition && autoSellConfig.alertTiers.includes(definition.id));
+        };
+        const describeAutoSellLimits = () => {
+            const tier = autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoTierAll');
+            return `IV<${autoSellConfig.minIv} · <${tier}`;
+        };
+        const refreshAutoSellButton = () => {
+            const on = autoSellConfig.enabled;
+            autoSellButton.classList.toggle('is-on', on);
+            const sold = autoSellLog.entries.length;
+            /* El boton va en dos lineas: arriba el nombre con su pastilla de
+               estado, abajo los cortes y el saldo. Antes era una sola linea con
+               las tres cosas encajadas y no se leia nada. */
+            autoSellBadge.textContent = on ? tr('casinoAutoSellOn') : tr('casinoAutoSellOff');
+            autoSellBadge.classList.toggle('is-on', on);
+            const limits = on ? describeAutoSellLimits() : tr('casinoAutoSellRuleOff');
+            autoSellDetail.textContent = sold
+                ? `${limits} · ${formatCasinoText(tr('casinoAutoSellSessionNet'), {
+                    count:sold,
+                    net:getAutoSellSessionNetGold().toLocaleString('pt-BR')
+                })}`
+                : limits;
+        };
+        /* Tira de resultados de la tanda. El saldo va el primero y en grande
+           porque es el unico numero que explica por que la cuenta quedo como
+           quedo: lo vendido son las ventas, no la diferencia. */
+        const renderResults = ({ spent = 0, earned = 0, sold = 0 } = {}) => {
+            if (!results) return;
+            if (!sold) { results.hidden = true; return; }
+            const net = earned - spent;
+            const values = results.querySelectorAll('.script-casino-result');
+            const netCell = values[0];
+            const set = (cell, text) => {
+                const value = cell?.querySelector('.script-casino-result-value');
+                if (value) value.textContent = text;
+            };
+            set(netCell, `${net > 0 ? '+' : net < 0 ? '−' : ''}${Math.abs(net).toLocaleString('pt-BR')}`);
+            if (netCell) netCell.classList.toggle('is-negative', net < 0);
+            if (netCell) netCell.classList.toggle('is-positive', net > 0);
+            /* Cuando la diferencia es negativa, "Saldo" engaña: no es un
+               saldo, es dinero que se ha perdido. La etiqueta lo dice. */
+            const netLabel = netCell?.querySelector('.script-casino-result-label');
+            if (netLabel) netLabel.textContent = net < 0 ? tr('casinoResultLoss') : tr('casinoResultNet');
+            set(values[1], spent.toLocaleString('pt-BR'));
+            set(values[2], earned.toLocaleString('pt-BR'));
+            const chip = results.querySelector('.script-casino-result-chip');
+            if (chip) chip.textContent = formatCasinoText(tr('casinoResultSold'), { count:sold });
+            results.hidden = false;
+        };
+        /* El panel del historial se crea como hermano de backdrop, dentro de
+           document.body, no dentro de backdrop. Por eso se busca en el
+           documento y no en el backdrop del Cassino: buscando en backdrop el
+           listado nunca se encontraba y el historial salia siempre vacio. */
+        const renderAutoSellLog = () => {
+            const list = document.querySelector('.script-casino-autosell-log-list');
+            const total = document.querySelector('.script-casino-autosell-log-total');
+            const clear = document.querySelector('.script-casino-autosell-log-clear');
+            if (!list) return;
+            list.replaceChildren();
+            if (total) {
+                total.textContent = autoSellLog.entries.length
+                    ? formatCasinoText(tr('casinoAutoSellLogTotal'), {
+                        count:autoSellLog.entries.length,
+                        gold:getAutoSellSessionTotalGold().toLocaleString('pt-BR'),
+                        spent:getAutoSellSessionSpentGold().toLocaleString('pt-BR'),
+                        net:getAutoSellSessionNetGold().toLocaleString('pt-BR')
+                    })
+                    : tr('casinoAutoSellLogEmpty');
+            }
+            if (clear) clear.disabled = autoSellLog.entries.length === 0;
+            if (!autoSellLog.entries.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-autosell-log-empty';
+                empty.textContent = tr('casinoAutoSellLogEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            autoSellLog.entries.forEach(entry => {
+                const row = document.createElement('div');
+                const sprite = getPokemonIconUrl(entry.speciesId) || getPokeApiSpriteUrl({ speciesId:entry.speciesId });
+                const when = new Date(entry.at);
+                row.className = 'script-casino-autosell-log-row';
+                row.style.setProperty('--casino-tier', getMarketPokemonQualityTheme(entry.quality)?.color || '#64748b');
+                row.innerHTML = `
+                    <div class="script-casino-autosell-log-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(entry.name)}"></div>
+                    <div class="script-casino-autosell-log-info">
+                        <div class="script-casino-autosell-log-name">
+                            <b>${escapeHTML(entry.name)}</b>
+                            <span class="script-casino-autosell-log-tier">${escapeHTML(entry.tier)}</span>
+                        </div>
+                        <div class="script-casino-autosell-log-meta">
+                            <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(entry.level || 0)}</b></span>
+                            <span>${escapeHTML(tr('casinoIv'))} <b>${Number(entry.iv || 0)}/192</b></span>
+                            <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(entry.quality || 0).toFixed(2)}</b></span>
+                        </div>
+                        <div class="script-casino-autosell-log-net">${escapeHTML(formatCasinoText(
+                            Number(entry.spent || 0) > 0 ? tr('casinoAutoSellLogNet') : tr('casinoAutoSellLogValue'), {
+                                spent:Number(entry.spent || 0).toLocaleString('pt-BR'),
+                                gold:Number(entry.gold || 0).toLocaleString('pt-BR'),
+                                net:(Number(entry.gold || 0) - Number(entry.spent || 0)).toLocaleString('pt-BR'),
+                                value:Number(entry.catalogValue || 0).toLocaleString('pt-BR'),
+                                diff:(Number(entry.gold || 0) - Number(entry.catalogValue || 0)).toLocaleString('pt-BR')
+                            }
+                        ))}</div>
+                        <div class="script-casino-autosell-log-reason">${escapeHTML(entry.reason || '')}</div>
+                    </div>
+                    <div class="script-casino-autosell-log-side">
+                        <span class="script-casino-autosell-log-gold">${casinoIcon('coin')}<span>${Number(entry.gold || 0).toLocaleString('pt-BR')}</span></span>
+                        <span class="script-casino-autosell-log-time">${escapeHTML(when.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' }))}</span>
+                    </div>`;
+                row.querySelector('img')?.addEventListener('error', event => { event.currentTarget.style.visibility = 'hidden'; }, { once:true });
+                list.appendChild(row);
+            });
+        };
+        const openAutoSellLog = () => {
+            document.querySelector('.script-casino-config-backdrop')?.remove();
+            const layer = document.createElement('div');
+            layer.className = 'script-casino-config-backdrop';
+            layer.innerHTML = `
+                <div class="script-casino-config script-casino-config-wide" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoAutoSellLogTitle'))}">
+                    <header class="script-casino-config-head">
+                        <h3>${casinoIcon('scroll')}<span>${escapeHTML(tr('casinoAutoSellLogTitle'))}</span></h3>
+                        <button class="script-casino-config-close" type="button" aria-label="${escapeHTML(tr('casinoAutoSellClose'))}">×</button>
+                    </header>
+                    <div class="script-casino-config-body">
+                        <p class="script-casino-config-note">${escapeHTML(tr('casinoAutoSellLogHint'))}</p>
+                        <div class="script-casino-autosell-log-head">
+                            <span class="script-casino-autosell-log-total"></span>
+                            <button class="script-casino-autosell-log-clear" type="button">${escapeHTML(tr('casinoAutoSellLogClear'))}</button>
+                        </div>
+                        <div class="script-casino-autosell-log-list"></div>
+                    </div>
+                </div>`;
+            document.body.appendChild(layer);
+            const close = () => layer.remove();
+            layer.querySelector('.script-casino-config-close').addEventListener('click', close);
+            layer.querySelector('.script-casino-autosell-log-clear').addEventListener('click', () => {
+                autoSellLog = { sessionId:autoSellLog.sessionId, entries:[] };
+                writeAutoSellLog();
+                renderAutoSellLog();
+                refreshAutoSellButton();
+            });
+            layer.addEventListener('click', event => { if (event.target === layer) close(); });
+            renderAutoSellLog();
+        };
 
         const close = () => {
             if (closed) return;
@@ -7386,8 +9404,41 @@
             status.classList.toggle('is-error', kind === 'error');
             status.classList.toggle('is-success', kind === 'success');
         };
-        const getPokeId = poke => String(poke?.id ?? poke?.capturedId ?? poke?.pokeId ?? '');
-        const loadTeamPokemon = async () => {
+        /* Tira de proceso de la tanda. La barra y el contador se actualizan por
+           propiedades, sin transicion propia: las compras van mas rapido que
+           una transicion y la barra se quedaria siempre retrasada. Solo el
+           nombre lleva fundido, porque es lo unico que cambia en cada paso. */
+        let progressName = '';
+        const progress = backdrop.querySelector('.script-casino-progress');
+        const progressBar = backdrop.querySelector('.script-casino-progress-bar > i');
+        const progressCount = backdrop.querySelector('.script-casino-progress-count');
+        const progressNameEl = backdrop.querySelector('.script-casino-progress-name');
+        const setProgress = ({ current = 0, total = 0, name = '' } = {}) => {
+            if (!progress) return;
+            progress.hidden = false;
+            const ratio = total > 0 ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+            if (progressBar) progressBar.style.width = ratio.toFixed(1) + '%';
+            if (progressCount) progressCount.textContent = `${current} / ${total}`;
+            if (progressNameEl && name && name !== progressName) {
+                progressName = name;
+                progressNameEl.textContent = name;
+                progressNameEl.classList.remove('is-in');
+                /* Forzar el reflow reinicia la animacion cuando el nombre se
+                   repite, que si no se ignoraria el cambio de clase. */
+                void progressNameEl.offsetWidth;
+                progressNameEl.classList.add('is-in');
+            }
+        };
+        const clearProgress = () => {
+            if (!progress) return;
+            progress.hidden = true;
+            progressName = '';
+        };
+        /* Carga el listado completo de Pokemon del juego. Ya NO se filtra por
+           equipo: el Cassino no depende de el. Lo que se necesita de esta
+           llamada es allPokes, que sirve para comparar antes y despues de una
+           compra y saber cual es el Pokemon nuevo. */
+        const loadAllPokes = async () => {
             let pokemon = [];
             if (await waitForGameSocket(900)) {
                 pokemon = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs:2200, attempts:1 });
@@ -7395,19 +9446,15 @@
             if (!pokemon.length) pokemon = await requestPokemonTeamFromGameContext(1800);
             if (pokemon.length) latestPokemon = pokemon;
             allPokes = pokemon;
-            return pokemon.filter(poke => poke?.team)
-                .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
+            return pokemon;
         };
         const refreshCasinoData = async () => {
-            const [nextPayload, nextTeam] = await Promise.all([
-                gameApiRequest('/api/game/marlon'),
-                loadTeamPokemon().catch(error => {
-                    console.warn('No se pudo refrescar el equipo dentro del Cassino.', error);
-                    return teamPokemon;
-                })
-            ]);
-            payload = nextPayload;
-            teamPokemon = nextTeam;
+            payload = await gameApiRequest('/api/game/marlon');
+            try {
+                await loadAllPokes();
+            } catch (error) {
+                console.warn('No se pudo refrescar la lista de Pokémon dentro del Cassino.', error);
+            }
         };
         const getTeamPower = poke => {
             const direct = Number(poke?.power);
@@ -7428,22 +9475,35 @@
             const color = TYPE_COLORS[type.key] || '#91a3b7';
             return `<span class="script-casino-team-type" style="--casino-type:${escapeHTML(color)}">${escapeHTML(type.label)}</span>`;
         }).join('');
-        const isTeamPokemonProtected = poke => Boolean(
-            poke?.starter || isNativeLocked(poke) || poke?.shiny || poke?.market || poke?.listed
-        );
-        const showIvGoalAlert = matches => {
-            if (closed || !matches.length || ivGoal <= 0) return;
+        /* Alerta unificada. Se evaluan meta IV y tier a la vez para no apilar
+           dos tarjetas: si un Pokemon cumple las dos, sale una sola con ambos
+           motivos, en el color de su tier. */
+        const showPurchasedAlert = (pokes, options) => {
+            if (closed || !pokes.length) return;
             backdrop.querySelector('.script-casino-goal-alert')?.remove();
-            const poke = matches[0];
+            const poke = pokes[0];
+            const definition = getMarketPokemonQualityTheme(poke?.quality);
             const iv = Number(poke?.ivTotal || 0);
+            const name = poke?.name || 'Pokémon';
             const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
-            const extra = matches.length > 1 ? ` (+${matches.length - 1})` : '';
+            const extra = pokes.length > 1 ? ` (+${pokes.length - 1})` : '';
+            const title = options.tierHit
+                ? `${formatCasinoText(tr('casinoTierAlert'), { tier:definition?.label || '—' })}${extra}`
+                : `${casinoIcon('star')}<span>${escapeHTML(tr('casinoIvGoalReached'))}${escapeHTML(extra)}</span>`;
+            const lines = [];
+            if (options.tierHit) lines.push(formatCasinoText(tr('casinoTierAlertDetail'), { name, tier:definition?.label || '—' }));
+            if (options.goalHit) {
+                lines.push(options.tierHit
+                    ? formatCasinoText(tr('casinoTierAlertAndGoal'), { iv, goal:ivGoal })
+                    : formatCasinoText(tr('casinoIvGoalDetail'), { name, iv, goal:ivGoal }));
+            }
             const alert = document.createElement('div');
-            alert.className = 'script-casino-goal-alert';
+            alert.className = `script-casino-goal-alert${options.tierHit ? ' is-tier' : ''}`;
+            if (options.tierHit) alert.style.setProperty('--casino-alert-tier', definition?.color || '#a855f7');
             alert.setAttribute('role', 'alert');
             alert.innerHTML = `
-                <img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}">
-                <div><b>★ ${escapeHTML(tr('casinoIvGoalReached'))}${extra}</b><span>${escapeHTML(formatCasinoText(tr('casinoIvGoalDetail'), { name:poke?.name || 'Pokémon', iv, goal:ivGoal }))}</span></div>
+                <img src="${escapeHTML(sprite)}" alt="${escapeHTML(name)}">
+                <div><b>${escapeHTML(title)}</b><span>${escapeHTML(lines.join(' '))}</span></div>
                 <button type="button" aria-label="${escapeHTML(tr('close'))}">×</button>`;
             alert.querySelector('img')?.addEventListener('error', event => {
                 event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
@@ -7453,13 +9513,68 @@
             setTimeout(() => alert.remove(), 6500);
         };
         const announceIvGoalMatches = team => {
-            if (ivGoal <= 0) return;
-            const matches = team.filter(poke => recentTeamIds.has(getPokeId(poke))
-                && Number(poke?.ivTotal || 0) >= ivGoal
+            const fresh = team.filter(poke => recentTeamIds.has(getPokeId(poke))
                 && !alertedGoalPokeIds.has(getPokeId(poke)));
-            if (!matches.length) return;
-            matches.forEach(poke => alertedGoalPokeIds.add(getPokeId(poke)));
-            showIvGoalAlert(matches);
+            if (!fresh.length) return;
+            const goalMatches = ivGoal > 0
+                ? fresh.filter(poke => Number(poke?.ivTotal || 0) >= ivGoal)
+                : [];
+            const tierMatches = fresh.filter(shouldAlertTier);
+            if (!goalMatches.length && !tierMatches.length) return;
+            fresh.forEach(poke => alertedGoalPokeIds.add(getPokeId(poke)));
+            const both = tierMatches.filter(poke => goalMatches.includes(poke));
+            if (both.length) {
+                showPurchasedAlert(both, { goalHit:true, tierHit:true });
+                return;
+            }
+            const goalOnly = goalMatches.filter(poke => !tierMatches.includes(poke));
+            if (goalOnly.length) showPurchasedAlert(goalOnly, { goalHit:true, tierHit:false });
+            const tierOnly = tierMatches.filter(poke => !goalMatches.includes(poke));
+            if (tierOnly.length) showPurchasedAlert(tierOnly, { goalHit:false, tierHit:true });
+        };
+
+        /* Manda un Pokemon comprado al market global. Son dos pasos
+           obligatorios: el Pokemon recien comprado no esta en el deposito, y el
+           market solo anuncia lo que hay ahi. Primero se guarda con el mismo
+           storeTeamPokemon que usa la venta, y luego se abre el market apuntando
+           a el. El precio lo pone el usuario: el market recibe la entrada y abre
+           su editor vacio.
+
+           Se guarda con { silent:true } y solo eso: refreshCatalog repinta el
+           catalogo del deposito, que aqui sobra, y shouldRender repinta este
+           panel mientras lo estamos cerrando. */
+        const sendPurchasedPokemonToMarket = async poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || busyPokeId != null || busySpeciesId != null) return false;
+            busyPokeId = pokeId;
+            refreshButton.disabled = true;
+            renderTeam();
+            setStatus(formatCasinoText(tr('casinoStoringForMarket'), { name: poke?.name || 'Pokémon' }));
+            try {
+                await storeTeamPokemon(poke, { silent:true });
+                /* Fuera de la lista: a partir de aqui el market es quien responde
+                   por el. */
+                recentTeamIds.delete(pokeId);
+                const index = purchasedPokemon.findIndex(entry => getPokeId(entry) === pokeId);
+                if (index !== -1) purchasedPokemon.splice(index, 1);
+                /* El panel se cierra antes de abrir el market: el backdrop del
+                   market va a z-index 10050 y este a 2147483200, asi que sin
+                   cerrarlo el market se abriria detras y no se veria nada. Solo
+                   aqui, en el camino bueno: si el guardado falla, el Pokemon se
+                   queda en la lista y el aviso se lee aqui. */
+                close();
+                showGlobalMarketWindow({ sellPokemonId: pokeId });
+                return true;
+            } catch (error) {
+                /* Si el guardado falla el Pokemon se queda en la lista y se
+                   avisa: no se pierde nada. */
+                setStatus(`${tr('casinoMarketError')} ${error?.message || ''}`.trim(), 'error');
+                return false;
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
         };
 
         const storeTeamPokemon = async (poke, { silent = false, refreshCatalog = true, shouldRender = true } = {}) => {
@@ -7474,8 +9589,6 @@
             const stored = updated.find(entry => getPokeId(entry) === pokeId);
             if (!updated.length || stored?.team) throw new Error(tr('casinoStoreError'));
             latestPokemon = updated;
-            teamPokemon = updated.filter(entry => entry?.team)
-                .sort((a, b) => Number(a.slot ?? 99) - Number(b.slot ?? 99));
             recentTeamIds.delete(pokeId);
             if (refreshCatalog) {
                 try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
@@ -7488,10 +9601,18 @@
             return true;
         };
 
+        /* Devuelve el resultado real de la venta: { ok, goldGained, error }.
+           Antes no devolvia nada y ademas se comia los errores, de modo que
+           quien la llamaba no podia distinguir una venta hecha de una fallida
+           ni saber cuanto oro devolvio de verdad la API. El oro se toma de
+           result.goldGained y no de poke.sellValue, que es solo el valor
+           teorico del catalogo y no lo que el juego paga. */
         const sellTeamPokemon = async poke => {
             const pokeId = getPokeId(poke);
             const sellValue = Number(poke?.sellValue || 0);
-            if (!pokeId || sellValue <= 0 || isTeamPokemonProtected(poke)) return;
+            if (!pokeId || sellValue <= 0 || isTeamPokemonProtected(poke)) {
+                return { ok:false, goldGained:0, error:tr('casinoSellError') };
+            }
             busyPokeId = pokeId;
             refreshButton.disabled = true;
             renderTeam();
@@ -7500,12 +9621,13 @@
                 const result = await gameApiRequest('/api/game/pokemon/sell', {
                     method:'POST', body:JSON.stringify({ pokeIds:[pokeId] })
                 });
+                const goldGained = Number(result?.goldGained ?? 0);
                 recentTeamIds.delete(pokeId);
                 const soldIndex = purchasedPokemon.findIndex(entry => getPokeId(entry) === pokeId);
                 if (soldIndex !== -1) purchasedPokemon.splice(soldIndex, 1);
                 const successMessage = formatCasinoText(tr('casinoSold'), {
                     name:poke.name || 'Pokémon',
-                    gold:Number(result?.goldGained ?? sellValue).toLocaleString('pt-BR')
+                    gold:(goldGained || sellValue).toLocaleString('pt-BR')
                 });
                 try {
                     await refreshCasinoData();
@@ -7514,8 +9636,10 @@
                 }
                 setStatus(successMessage, 'success');
                 sendGameMessage({ type:'pokes-get' });
+                return { ok:true, goldGained, error:null };
             } catch (error) {
                 setStatus(`${tr('casinoSellError')} ${error.message || ''}`.trim(), 'error');
+                return { ok:false, goldGained:0, error:error?.message || tr('casinoSellError') };
             } finally {
                 busyPokeId = null;
                 refreshButton.disabled = false;
@@ -7523,31 +9647,9 @@
             }
         };
 
-        const storeAllPurchasedPokemon = async () => {
-            const candidates = purchasedPokemon.filter(poke => recentTeamIds.has(getPokeId(poke)));
-            if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
-            busyPokeId = '__bulk_store__';
-            refreshButton.disabled = true;
-            renderTeam();
-            let stored = 0;
-            try {
-                for (const poke of candidates) {
-                    try {
-                        await storeTeamPokemon(poke, { silent:true });
-                        stored += 1;
-                    } catch (error) {
-                        console.warn(`No se pudo guardar ${poke?.name || 'Pokémon'} durante la acción masiva.`, error);
-                    }
-                }
-                setStatus(stored === candidates.length
-                    ? formatCasinoText(tr('casinoBulkStored'), { count:stored })
-                    : formatCasinoText(tr('casinoBulkPartial'), { done:stored, total:candidates.length }), stored ? 'success' : 'error');
-            } finally {
-                busyPokeId = null;
-                refreshButton.disabled = false;
-                if (!closed) { render(); renderTeam(); }
-            }
-        };
+        /* El guardado masivo se elimino: su boton se sustituyo por el del
+           historial de auto-ventas. Guardar sigue disponible una carta a una,
+           desde el boton de cada Pokemon comprado. */
 
         const sellAllPurchasedPokemon = async () => {
             const candidates = purchasedPokemon.filter(poke => recentTeamIds.has(getPokeId(poke))
@@ -7593,62 +9695,224 @@
             }
         };
 
+        /* --- ESTADO VOLATIL DE LA CARTA ---
+           teamCardSignature decide si una carta se reconstruye, y solo lleva lo
+           que DESCRIBE al Pokemon: nivel, IVs, quality, shiny y naturaleza.
+           Hay otra cosa que la carta enseña y que no sale de ahi: si el panel
+           esta ocupado, y si el Pokemon llega a la meta de IV que el usuario
+           acaba de escribir. Meter esas dos cosas en la firma las arreglaria,
+           pero haria que CADA compra y CADA venta repintaran TODAS las cartas,
+           que es justo el parpadeo que esta lista ha dejado de tener. Asi que
+           se refrescan en sitio, sobre el nodo que ya esta en el DOM.
+
+           is-new NO entra aqui aunque dependa de recentTeamIds, y no es
+           capricho: lleva ademas una etiqueta <span class="script-casino-new-tag">
+           en el marcado, y quitar solo la clase dejaria la etiqueta puesta. Va
+           en la firma, que repinta la carta entera y deja las dos cosas
+           coherentes.
+
+           Los botones se buscan por la clase base .script-casino-team-action y
+           no de uno en uno: el de venta y el de market global la comparten, y
+           asi un boton nuevo nace cubierto sin tocar nada aqui. */
+        const refreshCardVolatileState = (card, poke) => {
+            if (!card) return;
+            const busy = busyPokeId != null || busySpeciesId != null;
+            const disabled = busy || isTeamPokemonProtected(poke) || Number(poke?.sellValue || 0) <= 0;
+            card.querySelectorAll('.script-casino-team-action').forEach(button => {
+                button.disabled = disabled;
+            });
+            card.classList.toggle('is-iv-goal', ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal);
+        };
+
+        /* Construye una carta de comprado. El marcado es el mismo que habia
+           dentro del bucle de renderTeam; lo que cambia es que ahora se llama
+           solo para las cartas nuevas, no para todas en cada refresco. */
+        const buildTeamCard = poke => {
+            const pokeId = getPokeId(poke);
+            const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
+            const protectedPoke = isTeamPokemonProtected(poke);
+            const sellValue = Number(poke?.sellValue || 0);
+            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const stats = getTeamStats(poke);
+            const reachedIvGoal = ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal;
+            const busy = busyPokeId != null || busySpeciesId != null;
+            const card = document.createElement('article');
+            card.className = `script-casino-team-card${recentTeamIds.has(pokeId) ? ' is-new' : ''}${reachedIvGoal ? ' is-iv-goal' : ''}`;
+            card.style.setProperty('--casino-tier', qualityTheme.color);
+            card.dataset.signature = teamCardSignature(poke);
+            card.innerHTML = `
+                <div class="script-casino-team-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}"></div>
+                <div class="script-casino-team-info">
+                    <div class="script-casino-team-name-line">
+                        <b class="script-casino-team-name">${poke?.shiny ? casinoIcon('sparkle') : ''}<span>${escapeHTML(poke?.name || 'Pokémon')}</span></b>
+                        <span class="script-casino-team-tier">${escapeHTML(qualityTheme.label)}</span>
+                        ${recentTeamIds.has(pokeId) ? `<span class="script-casino-new-tag">${escapeHTML(tr('casinoNewPokemon'))}</span>` : ''}
+                    </div>
+                    <div class="script-casino-team-meta">
+                        <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(poke?.level || 1)}</b></span>
+                        <span>${escapeHTML(tr('casinoPower'))} <b>${getTeamPower(poke).toLocaleString('pt-BR')}</b></span>
+                        <span>${escapeHTML(tr('casinoIv'))} <b>${Number(poke?.ivTotal || 0)}/192</b></span>
+                        <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(poke?.quality || 0).toFixed(2)}</b></span>
+                        ${poke?.nature ? `<span>${escapeHTML(tr('casinoNature'))} <b>${escapeHTML(poke.nature)}</b></span>` : ''}
+                    </div>
+                    <div class="script-casino-team-types">${getTeamTypesHTML(poke)}</div>
+                </div>
+                <div class="script-casino-team-stats">${stats.map(([label, value]) => `<span class="script-casino-team-stat">${label}<b>${Number(value || 0).toLocaleString('pt-BR')}</b></span>`).join('')}</div>
+                <div class="script-casino-team-value">${escapeHTML(tr('casinoSellValue'))}: ${casinoIcon('coin')}<span>${sellValue.toLocaleString('pt-BR')}</span>${protectedPoke ? ` · ${escapeHTML(tr('casinoProtected'))}` : ''}</div>
+                <div class="script-casino-team-actions">
+                    <button class="script-casino-team-action script-casino-sell" type="button" ${busy || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>${casinoIcon('coin')}<span>${escapeHTML(tr('casinoSellPokemon'))}</span></button>
+                    <button class="script-casino-team-action script-casino-market" type="button" ${busy || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>${casinoIcon('market')}<span>${escapeHTML(tr('casinoMarketSell'))}</span></button>
+                </div>`;
+            card.querySelector('.script-casino-team-art img')?.addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
+            }, { once:true });
+            card.querySelector('.script-casino-sell').addEventListener('click', () => sellTeamPokemon(poke));
+            card.querySelector('.script-casino-market')?.addEventListener('click', () => sendPurchasedPokemonToMarket(poke));
+            return { key: pokeId, node: card, signature: card.dataset.signature };
+        };
+
         const renderTeam = () => {
             teamCount.textContent = String(purchasedPokemon.length);
-            teamList.replaceChildren();
             const purchasedTeam = purchasedPokemon;
             const sellablePurchased = purchasedTeam.filter(poke => !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
-            bulkStoreButton.disabled = busyPokeId != null || busySpeciesId != null || purchasedTeam.length === 0;
+            /* El boton de historial no depende de lo que haya comprado: siempre
+               se puede abrir, y lleva la cuenta de lo vendido por su cuenta. */
+            logButton.disabled = busyPokeId != null || busySpeciesId != null;
+            logButton.classList.toggle('has-entries', autoSellLog.entries.length > 0);
             bulkSellButton.disabled = busyPokeId != null || busySpeciesId != null || sellablePurchased.length === 0;
-            bulkStoreButton.textContent = `📦 ${tr('casinoStoreAll')} (${purchasedTeam.length})`;
-            bulkSellButton.textContent = `💲 ${tr('casinoSellAll')} (${sellablePurchased.length})`;
+            const sellLabel = bulkSellButton.querySelector('span');
+            if (sellLabel) sellLabel.textContent = `${tr('casinoSellAll')} (${sellablePurchased.length})`;
+            refreshAutoSellButton();
             announceIvGoalMatches(purchasedTeam);
+
+            /* El filtro solo oculta tarjetas. purchasedPokemon no se modifica, de
+               modo que limpiar el filtro devuelve la lista completa. */
+            const visibleTeam = purchasedTeam.filter(matchesFilters);
+            filtersCount.textContent = formatCasinoText(tr('casinoFilterShowing'), {
+                shown:visibleTeam.length, total:purchasedTeam.length
+            });
+            filterClearButton.disabled = !hasActiveFilters();
             if (!purchasedTeam.length) {
+                teamList.replaceChildren();
+                teamCards.clear();
                 const empty = document.createElement('div');
                 empty.className = 'script-casino-team-empty';
                 empty.textContent = tr('casinoTeamEmpty');
                 teamList.appendChild(empty);
                 return;
             }
-            purchasedTeam.forEach(poke => {
-                const pokeId = getPokeId(poke);
-                const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
-                const protectedPoke = isTeamPokemonProtected(poke);
-                const sellValue = Number(poke?.sellValue || 0);
-                const card = document.createElement('article');
-                const reachedIvGoal = ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal;
-                card.className = `script-casino-team-card${recentTeamIds.has(pokeId) ? ' is-new' : ''}${reachedIvGoal ? ' is-iv-goal' : ''}`;
-                card.style.setProperty('--casino-tier', qualityTheme.color);
-                const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
-                const stats = getTeamStats(poke);
-                card.innerHTML = `
-                    <div class="script-casino-team-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}"></div>
-                    <div class="script-casino-team-info">
-                        <div class="script-casino-team-name-line">
-                            <b class="script-casino-team-name">${escapeHTML(poke?.shiny ? `✨ ${poke.name || 'Pokémon'}` : poke?.name || 'Pokémon')}</b>
-                            <span class="script-casino-team-tier">${escapeHTML(qualityTheme.label)}</span>
-                            ${recentTeamIds.has(pokeId) ? `<span class="script-casino-new-tag">${escapeHTML(tr('casinoNewPokemon'))}</span>` : ''}
-                        </div>
-                        <div class="script-casino-team-meta">
-                            <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(poke?.level || 1)}</b></span>
-                            <span>${escapeHTML(tr('casinoPower'))} <b>${getTeamPower(poke).toLocaleString('pt-BR')}</b></span>
-                            <span>${escapeHTML(tr('casinoIv'))} <b>${Number(poke?.ivTotal || 0)}/192</b></span>
-                            <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(poke?.quality || 0).toFixed(2)}</b></span>
-                            ${poke?.nature ? `<span>${escapeHTML(tr('casinoNature'))} <b>${escapeHTML(poke.nature)}</b></span>` : ''}
-                        </div>
-                        <div class="script-casino-team-types">${getTeamTypesHTML(poke)}</div>
-                    </div>
-                    <div class="script-casino-team-stats">${stats.map(([label, value]) => `<span class="script-casino-team-stat">${label}<b>${Number(value || 0).toLocaleString('pt-BR')}</b></span>`).join('')}</div>
-                    <div class="script-casino-team-value">${escapeHTML(tr('casinoSellValue'))}: 💲 ${sellValue.toLocaleString('pt-BR')}${protectedPoke ? ` · ${escapeHTML(tr('casinoProtected'))}` : ''}</div>
-                    <div class="script-casino-team-actions">
-                        <button class="script-casino-team-action script-casino-sell" type="button" ${busyPokeId != null || busySpeciesId != null || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>💲 ${escapeHTML(tr('casinoSellPokemon'))}</button>
-                    </div>`;
-                card.querySelector('.script-casino-team-art img')?.addEventListener('error', event => {
-                    event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
-                }, { once:true });
-                card.querySelector('.script-casino-sell').addEventListener('click', () => sellTeamPokemon(poke));
-                teamList.appendChild(card);
+            teamList.querySelector('.script-casino-team-empty, .script-casino-filters-empty')?.remove();
+            if (!visibleTeam.length) {
+                teamList.replaceChildren();
+                teamCards.clear();
+                const none = document.createElement('div');
+                none.className = 'script-casino-filters-empty';
+                none.textContent = tr('casinoFilterNone');
+                teamList.appendChild(none);
+                return;
+            }
+            /* Antes: teamList.replaceChildren() y un bucle que reconstruia
+               todas las cartas en cada operacion. Eso hacia que la lista
+               pareciera un salto: los nodos anteriores ya no existian y no
+               habia nada que animar. Ahora se reconcilia por pokeId. */
+            /* La vista lleva TODAS las compradas, con visible a false para las
+               que el filtro oculta, para que ocultarlas no sea retirarlas. La
+               arma buildTeamView, que es pura y esta probada por separado. Se
+               le pasa la visibleTeam de arriba, que ya esta calculada: no se
+               vuelve a recorrer el filtro. */
+            const view = buildTeamView(purchasedTeam, visibleTeam, getPokeId, teamCardSignature);
+            /* create y update reciben el item de la vista, no el Pokemon: por eso
+               este mapa. Sin el, buildTeamCard se comeria un { id, signature } y
+               dibujaria una carta vacia. */
+            const purchasedById = new Map(purchasedTeam.map(poke => [getPokeId(poke), poke]));
+            reconcileTeamCards(view, {
+                existing: id => teamCards.get(id) || null,
+                existingAllIds: () => [...teamCards.keys()],
+                create: item => {
+                    const fresh = buildTeamCard(purchasedById.get(String(item.id)));
+                    teamCards.set(fresh.key, fresh);
+                    return fresh;
+                },
+                update: (node, item) => {
+                    /* La firma cambio: se reconstruye la carta. Es un caso raro
+                       (el nivel o los IVs suben tras un guardado), y es mas
+                       seguro reconstruir que intentar parchear campos sueltos. */
+                    const fresh = buildTeamCard(purchasedById.get(String(item.id)));
+                    node.replaceWith(fresh.node);
+                    teamCards.set(fresh.key, fresh);
+                },
+                enter: node => {
+                    /* Lo mas nuevo va primero, como cuando purchasedPokemon
+                       hace unshift. Las que ya estan no se reordenan nunca, para
+                       no provocar movimientos en cada compra. */
+                    teamList.insertBefore(node, teamList.firstElementChild);
+                    node.classList.add('is-entering');
+                    /* La entrada tiene dos caminos: el evento y un setTimeout.
+                       No solo por el movimiento reducido, sino porque la
+                       transicion o la animacion pueden no existir, y porque un
+                       evento puede no llegar nunca. El setTimeout lo
+                       garantiza igual, asi que la clase se va siempre. */
+                    const done = () => node.classList.remove('is-entering');
+                    /* El guardia del origen no es cosmetico: animationend SUBE
+                       por el DOM, y un boton de dentro de la carta anima al
+                       pasar por encima. Sin el, ese evento de un hijo retendria
+                       la tarjeta antes de tiempo. Y por eso el listener NO va
+                       con { once:true }: al primer evento de un hijo se gastaria
+                       sin actuar y el camino bueno se perderia. Quitar una
+                       clase es idempotente, asi que done puede correr las veces
+                       que haga falta. */
+                    node.addEventListener('animationend', event => {
+                        if (event.target !== node) return;
+                        done();
+                    });
+                    setTimeout(done, 420);
+                },
+                leave: (node, id) => {
+                    node.classList.add('is-leaving');
+                    /* Doble retirada: el transitionend y un setTimeout de 400
+                       ms. Los dos entran por el mismo done, y los dos miran
+                       isConnected antes de tocar nada. Ningun camino borra dos
+                       veces: si uno retira el nodo, el otro llega y el guard lo
+                       corta, y si el panel se cerro por debajo tambien. */
+                    const done = () => {
+                        if (!node.isConnected) return;
+                        node.remove();
+                        /* Redundante con drop, que ya lo poda al instante: se
+                           deja como cinturon por si acaso. Map.delete es
+                           idempotente. */
+                        teamCards.delete(id);
+                    };
+                    /* transitionend sube por el DOM igual que animationend, y
+                       dentro de la carta hay algo que transiciona: el boton de
+                       accion tiene transition en transform, filter y
+                       box-shadow, y los cambia al pasar por encima. Un evento de
+                       ahi retendria la tarjeta antes de tiempo. Por eso el
+                       guardia, y por eso el listener NO lleva { once:true }: con
+                       el guardia puesto, { once:true } se gastaria en el primer
+                       evento de un hijo sin llegar a hacer nada, y la retirada
+                       se quedaria solo con el setTimeout. Sin el, el camino
+                       bueno sigue vivo para cuando llegue el evento de la
+                       carta. done ya es idempotente, de modo que repetirlo no
+                       hace daño. */
+                    node.addEventListener('transitionend', event => {
+                        if (event.target !== node) return;
+                        done();
+                    });
+                    setTimeout(done, 400);
+                },
+                drop: id => teamCards.delete(id)
             });
+            /* Y ahora lo que la firma no lleva, sobre los nodos que ya estan en
+               el DOM. Va DESPUES de reconciliar a proposito: create y update
+               acaban de cambiar lo que hay en teamCards, asi que lo que se ve
+               aqui es siempre el nodo vivo. No se mira ninguna firma ni se
+               reconstruye nada. */
+            for (const item of view) {
+                if (!item.visible) continue;
+                const id = String(item.id);
+                const entry = teamCards.get(id);
+                if (entry) refreshCardVolatileState(entry.node, purchasedById.get(id));
+            }
         };
         const getNewPurchasedPokemon = (previousSnapshot, expectedSpeciesId = 0) => allPokes.filter(poke => {
             const pokeId = getPokeId(poke);
@@ -7666,6 +9930,228 @@
             }
             return purchased;
         };
+        /* --- HISTORIAL DE AUTO-VENTA ---
+           Guarda lo vendido automaticamente, con el motivo por el que se
+           vendio. Se resetea al abrir una sesion nueva del Cassino: la clave
+           lleva el identificador de sesion, asi que cada compra en cantidad
+           empieza con su propio historial y el anterior ya no se consulta. */
+        const autoSellLogStorageKey = 'script_casino_auto_sell_log_v1';
+        const autoSellSessionStorageKey = 'script_casino_auto_sell_session_v1';
+        const readAutoSellLog = () => {
+            let stored = null;
+            try { stored = JSON.parse(localStorage.getItem(autoSellLogStorageKey) || 'null'); } catch (_) {}
+            const sessionId = localStorage.getItem(autoSellSessionStorageKey) || '';
+            /* Sin sesion guardada, o con una sesion distinta, se empieza de cero. */
+            if (!stored || stored.sessionId !== sessionId) return { sessionId, entries: [] };
+            return { sessionId, entries: Array.isArray(stored.entries) ? stored.entries : [] };
+        };
+        let autoSellLog = readAutoSellLog();
+        const writeAutoSellLog = () => {
+            try { localStorage.setItem(autoSellLogStorageKey, JSON.stringify(autoSellLog)); } catch (_) {}
+        };
+        /* Una sesion nueva por pestana abierta. Se genera al abrir el Cassino,
+           no se hereda del guardado, para que reabrir el panel sea continuar la
+           misma sesion y no perder el historial a media compra. */
+        const startAutoSellSession = () => {
+            const sessionId = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+            try { localStorage.setItem(autoSellSessionStorageKey, sessionId); } catch (_) {}
+            autoSellLog = { sessionId, entries: [] };
+            writeAutoSellLog();
+        };
+        const addAutoSellLogEntry = entry => {
+            if (!entry) return;
+            autoSellLog.entries.unshift(entry);
+            /* Tope para que el guardado no crezca sin limite si se compran
+               muchas tandas. */
+            if (autoSellLog.entries.length > 200) autoSellLog.entries.length = 200;
+            writeAutoSellLog();
+        };
+        const getAutoSellSessionTotalGold = () => autoSellLog.entries.reduce(
+            (sum, entry) => sum + Number(entry?.gold || 0), 0
+        );
+        /* Lo que costo el conjunto de los Pokemon auto-vendidos de la sesion.
+           El saldo que de verdad se ve en la cuenta es gold - spent: la suma
+           de las ventas sola nunca es el dinero que te queda. */
+        const getAutoSellSessionSpentGold = () => autoSellLog.entries.reduce(
+            (sum, entry) => sum + Number(entry?.spent || 0), 0
+        );
+        const getAutoSellSessionNetGold = () => (
+            getAutoSellSessionTotalGold() - getAutoSellSessionSpentGold()
+        );
+
+        /* Aplica la auto-venta a lo recien comprado. Reutiliza
+           sellTeamPokemon, que ya hace el ciclo completo: guardar en el Box,
+           vender por API y quitarlo de purchasedPokemon. Por eso un Pokemon
+           auto-vendido no aparece en la lista de comprados.
+           Solo se cuenta y se registra lo que la API confirmo: si una venta
+           falla, no suma oro ni entra en el historial. */
+        const runAutoSellOnPurchased = async purchased => {
+            if (!autoSellConfig.enabled || !purchased.length) return { sold:0, gold:0, failed:0 };
+            let sold = 0;
+            let failed = 0;
+            let gold = 0;
+            for (const poke of purchased) {
+                if (!shouldAutoSell(poke)) continue;
+                const iv = Number(poke?.ivTotal || 0);
+                const quality = Number(poke?.quality || 0);
+                const tierId = getPokemonTierId(poke);
+                const value = Number(poke?.sellValue || 0);
+                /* Lo que costo cada Pokemon. El precio de compra no viene en
+                   el Pokemon devuelto por la compra, asi que lo toma el
+                   llamador del precio de la oferta vigente. Es lo que permite
+                   restar el gasto y saber el saldo real. */
+                const spent = Math.max(0, Number(poke?.scriptBuyPrice ?? 0));
+                setStatus(formatCasinoText(tr('casinoAutoSellSold'), {
+                    name:poke?.name || 'Pokémon', iv, quality:quality.toFixed(2),
+                    tier:getTierLabel(tierId) || '—',
+                    minIv:autoSellConfig.minIv,
+                    minTier:autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoAutoSellMinTierAny')
+                }));
+                /* sellTeamPokemon limpia el estado y refresca, asi que se
+                   espera antes de seguir con el siguiente. */
+                const outcome = await sellTeamPokemon(poke);
+                if (!outcome?.ok) {
+                    failed += 1;
+                    /* La venta fallo. El Pokemon sigue en la cuenta, asi que se
+                       mantiene la reserva: es el unico sitio donde se puede
+                       vender bien, y la auto-venta de capturas no debe tocarlo. */
+                    continue;
+                }
+                /* Vendido y confirmado por la API. La reserva se suelta: ya no
+                   esta en la lista y no hay nada que pueda volver a venderlo. */
+                forgetCasinoPokemon(poke);
+                sold += 1;
+                /* El oro es el que devolvio la API, no el valor del catalogo. */
+                gold += Number(outcome.goldGained || 0);
+                addAutoSellLogEntry({
+                    at: Date.now(),
+                    id:getPokeId(poke),
+                    name:poke?.name || 'Pokémon',
+                    speciesId:Number(poke?.speciesId || 0),
+                    level:Number(poke?.level || 0),
+                    iv, quality, tier:getTierLabel(tierId) || '—',
+                    tierId, gold:Number(outcome.goldGained || 0),
+                    /* Se guardan tambien el valor teorico del catalogo y lo que
+                       costo comprar, para poder ver en cada venta cuanto se
+                       perdio y cual fue el saldo real. */
+                    catalogValue:value,
+                    spent,
+                    minIv:autoSellConfig.minIv,
+                    minTier:autoSellConfig.minTier || '',
+                    reason:formatCasinoText(tr('casinoAutoSellReasonBad'), {
+                        iv, minIv:autoSellConfig.minIv,
+                        tier:getTierLabel(tierId) || '—',
+                        minTier:autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoAutoSellMinTierAny')
+                    })
+                });
+            }
+            if (sold) {
+                setStatus(formatCasinoText(tr('casinoAutoSellSessionSold'), {
+                    count:sold, gold:gold.toLocaleString('pt-BR')
+                }) + (failed ? ` ${formatCasinoText(tr('casinoAutoSellSessionFailed'), { count:failed })}` : ''),
+                failed ? 'error' : 'success');
+            }
+            return { sold, gold, failed };
+        };
+        const openAutoSellConfig = () => {
+            document.querySelector('.script-casino-config-backdrop')?.remove();
+            const layer = document.createElement('div');
+            layer.className = 'script-casino-config-backdrop';
+            const tierChecks = MARKET_QUALITY_TIER_DEFINITIONS.map(definition => `
+                <label class="script-casino-config-check">
+                    <input type="checkbox" value="${escapeHTML(definition.id)}" ${autoSellConfig.alertTiers.includes(definition.id) ? 'checked' : ''}>
+                    <span style="color:${escapeHTML(definition.color)}">${escapeHTML(definition.label)}</span>
+                </label>`).join('');
+            /* El corte de quality es un selector de tier, no un numero: asi se
+               elige "legendario" y se descarta todo lo que este por debajo. */
+            const tierSelectOptions = [`<option value="">${escapeHTML(tr('casinoAutoSellMinTierAny'))}</option>`]
+                .concat(MARKET_QUALITY_TIER_DEFINITIONS.map(definition =>
+                    `<option value="${escapeHTML(definition.id)}" ${autoSellConfig.minTier === definition.id ? 'selected' : ''}>${escapeHTML(definition.label)}</option>`
+                )).join('');
+            layer.innerHTML = `
+                <div class="script-casino-config" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoAutoSellTitle'))}">
+                    <header class="script-casino-config-head">
+                        <h3>${casinoIcon('gear')}<span>${escapeHTML(tr('casinoAutoSellTitle'))}</span></h3>
+                        <button class="script-casino-config-close" type="button" aria-label="${escapeHTML(tr('casinoAutoSellClose'))}">×</button>
+                    </header>
+                    <div class="script-casino-config-body">
+                        <label class="script-casino-config-check" style="grid-template-columns:auto 1fr;">
+                            <input type="checkbox" class="script-casino-config-enabled" ${autoSellConfig.enabled ? 'checked' : ''}>
+                            <span>${escapeHTML(tr('casinoAutoSellEnable'))}</span>
+                        </label>
+                        <p class="script-casino-config-note">${escapeHTML(tr('casinoAutoSellRule'))}</p>
+                        <div class="script-casino-config-group">
+                            <h4>${escapeHTML(tr('casinoAutoSell'))}</h4>
+                            <div class="script-casino-config-row">
+                                <label class="script-casino-config-field"><label>${escapeHTML(tr('casinoAutoSellMinIv'))}</label><input type="number" class="script-casino-config-iv" min="0" max="192" step="1" value="${autoSellConfig.minIv}"></label>
+                                <label class="script-casino-config-field"><label>${escapeHTML(tr('casinoAutoSellMinTier'))}</label><select class="script-casino-config-tier">${tierSelectOptions}</select></label>
+                            </div>
+                            <p class="script-casino-config-preview" data-role="preview"></p>
+                        </div>
+                        <div class="script-casino-config-group">
+                            <h4>${escapeHTML(tr('casinoAutoSellAlertTier'))}</h4>
+                            <div class="script-casino-config-checks">${tierChecks}</div>
+                        </div>
+                        <div class="script-casino-config-actions">
+                            <button class="script-casino-config-btn script-casino-config-cancel" type="button">${escapeHTML(tr('casinoAutoSellCancel'))}</button>
+                            <button class="script-casino-config-btn script-casino-config-save" type="button">${escapeHTML(tr('casinoAutoSellSell'))}</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(layer);
+
+            const enabledInput = layer.querySelector('.script-casino-config-enabled');
+            const ivInput = layer.querySelector('.script-casino-config-iv');
+            const tierInput = layer.querySelector('.script-casino-config-tier');
+            const preview = layer.querySelector('[data-role="preview"]');
+            const close = () => layer.remove();
+            const updatePreview = () => {
+                const enabled = enabledInput.checked;
+                const minIv = Math.max(0, Math.min(192, Math.round(Number(ivInput.value) || 0)));
+                const minTier = tierInput.value;
+                if (!enabled) {
+                    preview.innerHTML = `<b>${escapeHTML(tr('casinoAutoSellOff'))}</b> ${escapeHTML(tr('casinoAutoSellRuleOff'))}`;
+                    return;
+                }
+                /* Cuenta sobre lo comprado ahora mismo, para que el usuario vea
+                   el efecto de lo que configura antes de guardar. Usa la misma
+                   regla que shouldAutoSell, para que el numero no mienta. */
+                const trial = { enabled:true, minIv, minTier, alertTiers:autoSellConfig.alertTiers };
+                const matched = purchasedPokemon.filter(poke => {
+                    if (isTeamPokemonProtected(poke) || Number(poke?.sellValue || 0) <= 0) return false;
+                    if (Number(poke?.ivTotal || 0) >= trial.minIv) return false;
+                    if (trial.minTier) {
+                        const actual = tierOrder(getPokemonTierId(poke));
+                        if (actual < 0 || actual >= tierOrder(trial.minTier)) return false;
+                    }
+                    return true;
+                }).length;
+                const alcance = formatCasinoText(tr('casinoAutoSellScope'), {
+                    iv:minIv, tier:minTier ? getTierLabel(minTier) : tr('casinoAutoSellMinTierAny')
+                });
+                preview.innerHTML = `${escapeHTML(alcance)}<br>${escapeHTML(formatCasinoText(tr('casinoAutoSellPreview'), { count:matched, total:purchasedPokemon.length }))}`;
+            };
+            [enabledInput, ivInput, tierInput].forEach(input => {
+                input.addEventListener('input', updatePreview);
+                input.addEventListener('change', updatePreview);
+            });
+            layer.querySelector('.script-casino-config-close').addEventListener('click', close);
+            layer.querySelector('.script-casino-config-cancel').addEventListener('click', close);
+            layer.addEventListener('click', event => { if (event.target === layer) close(); });
+            layer.querySelector('.script-casino-config-save').addEventListener('click', () => {
+                autoSellConfig = {
+                    enabled: enabledInput.checked,
+                    minIv: Math.max(0, Math.min(192, Math.round(Number(ivInput.value) || 0))),
+                    minTier: tierInput.value,
+                    alertTiers: Array.from(layer.querySelectorAll('.script-casino-config-checks input:checked'))
+                        .map(input => input.value)
+                };
+                writeAutoSellConfig();
+                close();
+                renderTeam();
+            });
+            updatePreview();
+        };
         const processCasinoQuantity = async (initialOffer, requestedQuantity) => {
             const total = Math.max(1, Math.min(999, Math.floor(Number(requestedQuantity) || 1)));
             const speciesId = Number(initialOffer?.speciesId || 0);
@@ -7674,6 +10160,13 @@
             refreshButton.disabled = true;
             let completed = 0;
             let lastError = null;
+            /* Contabilidad de la tanda: lo que se gasto comprando y lo que la
+               API devolvio al revender. El saldo real es la diferencia, no lo
+               que dicen las ventas por separado. */
+            let batchSpent = 0;
+            let batchSoldGold = 0;
+            let batchSoldCount = 0;
+            let batchFailedCount = 0;
             render();
             renderTeam();
             try {
@@ -7684,13 +10177,27 @@
                         lastError = new Error(getMarlonOfferReason(currentOffer, payload));
                         break;
                     }
-                    setStatus(formatCasinoText(tr('casinoBuyingProgress'), {
-                        current:index + 1, total, name:currentOffer.name || initialOffer.name || 'Pokémon'
-                    }));
+                    setProgress({
+                        current: index + 1,
+                        total,
+                        name: currentOffer.name || initialOffer.name || 'Pokémon'
+                    });
                     const previousSnapshot = new Map(allPokes.map(poke => [
                         getPokeId(poke), Number(poke?.speciesId || 0)
                     ]));
                     try {
+                        /* El precio se toma de la oferta vigente antes de
+                           comprar: es lo que sale de la cuenta en este paso.
+                           Se anota en cada Pokemon para que el historial de
+                           auto-venta pueda restarlo despues. */
+                        const unitPrice = Math.max(0, Number(currentOffer?.price ?? initialOffer?.price ?? 0));
+                        batchSpent += unitPrice;
+                        /* Se declara la compra ANTES de llamar al servidor. A
+                           partir de aqui, y hasta que se sepa el id del Pokemon,
+                           la auto-venta de capturas va a hacer como mucho una
+                           pausa: lo compra la forma de que no se lleve por
+                           delante nada de esta compra. */
+                        markCasinoPurchaseStarted(speciesId);
                         await gameApiRequest('/api/game/marlon/buy', {
                             method:'POST', body:JSON.stringify({ speciesId })
                         });
@@ -7700,14 +10207,35 @@
                         purchased.forEach(poke => {
                             const pokeId = getPokeId(poke);
                             recentTeamIds.add(pokeId);
+                            /* Ya se sabe el id: se cierra la reserva por
+                               especie y el Pokemon pasa a ser del Cassino de
+                               forma definitiva, aunque la compra se corte
+                               ahora mismo. */
+                            claimCasinoPokemon(poke);
+                            /* El precio no viene en el Pokemon que devuelve
+                               la compra, asi que se le pone aqui. Es el
+                               unico momento en que se sabe con certeza. */
+                            if (poke) poke.scriptBuyPrice = unitPrice;
                             if (pokeId && !purchasedPokemon.some(entry => getPokeId(entry) === pokeId)) {
                                 purchasedPokemon.unshift(JSON.parse(JSON.stringify(poke)));
                             }
                         });
                         announceIvGoalMatches(purchasedPokemon);
+                        /* Se evalua antes de seguir comprando, para que lo que
+                           no cumple el rango no se quede esperando en la lista
+                           mientras el usuario sigue comprando lotes. */
+                        const autoSold = await runAutoSellOnPurchased(purchased);
+                        batchSoldCount += autoSold.sold;
+                        batchSoldGold += autoSold.gold;
+                        batchFailedCount += autoSold.failed;
                     } catch (error) {
                         lastError = error;
                         break;
+                    } finally {
+                        /* Siempre, incluso si la compra revienta o se corta el
+                           lote. Dejarlo colgado dejaria la auto-venta de
+                           capturas pausada para siempre. */
+                        markCasinoPurchaseFinished(speciesId);
                     }
                 }
             } finally {
@@ -7722,7 +10250,17 @@
                         ? (initialOffer.isTrade ? 'casinoBatchTraded' : 'casinoBatchBought')
                         : 'casinoBatchPartial'), { done:completed, total, name });
                     const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
-                    setStatus(`${baseMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                    /* La barra de estado lleva solo el resultado de la compra.
+                       Las cifras de dinero van en su propia tira, que se
+                       actualiza aqui: asi el saldo no se pierde dentro de una
+                       frase larga. */
+                    setStatus(`${baseMessage}${errorMessage}`.trim(),
+                        completed === total && !lastError ? 'success' : 'error');
+                    /* La tira de proceso es de la compra: al terminar el bucle se
+                       retira, y las cifras se quedan en su propia tira de
+                       resultados. */
+                    clearProgress();
+                    renderResults({ spent:batchSpent, earned:batchSoldGold, sold:batchSoldCount });
                 }
             }
         };
@@ -7745,9 +10283,11 @@
                         lastError = new Error(tr('casinoNeedGold'));
                         break;
                     }
-                    setStatus(formatCasinoText(tr('casinoBuyingProgress'), {
-                        current:index + 1, total, name:currentOffer.name || initialOffer.name || 'item'
-                    }));
+                    setProgress({
+                        current: index + 1,
+                        total,
+                        name: currentOffer.name || initialOffer.name || 'item'
+                    });
                     try {
                         await gameApiRequest('/api/game/pokemaniac-trader/buy', {
                             method:'POST', body:JSON.stringify({ itemId })
@@ -7773,15 +10313,131 @@
                         : 'casinoBatchPartial'), { done:completed, total, name });
                     const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
                     setStatus(`${baseMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                    /* La compra de objetos usa la misma tira que la de Pokemon:
+                       una de las dos rutas no puede quedarse con la barra de
+                       texto, que es lo que se nota al comprar en cantidades. */
+                    clearProgress();
                 }
             }
+        };
+        /* Constructor de la carta de una oferta. Vive fuera de render porque
+           las dos pestanas reutilizan exactamente la misma carta: lo unico que
+           cambia es en que lista se anade. */
+        const buildOfferCard = (offer, target) => {
+            const reason = getMarlonOfferReason(offer, payload);
+            const card = document.createElement('article');
+            card.className = `script-casino-card${offer.canBuy ? '' : ' is-disabled'}`;
+            const stoneRequired = offer.stoneItemId != null;
+            const stoneHave = Number(offer.stoneHave || 0);
+            const stoneQty = Number(offer.stoneQty || 0);
+            const stoneIcon = normalizeGameItemIcon(offer.stoneIconUrl || '');
+            card.innerHTML = `
+                <div class="script-casino-art"><img src="${escapeHTML(getMarlonPokemonSprite(offer))}" alt="${escapeHTML(offer.name || 'Pokémon')}"></div>
+                <div class="script-casino-info">
+                    <div class="script-casino-name-line">
+                        <b class="script-casino-name">${escapeHTML(offer.name || `Pokémon #${offer.speciesId || '—'}`)}</b>
+                        ${offer.isTrade ? `<span class="script-casino-evolution">${casinoIcon('evolve')}<span>${escapeHTML(tr('casinoEvolution'))}</span></span>` : ''}
+                    </div>
+                    <div class="script-casino-price">${casinoIcon('coin')}<span>${Number(offer.price || 0).toLocaleString('pt-BR')}</span></div>
+                    ${offer.isTrade ? `<div class="script-casino-requirements">
+                        <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getPokemonIconUrl(133) || getPokeApiSpriteUrl({ speciesId:133 }))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
+                        ${stoneRequired ? `<span class="script-casino-requirement${stoneHave >= stoneQty ? '' : ' is-missing'}">${stoneIcon ? `<img src="${escapeHTML(stoneIcon)}" alt="${escapeHTML(offer.stoneName || 'Stone')}">` : ''}${stoneHave.toLocaleString('pt-BR')}/${stoneQty.toLocaleString('pt-BR')} ${escapeHTML(offer.stoneName || 'Stone')}</span>` : ''}
+                    </div>` : ''}
+                </div>
+                <div class="script-casino-action-row">
+                    <span class="script-casino-reason">${escapeHTML(reason)}</span>
+                    <div class="script-casino-purchase-controls">
+                        <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}></label>
+                        <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
+                    </div>
+                </div>`;
+            card.querySelector('.script-casino-art img').addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId: offer.speciesId });
+            }, { once:true });
+            const quantityInput = card.querySelector('.script-casino-quantity');
+            quantityInput.addEventListener('change', () => {
+                quantityInput.value = String(Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1))));
+            });
+            card.querySelector('.script-casino-buy').addEventListener('click', async () => {
+                if (!offer.canBuy || busySpeciesId != null || busyPokeId != null) return;
+                await processCasinoQuantity(offer, quantityInput.value);
+            });
+            target.appendChild(card);
+        };
+        const buildItemCard = (itemOffer, target) => {
+            const itemId = Number(itemOffer?.itemId || 0);
+            const price = Math.max(0, Number(itemOffer?.price || 0));
+            const unitQty = Math.max(1, Number(itemOffer?.qty || 1));
+            const have = Math.max(0, Number(itemOffer?.have || 0));
+            const canBuy = Boolean(itemOffer?.canBuy) && itemId > 0 && price > 0;
+            const card = document.createElement('article');
+            card.className = `script-casino-card script-casino-item-card${canBuy ? '' : ' is-disabled'}`;
+            const icon = normalizeGameItemIcon(itemOffer?.iconUrl || '');
+            /* Si el item no trae icono, se dibuja el de caja directamente en
+               vez de meter un <img> sin origen: un src vacio o corrupto dispara
+               el error y el marco se queda vacio hasta que llega el respaldo. */
+            const art = icon
+                ? `<img src="${escapeHTML(icon)}" alt="${escapeHTML(itemOffer?.name || 'Item')}">`
+                : `<span class="casino-ic-wrap">${casinoIcon('box')}</span>`;
+            card.innerHTML = `
+                <div class="script-casino-art">${art}</div>
+                <div class="script-casino-info">
+                    <div class="script-casino-name-line">
+                        <b class="script-casino-name"><span>${escapeHTML(itemOffer?.name || `Item #${itemId || '—'}`)}</span>${Number(itemOffer?.qty || 1) > 1 ? `<span class="script-casino-item-qty">×${Number(itemOffer.qty).toLocaleString('pt-BR')}</span>` : ''}</b>
+                        <span class="script-casino-evolution is-item"><span>${escapeHTML(tr('casinoItemBadge'))}</span></span>
+                    </div>
+                    <div class="script-casino-price">${casinoIcon('coin')}<span>${price.toLocaleString('pt-BR')}</span></div>
+                    <div class="script-casino-item-have">${escapeHTML(tr('casinoItemHave'))} <b>${have.toLocaleString('pt-BR')}</b></div>
+                    ${itemOffer?.description ? `<div class="script-casino-item-description">${escapeHTML(itemOffer.description)}</div>` : ''}
+                </div>
+                <div class="script-casino-action-row">
+                    <span class="script-casino-reason">${escapeHTML(canBuy ? '' : tr('casinoNeedGold'))}</span>
+                    <div class="script-casino-purchase-controls">
+                        <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-item-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${canBuy && busyItemId == null ? '' : 'disabled'}></label>
+                        <button class="script-casino-buy script-casino-item-buy" type="button" ${canBuy && busyItemId == null ? '' : 'disabled'}>${escapeHTML(tr('casinoBuy'))}</button>
+                    </div>
+                </div>`;
+            card.querySelector('.script-casino-art img')?.addEventListener('error', event => {
+                event.currentTarget.replaceWith(Object.assign(document.createElement('span'), { className: 'casino-ic-wrap', innerHTML: casinoIcon('box') }));
+            }, { once:true });
+            const quantityInput = card.querySelector('.script-casino-item-quantity');
+            const buyButton = card.querySelector('.script-casino-item-buy');
+            const updateItemQuantity = () => {
+                const quantity = Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1)));
+                quantityInput.value = String(quantity);
+                const total = price * unitQty * quantity;
+                buyButton.disabled = !canBuy || busyItemId != null || Number(payload?.gold || 0) < total;
+                buyButton.title = buyButton.disabled && canBuy ? tr('casinoNeedGold') : tr('casinoBuy');
+            };
+            quantityInput.addEventListener('input', updateItemQuantity);
+            quantityInput.addEventListener('change', updateItemQuantity);
+            buyButton.addEventListener('click', async () => {
+                if (buyButton.disabled) return;
+                await processCasinoItemQuantity(itemOffer, quantityInput.value);
+            });
+            updateItemQuantity();
+            target.appendChild(card);
         };
         const render = () => {
             const offers = Array.isArray(payload?.offers) ? payload.offers : [];
             const itemOffers = Array.isArray(payload?.itemOffers) ? payload.itemOffers : [];
-            balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
-            team.textContent = `${tr('casinoTeam')}: ${Number(payload?.teamCount || 0).toLocaleString('pt-BR')}/${Number(payload?.maxTeam || 0).toLocaleString('pt-BR')}`;
-            warning.hidden = payload?.hasRoom !== false;
+            /* Las evoluciones de Eevee son ofertas de canje, no compras: van a
+               su propia pestana. La principal queda solo con lo comprable. */
+            const buyOffers = offers.filter(offer => !offer?.isTrade);
+            const evolveOffers = offers.filter(offer => offer?.isTrade);
+            balanceValue.textContent = Number(payload?.gold || 0).toLocaleString('pt-BR');
+            for (const button of tabButtons) {
+                const isActive = button.dataset.tab === catalogTab;
+                button.classList.toggle('is-active', isActive);
+                button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            }
+            for (const tab of ['buy', 'evolve']) {
+                const count = tabButtons.find(entry => entry.dataset.tab === tab)?.querySelector('.script-casino-tab-count');
+                if (!count) continue;
+                count.textContent = tab === 'buy'
+                    ? String(buyOffers.length + itemOffers.length)
+                    : String(evolveOffers.length);
+            }
             list.replaceChildren();
             if (!offers.length && !itemOffers.length) {
                 const empty = document.createElement('div');
@@ -7790,94 +10446,28 @@
                 list.appendChild(empty);
                 return;
             }
-
-            offers.forEach(offer => {
-                const reason = getMarlonOfferReason(offer, payload);
-                const card = document.createElement('article');
-                card.className = `script-casino-card${offer.canBuy ? '' : ' is-disabled'}`;
-                const stoneRequired = offer.stoneItemId != null;
-                const stoneHave = Number(offer.stoneHave || 0);
-                const stoneQty = Number(offer.stoneQty || 0);
-                const stoneIcon = normalizeGameItemIcon(offer.stoneIconUrl || '');
-                card.innerHTML = `
-                    <div class="script-casino-art"><img src="${escapeHTML(getMarlonPokemonSprite(offer))}" alt="${escapeHTML(offer.name || 'Pokémon')}"></div>
-                    <div class="script-casino-info">
-                        <div class="script-casino-name-line">
-                            <b class="script-casino-name">${escapeHTML(offer.name || `Pokémon #${offer.speciesId || '—'}`)}</b>
-                            ${offer.isTrade ? `<span class="script-casino-evolution">${escapeHTML(tr('casinoEvolution'))}</span>` : ''}
-                        </div>
-                        <div class="script-casino-price">💲 ${Number(offer.price || 0).toLocaleString('pt-BR')}</div>
-                        ${offer.isTrade ? `<div class="script-casino-requirements">
-                            <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getPokemonIconUrl(133) || getPokeApiSpriteUrl({ speciesId:133 }))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
-                            ${stoneRequired ? `<span class="script-casino-requirement${stoneHave >= stoneQty ? '' : ' is-missing'}">${stoneIcon ? `<img src="${escapeHTML(stoneIcon)}" alt="${escapeHTML(offer.stoneName || 'Stone')}">` : ''}${stoneHave.toLocaleString('pt-BR')}/${stoneQty.toLocaleString('pt-BR')} ${escapeHTML(offer.stoneName || 'Stone')}</span>` : ''}
-                        </div>` : ''}
-                    </div>
-                    <div class="script-casino-action-row">
-                        <span class="script-casino-reason">${escapeHTML(reason)}</span>
-                        <div class="script-casino-purchase-controls">
-                            <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}></label>
-                            <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
-                        </div>
-                    </div>`;
-                card.querySelector('.script-casino-art img').addEventListener('error', event => {
-                    event.currentTarget.src = getPokeApiSpriteUrl({ speciesId: offer.speciesId });
-                }, { once:true });
-                const quantityInput = card.querySelector('.script-casino-quantity');
-                quantityInput.addEventListener('change', () => {
-                    quantityInput.value = String(Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1))));
-                });
-                card.querySelector('.script-casino-buy').addEventListener('click', async () => {
-                    if (!offer.canBuy || busySpeciesId != null || busyPokeId != null) return;
-                    await processCasinoQuantity(offer, quantityInput.value);
-                });
-                list.appendChild(card);
-            });
-            itemOffers.forEach(itemOffer => {
-                const itemId = Number(itemOffer?.itemId || 0);
-                const price = Math.max(0, Number(itemOffer?.price || 0));
-                const unitQty = Math.max(1, Number(itemOffer?.qty || 1));
-                const have = Math.max(0, Number(itemOffer?.have || 0));
-                const canBuy = Boolean(itemOffer?.canBuy) && itemId > 0 && price > 0;
-                const card = document.createElement('article');
-                card.className = `script-casino-card script-casino-item-card${canBuy ? '' : ' is-disabled'}`;
-                const icon = normalizeGameItemIcon(itemOffer?.iconUrl || '');
-                card.innerHTML = `
-                    <div class="script-casino-art"><img src="${escapeHTML(icon)}" alt="${escapeHTML(itemOffer?.name || 'Item')}"></div>
-                    <div class="script-casino-info">
-                        <div class="script-casino-name-line">
-                            <b class="script-casino-name">${escapeHTML(itemOffer?.name || `Item #${itemId || '—'}`)}${Number(itemOffer?.qty || 1) > 1 ? `<span class="script-casino-item-qty"> ×${Number(itemOffer.qty).toLocaleString('pt-BR')}</span>` : ''}</b>
-                            <span class="script-casino-evolution">ITEM</span>
-                        </div>
-                        <div class="script-casino-price">💲 ${price.toLocaleString('pt-BR')}</div>
-                        <div class="script-casino-item-have">You have: <b>${have.toLocaleString('pt-BR')}</b></div>
-                        ${itemOffer?.description ? `<div class="script-casino-item-description">${escapeHTML(itemOffer.description)}</div>` : ''}
-                    </div>
-                    <div class="script-casino-action-row">
-                        <span class="script-casino-reason">${escapeHTML(canBuy ? '' : tr('casinoNeedGold'))}</span>
-                        <div class="script-casino-purchase-controls">
-                            <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-item-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${canBuy && busyItemId == null ? '' : 'disabled'}></label>
-                            <button class="script-casino-buy script-casino-item-buy" type="button" ${canBuy && busyItemId == null ? '' : 'disabled'}>${escapeHTML(tr('casinoBuy'))}</button>
-                        </div>
-                    </div>`;
-                card.querySelector('.script-casino-art img')?.addEventListener('error', event => { event.currentTarget.replaceWith(document.createTextNode('📦')); }, { once:true });
-                const quantityInput = card.querySelector('.script-casino-item-quantity');
-                const buyButton = card.querySelector('.script-casino-item-buy');
-                const updateItemQuantity = () => {
-                    const quantity = Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1)));
-                    quantityInput.value = String(quantity);
-                    const total = price * unitQty * quantity;
-                    buyButton.disabled = !canBuy || busyItemId != null || Number(payload?.gold || 0) < total;
-                    buyButton.title = buyButton.disabled && canBuy ? tr('casinoNeedGold') : tr('casinoBuy');
-                };
-                quantityInput.addEventListener('input', updateItemQuantity);
-                quantityInput.addEventListener('change', updateItemQuantity);
-                buyButton.addEventListener('click', async () => {
-                    if (buyButton.disabled) return;
-                    await processCasinoItemQuantity(itemOffer, quantityInput.value);
-                });
-                updateItemQuantity();
-                list.appendChild(card);
-            });
+            /* Cada pestana muestra solo lo suyo y, si no hay nada que mostrar,
+               su propio estado vacio en vez de una lista mezclada. */
+            if (catalogTab === 'evolve') {
+                if (!evolveOffers.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'script-casino-empty';
+                    empty.textContent = tr('casinoTabEvolveEmpty');
+                    list.appendChild(empty);
+                    return;
+                }
+                evolveOffers.forEach(offer => buildOfferCard(offer, list));
+                return;
+            }
+            if (!buyOffers.length && !itemOffers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-empty';
+                empty.textContent = tr('casinoTabBuyEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            buyOffers.forEach(offer => buildOfferCard(offer, list));
+            itemOffers.forEach(itemOffer => buildItemCard(itemOffer, list));
         };
         const load = async () => {
             if (busySpeciesId != null || busyItemId != null) return;
@@ -7892,7 +10482,7 @@
             } catch (error) {
                 if (closed) return;
                 payload = null;
-                teamPokemon = [];
+                allPokes = [];
                 render();
                 renderTeam();
                 setStatus(`${tr('casinoLoadError')} ${error.message || ''}`.trim(), 'error');
@@ -7905,8 +10495,17 @@
         windowElement.addEventListener('click', event => event.stopPropagation());
         backdrop.querySelector('.script-casino-close').addEventListener('click', close);
         refreshButton.addEventListener('click', load);
-        bulkStoreButton.addEventListener('click', storeAllPurchasedPokemon);
+        logButton.addEventListener('click', openAutoSellLog);
         bulkSellButton.addEventListener('click', sellAllPurchasedPokemon);
+        /* Pestanas del catalogo. Cambiar de pestana solo vuelve a pintar la
+           lista: no vuelve a pedir datos ni toca el estado. */
+        for (const button of tabButtons) {
+            button.addEventListener('click', () => {
+                if (catalogTab === button.dataset.tab) return;
+                catalogTab = button.dataset.tab;
+                render();
+            });
+        }
         ivGoalInput.addEventListener('change', () => {
             const parsed = Math.round(Number(ivGoalInput.value) || 0);
             ivGoal = Math.max(0, Math.min(192, parsed));
@@ -7916,6 +10515,26 @@
             else localStorage.removeItem(ivGoalStorageKey);
             renderTeam();
         });
+        [filterTierSelect, filterQualitySelect].forEach(select => {
+            select.addEventListener('change', renderTeam);
+        });
+        /* El campo de IVs filtra mientras se escribe, para no obligar a
+           confirmar con Enter. */
+        filterIvInput.addEventListener('input', renderTeam);
+        filterIvInput.addEventListener('change', renderTeam);
+        filterClearButton.addEventListener('click', () => {
+            filterTierSelect.value = '';
+            filterQualitySelect.value = '';
+            filterIvInput.value = '';
+            renderTeam();
+        });
+        autoSellButton.addEventListener('click', openAutoSellConfig);
+        /* Sesion nueva: el historial arranca vacio cada vez que se abre el
+           Cassino, tal como se pidio. */
+        startAutoSellSession();
+        buildTierFilterOptions();
+        buildQualityFilterOptions();
+        refreshAutoSellButton();
         document.addEventListener('keydown', onKeydown);
         applyBetterWindowScales();
         await load();
@@ -11410,6 +14029,11 @@
                 <div class="sell-confirm-title">
                     <span>🐾 ${tr('sellNpcPokemon')}</span>
                     <button class="hunt-items-open mk-bulk-btn" type="button" style="margin-left:auto;">🎒 Itens</button>
+                    <button class="script-market-autosell-btn" type="button" title="Auto-venta del deposito" aria-label="Auto-venta del deposito" style="margin-left:6px;">
+                        <svg class="script-market-autosell-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+                        <span class="script-market-autosell-label">auto venta</span>
+                        <span class="script-market-autosell-dot" aria-hidden="true"></span>
+                    </button>
                     <button class="hunt-sell-close" type="button" style="margin-left:auto;background:none;border:0;color:#a0aec0;font-size:20px;cursor:pointer;">×</button>
                 </div>
                 <div class="sell-confirm-body">
@@ -11452,6 +14076,14 @@
 
         const close = () => backdrop.remove();
         backdrop.querySelector('.hunt-sell-close').addEventListener('click', close);
+
+        /* Auto-venta del deposito. El boton vive en ESTA ventana, que es la de
+           vender Pokemon, y el menu se abre desde aqui. Refrescar el boton se
+           limita a este backdrop para no confundirse si hay otra ventana igual. */
+        backdrop.querySelector('.script-market-autosell-btn')?.addEventListener('click', () => {
+            wireMarketAutoSellConfig(openMarketAutoSellConfig(), () => refrescarMarketAutoSellButton(backdrop));
+        });
+        refrescarMarketAutoSellButton(backdrop);
         backdrop.querySelector('.hunt-sell-cancel').addEventListener('click', close);
         backdrop.querySelector('.hunt-items-open').addEventListener('click', () => {
             close();
@@ -13170,6 +15802,18 @@
 
         let activeCategory = options.initialCategory === HELD_MACHINE_MARKET_CATEGORY ? HELD_MACHINE_MARKET_CATEGORY : 'Items';
         let marketMode = 'buy';
+        /* Cuando llega sellPokemonId el market se abre directo en la pestaña de
+           venta. Sin esto abriría en "comprar" y el usuario tendría que buscarla.
+           El modo NO se fuerza aqui a proposito: la pestaña activa, los controles
+           que se ven y la lista que se carga los pone el manejador de la
+           pestaña, que ya lo hace bien, y al final de la apertura se pulsa esa
+           pestaña. Forzar solo la variable dejaria la ventana a medio cambiar. */
+        const requestedSellPokemonId = options.sellPokemonId != null ? String(options.sellPokemonId) : '';
+        const syncMarketTabs = () => {
+            backdrop.querySelectorAll('.market-tab').forEach(tab => {
+                tab.classList.toggle('on', tab.dataset.mode === marketMode);
+            });
+        };
         let currentListings = [];
         let currentMyListings = [];
         let currentMarketPayload = null;
@@ -13343,6 +15987,7 @@
         const sellNet = backdrop.querySelector('.market-sell-net');
         const sellReference = backdrop.querySelector('.market-sell-reference');
         const sellSubmit = backdrop.querySelector('.market-sell-submit');
+
         const sellEditor = backdrop.querySelector('.market-sell-editor');
         const sellEditorArt = backdrop.querySelector('.market-sell-editor-art');
         const sellEditorName = backdrop.querySelector('.market-sell-editor-name');
@@ -14861,6 +17506,40 @@
             });
         };
 
+        /* Abre el editor de venta del Pokemon indicado y deja el precio vacio.
+           showSellEditor no toca el precio, y su valor persiste entre
+           aperturas, asi que hay que limpiarlo a mano: si no, el usuario
+           encontraria un precio de la sesion anterior y podria publicar sin
+           querer.
+
+           El orden importa: primero se abre el editor, despues se vacia el
+           precio y despues se dispara su input, que es lo que vuelve a calcular
+           si el boton de publicar puede pulsarse. Al reves, el boton se
+           quedaria habilitado con el precio vacio. */
+        const openSellEditorForPokemon = async pokeId => {
+            const idOf = entry => String(entry?.id ?? entry?.capturedId ?? entry?.pokeId ?? '');
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const found = sellEntries.find(entry => idOf(entry) === pokeId);
+                if (found) {
+                    selectedSellEntry = found;
+                    showSellEditor(found);
+                    sellPrice.value = '';
+                    sellPrice.dispatchEvent(new Event('input', { bubbles: true }));
+                    sellPrice.focus();
+                    const row = sellEditor.closest('.market-sell-list, .script-market-sell, div') || sellEditor;
+                    row?.scrollIntoView({ block: 'nearest' });
+                    sellEditor.classList.add('is-flash');
+                    setTimeout(() => sellEditor.classList.remove('is-flash'), 900);
+                    return true;
+                }
+                /* El guardado acaba de ocurrir: puede que el socket todavia no
+                   lo refleje. Se reintenta un poco antes de rendirse. */
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            status.textContent = tr('marketSellPokemonNotFound');
+            return false;
+        };
+
         const loadSell = async () => {
             status.textContent = tr('loading');
             try {
@@ -14903,7 +17582,13 @@
                 sellEditor.hidden = true;
                 clearSellReference();
                 sellSubmit.disabled = true;
+                /* Cuando la venta viene del cassino lo que se quiere vender es un
+                   Pokemon, asi que el filtro tiene que acompanar. Sin esto el
+                   selector se queda en Itens y la lista de abajo ensena objetos,
+                   con lo que parece que el market no recibio nada. */
+                if (requestedSellPokemonId) sellKind.value = 'pokemon';
                 renderSell();
+                if (requestedSellPokemonId) await openSellEditorForPokemon(requestedSellPokemonId);
             } catch (error) {
                 status.textContent = `Não foi possível carregar seus itens e Pokémon: ${error.message}`;
             }
@@ -15278,7 +17963,7 @@
                 categorySelect.value = 'All';
                 itemRarityFilter.value = '';
             }
-            backdrop.querySelectorAll('.market-tab').forEach(button => button.classList.toggle('on', button === tab));
+            syncMarketTabs();
             buyControls.style.display = marketMode === 'buy' || marketMode === 'mine' || marketMode === 'featured' ? 'flex' : 'none';
             alertControls.classList.toggle('visible', marketMode === 'alerts');
             itemRarityFilter.style.display = (marketMode === 'buy' || marketMode === 'mine') && activeCategory !== 'Pokemon' && activeCategory !== 'Diamonds' ? '' : 'none';
@@ -15481,6 +18166,15 @@
         renderBuyQualityTierButtons();
         renderSellQualityTierButtons();
         renderMineQualityTierButtons();
+        /* Si venia del boton de market, se pulsa la pestaña de venta y se
+           devuelve: el manejador se encarga de todo lo demas. Es el mismo
+           camino que usa el modo autobuy en el ACTIVE, y a proposito: forzar solo
+           marketMode dejaria la pestaña marcada en comprar, los controles de
+           comprar a la vista y la lista de compra cargada. */
+        if (requestedSellPokemonId) {
+            backdrop.querySelector('.market-tab[data-mode="sell"]')?.click();
+            return;
+        }
         load();
     }
 
@@ -16911,6 +19605,15 @@
             setTimeout(pollCompletedMarketSales, 3500);
             marketSaleMonitorInterval = setInterval(pollCompletedMarketSales, 15000);
         }
+        /* La auto-venta del deposito se dispara con las capturas, no con un
+           temporizador que procese lo que encuentre. startMarketAutoSellCaptureWatch
+           ya se protege de arrancar dos veces. */
+        startMarketAutoSellCaptureWatch();
+        /* El panel de sesion arranca siempre, tambien con la auto-venta apagada:
+           su unico trabajo cuando esta apagada es esconderse, y hacerlo al
+           encenderla exigiria engancharse a un interruptor que no emite eventos.
+           El propio start se protege de arrancar dos veces. */
+        runDOMEnhancement('panel de sesion de auto-venta', startMarketAutoSellPanel);
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initializeDOMEnhancements, { once: true });
