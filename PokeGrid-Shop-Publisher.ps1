@@ -261,12 +261,12 @@ function Load-SelectedScript {
     }
     if($entry){
       Apply-CatalogEntry $entry
-      $sourceHint.Text="Actualización detectada • versión publicada $($entry.version) • $([Math]::Round($script:loaded.Size/1KB)) KB"
+      $sourceHint.Text="Actualización detectada • versión publicada $($entry.version) • $(Get-SourceSizeText $script:loaded.Size)"
       Log "Actualización detectada: $($script:loaded.Name) $($entry.version) → $($script:loaded.Version)" 'ok'
     }else{
       $idBox.Text=Get-UniqueScriptId $catalog $script:loaded.Name; $authorBox.Text=$(if($script:loaded.Author){$script:loaded.Author}else{'DiegoT34'})
       $summaryBox.Text=$script:loaded.Description; $descriptionBox.Text=$script:loaded.Description; $changelogBox.Text="Publicación $($script:loaded.Version)"
-      $sourceHint.Text="Script nuevo • $([Math]::Round($script:loaded.Size/1KB)) KB • metadatos correctos"
+      $sourceHint.Text="Script nuevo • $(Get-SourceSizeText $script:loaded.Size) • metadatos correctos"
       Log "Nuevo script detectado: $($script:loaded.Name) v$($script:loaded.Version) • ID propuesto: $($idBox.Text)" 'ok'
     }
     Refresh-Preview
@@ -279,6 +279,18 @@ function Verify-OnlinePublication([string]$id,[string]$version){
     Start-Sleep -Milliseconds 900;[Windows.Forms.Application]::DoEvents()
   }
   return $false
+}
+
+function Get-SourceSizeText([int64]$SizeBytes) {
+  $limitMB = $script:MaxScriptBytes / 1MB
+  $mb = [Math]::Round($SizeBytes / 1MB, 2)
+  $ratio = $SizeBytes / $script:MaxScriptBytes
+  if ($ratio -gt 0.5) {
+    $sourceHint.ForeColor = $palette.Warning
+    return "$mb MB - $("{0:N0}" -f ($ratio * 100))% del limite de $limitMB MB"
+  }
+  $sourceHint.ForeColor = $palette.Dim
+  return "$mb MB de un maximo de $limitMB MB"
 }
 
 function Get-PushFailureMessage([string]$Name, [string]$Version, [string]$ErrorText) {
@@ -756,6 +768,12 @@ if($SmokeTest){
   if($script:MaxScriptBytes -ne 10MB){throw 'El límite de userscripts del publicador no está configurado en 10 MB.'}
   $pushMessage = Get-PushFailureMessage 'Script de Ejemplo' '1.2.3' 'fatal: Authentication failed'
   foreach($required in @('1.2.3','git push','autentic')){ if($pushMessage -notmatch [regex]::Escape($required)){throw "El aviso de push fallido no menciona '$required'."} }
+  $smallText = Get-SourceSizeText 100KB
+  if($smallText -notmatch '10 MB'){throw "El texto de peso no indica el limite de 10 MB: $smallText"}
+  if($smallText -match '%'){throw "Un archivo pequeno no deberia mostrar un porcentaje: $smallText"}
+  $largeText = Get-SourceSizeText (6MB)
+  if($largeText -notmatch '60'){throw "Un archivo de 6 MB deberia mostrar 60% del limite, no: $largeText"}
+  if($sourceHint.ForeColor -ne $palette.Warning){throw 'El aviso de peso deberia resaltarse en ambar por encima del 50% del limite.'}
   Write-Output 'PokeGrid Publisher 1.3.1 catalog management, 10 MB userscripts, removal controls, publication tabs, responsive GUI and Git smoke passed.';$form.Dispose();exit 0
 }
 
