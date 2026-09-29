@@ -24,6 +24,15 @@ jobs:
         shell: pwsh
         run: |
           $tests = @(
+            'test-validate-catalog.ps1'
+            'test-catalog-schema.ps1'
+            'test-workflow-wiring.ps1'
+            'test-powershell-encoding.ps1'
+            'test-min-launcher-default.ps1'
+            'test-gitattributes.ps1'
+            'test-partial-publication-rollback.ps1'
+            'test-byte-exact-restore.ps1'
+            'test-publication-downgrade.ps1'
             'test-git-workflow.ps1'
             'test-new-script-publication.ps1'
             'test-script-removal.ps1'

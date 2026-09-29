@@ -80,19 +80,32 @@ try {
   if ($r.ExitCode -eq 0) { throw 'El validador acepto un @version distinto del catalogo.' }
   if ($r.Output -notmatch '@version') { throw "El fallo por @version no es claro:`n$($r.Output)" }
 
-  # 6. Review Focus 2: prefijo v en @version, sin normalizar en el archivo.
+  # 6. Review Focus 2: prefijo v en @version. El SHA-256 se recalcula para que
+  # lo unico que falle sea la comparacion de la version, no el hash.
   $vPrefix = New-Fixture 'v-prefix' 'con-v' '1.2.3' 'https://pokegrid.test/v' 0
   $file = Join-Path $vPrefix 'scripts\con-v.user.js'
   [IO.File]::WriteAllText($file, ((Get-Content $file -Raw) -replace '@version 1.2.3', '@version v1.2.3'), $utf8)
+  Set-CatalogProperty $vPrefix 'sha256' ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
   $r = Invoke-Validator $vPrefix
   if ($r.ExitCode -eq 0) { throw 'El validador acepto un @version con prefijo v sin normalizar.' }
+  if ($r.Output -notmatch '@version') { throw "El fallo por prefijo v no lo reporto la comprobacion de @version:`n$($r.Output)" }
+  if ($r.Output -match 'SHA-256') { throw "La version se aceptaria si el hash cuadrara; el test no aislo la regla de @version:`n$($r.Output)" }
 
   # 7. Review Focus 3: @version de dos componentes, que el catalogo exige como tres.
   $twoPart = New-Fixture 'two-component' 'dos-partes' '3.91.0' 'https://pokegrid.test/two' 0
   $file = Join-Path $twoPart 'scripts\dos-partes.user.js'
   [IO.File]::WriteAllText($file, ((Get-Content $file -Raw) -replace '@version 3.91.0', '@version 3.91'), $utf8)
+  Set-CatalogProperty $twoPart 'sha256' ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
   $r = Invoke-Validator $twoPart
   if ($r.ExitCode -eq 0) { throw 'El validador acepto un @version de dos componentes.' }
+  if ($r.Output -notmatch '@version') { throw "La version de dos componentes no la reporto la comprobacion de @version:`n$($r.Output)" }
+  if ($r.Output -match 'SHA-256') { throw "El test no aislo la regla de @version:`n$($r.Output)" }
+
+  # 7b. Simetria: las dos formas de version sin normalizar se rechazan por la
+  # misma regla, y una version ya normalizada con hash coherente se acepta.
+  $clean = New-Fixture 'normalized' 'normalizada' '4.5.6' 'https://pokegrid.test/ok-version' 0
+  $r = Invoke-Validator $clean
+  if ($r.ExitCode -ne 0) { throw "Una @version normalizada con hash coherente deberia aceptarse:`n$($r.Output)" }
 
   # 8. Archivo por encima del limite de 10 MB.
   $big = New-Fixture 'too-big' 'muy-grande' '1.0.0' 'https://pokegrid.test/big' (6MB)
@@ -120,7 +133,7 @@ try {
   $r = Invoke-Validator $badDate
   if ($r.ExitCode -eq 0) { throw 'El validador acepto un updatedAt que no es RFC 3339.' }
 
-  Write-Output 'Catalog validator passed: valid catalog, missing file, bad hash, bad URL, version mismatch, v prefix, two-component version, 10 MB limit, duplicate id case and RFC 3339 date.'
+  Write-Output 'Catalog validator passed: valid catalog, missing file, bad hash, bad URL, version mismatch, v prefix, two-component version, normalized version accepted, 10 MB limit, duplicate id case and RFC 3339 date.'
 } finally {
   if ((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue

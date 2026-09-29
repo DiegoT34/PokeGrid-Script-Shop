@@ -57,8 +57,12 @@ foreach ($item in @($catalog.scripts)) {
   $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actual -ne [string]$item.sha256) { $errors.Add("SHA-256 no coincide: '$id'") }
   $code = Get-Content -LiteralPath $file -Raw -Encoding UTF8
+  # El publicador escribe siempre la version ya normalizada: sin prefijo v y
+  # con tres componentes. Cualquier otra forma en el archivo publicado es una
+  # edicion manual posterior a la publicacion, y por tanto deriva: se rechaza.
+  # Se comparan las cadenas sin normalizar para que la regla sea simetrica con
+  # el caso de dos componentes, que tampoco se acepta.
   $fileVersion = [regex]::Match($code, '(?im)^\s*//\s*@version\s+(.+?)\s*$').Groups[1].Value.Trim()
-  $fileVersion = $fileVersion.TrimStart('v')
   if ($fileVersion -ne [string]$item.version) { $errors.Add("@version no coincide: '$id' (archivo '$fileVersion', catalogo '$($item.version)')") }
   $fileNamespace = [regex]::Match($code, '(?im)^\s*//\s*@namespace\s+(.+?)\s*$').Groups[1].Value.Trim()
   if ($fileNamespace -ne [string]$item.namespace) { $errors.Add("@namespace no coincide: '$id'") }

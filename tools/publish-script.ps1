@@ -92,6 +92,11 @@ if ($operationMode -eq 'New') {
   if (([string]$existingById.name).Trim() -ine $name.Trim() -or ([string]$existingById.namespace).Trim() -ine $namespace.Trim()) {
     throw "El archivo seleccionado no corresponde a '$Id'. El nombre o namespace no coincide con la publicación existente."
   }
+  # Publicar sobre una version anterior o igual no cambia nada en la Shop y
+  # genera un commit inutil, asi que se detiene antes de escribir archivos.
+  if ([Version]$existingById.version -ge [Version]$version) {
+    throw "La publicación '$Id' ya está en la versión $($existingById.version) o superior. Sube @version en el archivo antes de publicar."
+  }
 }
 
 $targetName = "$Id.user.js"
@@ -144,13 +149,13 @@ try {
   # escritura es la que fallo, pero se intenta restaurar sin dejar que un
   # segundo fallo tape el error original.
   try {
-    if ($targetExisted) { [IO.File]::WriteAllText($target, $targetBytes) }
+    if ($targetExisted) { [IO.File]::WriteAllBytes($target, $targetBytes) }
     elseif (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
   } catch {
     Write-Host "AVISO  No se pudo deshacer scripts\$Id.user.js: $($_.Exception.Message)" -ForegroundColor Yellow
   }
   try {
-    if ($catalogExisted) { [IO.File]::WriteAllText($catalogPath, $catalogBytes) }
+    if ($catalogExisted) { [IO.File]::WriteAllBytes($catalogPath, $catalogBytes) }
   } catch {
     Write-Host "AVISO  No se pudo restaurar catalog.json: $($_.Exception.Message)" -ForegroundColor Yellow
   }
