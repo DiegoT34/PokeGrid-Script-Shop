@@ -482,9 +482,49 @@ function Render-CatalogManagement {
   if($catalogGrid.Rows.Count){$catalogGrid.Rows[0].Selected=$true;Show-CatalogEntry $catalogGrid.Rows[0].Tag}else{Show-CatalogEntry $null}
 }
 
+function Sync-CatalogRepository {
+  # "git pull --ff-only" aborta con codigo 128 en cuanto la rama local y la remota
+  # han avanzado las dos, y su unica explicacion es el "hint:" de Git, que no dice
+  # que hacer. Ademas, si el pull falla NO se puede leer el catalogo: se acababa
+  # reportando como si fuera un problema de conexion, y no lo era.
+  # Aqui se distingue un caso del otro y, si hay divergencia, se dice exactamente
+  # que comandos/run. Un publicador nunca deberia tener que saber git para leer un
+  # catalogo, pero si hay que resolverlo, que sea con el camino escrito.
+  $sync=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('pull','--ff-only') -AllowFailure
+  if($sync.ExitCode -eq 0){return $true}
+  $output=$sync.Output
+  if($output -match 'Diverging branches|divergente|cannot be fast-forwarded|not possible to fast-forward'){
+    $counts=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('rev-list','--left-right','--count','HEAD...origin/main') -AllowFailure
+    $detail=''
+    if($counts.ExitCode -eq 0){
+      $parts=@($counts.Output -split '\s+')
+      if($parts.Count -ge 2){
+        $detail=" Tienes $($parts[0].Trim()) commit(s) sin publicar y el remoto tiene $($parts[1].Trim()) que no tienes."
+      }
+    }
+    throw "Las ramas han divergido y Git no puede fusionarlas solo (fast-forward).$detail`r`n`r`n" +
+      "No se ha perdido nada: ni tus commits ni las publicaciones del remoto.`r`n" +
+      "Para resolverlo, desde una consola en esta carpeta:`r`n" +
+      "  git fetch origin`r`n" +
+      "  git merge origin/main`r`n" +
+      "  (si Git pide solventar un conflicto: tus archivos de codigo son los mas recientes; el catalogo y los scripts, los del remoto)`r`n" +
+      "  git push`r`n`r`n" +
+      "Hasta entonces el catalogo se lee del disco sin sincronizar."
+  }
+  throw $output
+}
+
 function Refresh-CatalogManagement([switch]$SkipPull){
+  # La sincronizacion va aparte del resto: si falla, el catalogo se lee igualmente
+  # del disco. Antes el fallo del pull se comia el try entero y no se cargaba
+  # nada, que es como se veia "no hay conexion con GitHub" cuando lo que pasaba
+  # era que las ramas habian divergido.
+  $syncWarning=''
+  if(-not $SkipPull){
+    Log-Catalog 'Sincronizando catálogo con GitHub…'
+    try{[void](Sync-CatalogRepository)}catch{$syncWarning=$_.Exception.Message}
+  }
   try{
-    if(-not $SkipPull){Log-Catalog 'Sincronizando catálogo con GitHub…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('pull','--ff-only'))}
     $catalogPath=Join-Path $repoRoot 'catalog.json'
     if(-not(Test-Path -LiteralPath $catalogPath -PathType Leaf)){throw 'No se encontró catalog.json.'}
     $catalog=Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8|ConvertFrom-Json
@@ -492,8 +532,18 @@ function Refresh-CatalogManagement([switch]$SkipPull){
     foreach($entry in @($catalog.scripts)){$entry|Add-Member -NotePropertyName games -NotePropertyValue @(Get-CatalogGameLabels $entry) -Force}
     $script:catalogEntries=@($catalog.scripts|Sort-Object -Property @{Expression={[bool]$_.featured};Descending=$true},@{Expression={[string]$_.name};Descending=$false})
     Render-CatalogManagement
-    $catalogSyncLabel.Text="Sincronizado $((Get-Date).ToString('HH:mm:ss'))  •  rama main"
-    Log-Catalog "$(@($script:catalogEntries).Count) scripts cargados desde GitHub." 'ok'
+    $stamp=(Get-Date).ToString('HH:mm:ss')
+    if($syncWarning){
+      # Se dice que NO esta sincronizado, en vez de mentir con la fecha de ahora.
+      $catalogSyncLabel.Text="Sin sincronizar $stamp  •  $((Get-Date).ToString('dd/MM'))"
+      $catalogSyncLabel.ForeColor=$palette.Warning
+      Log-Catalog "$(@($script:catalogEntries).Count) scripts leídos del disco, SIN sincronizar con GitHub." 'error'
+      Log-Catalog $syncWarning 'error'
+    }else{
+      $catalogSyncLabel.Text="Sincronizado $stamp  •  rama main"
+      $catalogSyncLabel.ForeColor=$palette.Muted
+      Log-Catalog "$(@($script:catalogEntries).Count) scripts cargados desde GitHub." 'ok'
+    }
     return $true
   }catch{Log-Catalog $_.Exception.Message 'error';return $false}
 }
