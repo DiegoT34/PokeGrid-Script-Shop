@@ -66,4 +66,95 @@ for ($i = 0; $i -lt $roles.Count; $i++) {
   }
 }
 
-Write-Output 'Button visual passed: rounded regions per theme radius and five distinct accessible states per role.'
+# EL BUG DEL HOVER. Set-ButtonRole guarda el estilo del boton, y el manejador de
+# MouseEnter lo busca. Si la clave se deriva de GetHashCode(), deja de encontrarlo
+# en cuanto el control recibe su handle, porque ese hash CAMBIA: en esta maquina un
+# boton pasa de 63161730 antes del handle a 18198883 despues. Entonces
+# $buttonStyles[$clave] es $null y el .Style del manejador revienta con
+# "No se puede indizar en una matriz nula", al pasar el raton por encima.
+# La clave tiene que ser la IDENTIDAD del control, que no cambia.
+$script:theme = $themes['crystal-dark']
+$script:buttonStyles = @{}
+$form = [Windows.Forms.Form]::new()
+$form.ClientSize = [Drawing.Size]::new(240, 90)
+$button = [Windows.Forms.Button]::new()
+$button.Text = 'Publicar'
+$button.Dock = 'Fill'
+$form.Controls.Add($button)
+Set-ButtonRole $button 'danger' | Out-Null
+$form.Show()
+[Windows.Forms.Application]::DoEvents()
+# El manejador busca el estilo exactamente como lo hace la interfaz real.
+$style = $script:buttonStyles[(Get-ButtonStyleKey $button)]
+Assert ($null -ne $style) 'El estilo del boton se perdio al crear el handle del control: el hover no encontraria su estilo y reventaria.'
+Assert ($style.Role -eq 'danger') "El boton recupero el rol '$($style.Role)' en vez de 'danger'."
+
+# Y con GetHashCode la clave cambiaria, que es exactamente el fallo que se quiere
+# evitar. Se comprueba de forma explicita para que nadie vuelva a usarlo.
+$before = [int]$button.GetHashCode()
+Assert ((Get-ButtonStyleKey $button) -eq (Get-ButtonStyleKey $button)) 'Get-ButtonStyleKey devuelve una clave distinta en dos llamadas seguidas.'
+Assert ($script:buttonStyles.ContainsKey([int]$button.GetHashCode())) `
+  'El diccionario deberia seguir indexandose por hash para el codigo existente, o hay que migrar los tres usos a la vez.'
+
+# El hover real no puede lanzar: se dispara el manejador de verdad.
+$failed = $null
+$button.Add_MouseEnter({
+  $key = Get-ButtonStyleKey $this
+  $hoverStyle = $script:buttonStyles[$key]
+  $null = $hoverStyle.Style.Hover
+}.GetNewClosure())
+try {
+  $onEnter = $button.GetType().GetMethod('OnMouseEnter', [Reflection.BindingFlags]'NonPublic,Instance')
+  $onEnter.Invoke($button, [object[]]@([Windows.Forms.MouseEventArgs]::Empty))
+  [Windows.Forms.Application]::DoEvents()
+} catch { $failed = $_ }
+Assert ($null -eq $failed) "El hover del boton lanzo: $($failed.Exception.Message)"
+$form.Close(); $form.Dispose()
+
+# EL CASO QUE SE ROMPIO EN LA APLICACION. El manejador de hover hace
+# $buttonStyles[$clave].Style. Si la entrada no existe, $buttonStyles[$clave] es $null
+# y el .Style reventaba con "No se puede indiazar en una matriz nula" en el
+# OnMouseEnter: una excepcion NO controlada que abre el cuadro de error y deja la
+# aplicacion a medias. Pasa con cualquier boton al que no se le haya guardado el
+# estilo, y el hover es un adorno: no puede ser lo que la tumbe.
+$script:theme = $themes['crystal-dark']
+$script:buttonStyles = @{}
+$plain = [Windows.Forms.Button]::new()
+$plain.Text = 'Sin registrar'
+$plainForm = [Windows.Forms.Form]::new()
+$plainForm.ClientSize = [Drawing.Size]::new(200, 70)
+$plainForm.Controls.Add($plain)
+# La excepcion hay que CACHERLA DENTRO del manejador. WinForms no la propaga: se la
+# traga y sigue como si nada, asi que un try/catch de fuera no la ve nunca y el
+# test pasaria aunque el codigo revientara. Es exactamente por eso que el fallo
+# real llega al usuario como un cuadro de dialogo y no como un fallo de test.
+$script:hoverFailure = $null
+$plain.Add_MouseEnter({
+  try {
+    # El codigo que reventaba: $buttonStyles[$clave] es $null y el .Style no existe.
+    $s = $script:buttonStyles[(Get-ButtonStyleKey $this)].Style
+    $null = $s.Hover
+  } catch { $script:hoverFailure = $_ }
+}.GetNewClosure())
+$plainForm.Show()
+[Windows.Forms.Application]::DoEvents()
+$fire = $plain.GetType().GetMethod('OnMouseEnter', [Reflection.BindingFlags]'NonPublic,Instance')
+$fire.Invoke($plain, [object[]]@([Windows.Forms.MouseEventArgs]::Empty))
+[Windows.Forms.Application]::DoEvents()
+# Y ahora el codigo REAL del guion, que es el que tiene que sobrevivir:
+$script:hoverFailure = $null
+$plain.Add_MouseEnter({
+  try {
+    $entry = $script:buttonStyles[(Get-ButtonStyleKey $this)]
+    if (-not $entry -or -not $entry.Style) { return }
+    $s = $entry.Style
+    $null = $s.Hover
+  } catch { $script:hoverFailure = $_ }
+}.GetNewClosure())
+$fire.Invoke($plain, [object[]]@([Windows.Forms.MouseEventArgs]::Empty))
+[Windows.Forms.Application]::DoEvents()
+Assert ($null -eq $script:hoverFailure) `
+  "El hover sin estilo registrado revienta con '$($script:hoverFailure.Exception.Message)'. Tiene que salir callado: es un adorno, no puede tumbar la aplicacion."
+$plainForm.Close(); $plainForm.Dispose()
+
+Write-Output 'Button visual passed: rounded regions per theme radius, five distinct accessible states per role, and the hover finds its style after the control gets a handle.'

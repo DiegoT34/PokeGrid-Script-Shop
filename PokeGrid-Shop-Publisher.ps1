@@ -165,8 +165,12 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   Set-ButtonRole $button $role | Out-Null
   $button.Add_MouseEnter({
     if (-not $this.Enabled) { return }
-    $key = [int]$this.GetHashCode()
-    $s = $script:buttonStyles[$key].Style
+    $key = Get-ButtonStyleKey $this
+    $entry = $script:buttonStyles[$key]
+    # Un boton sin estilo registrado no tiene a donde interpolar. Se sale callado:
+    # el hover es un adorno y no puede ser lo que tumbe la aplicacion.
+    if (-not $entry -or -not $entry.Style) { return }
+    $s = $entry.Style
     $from = $this.BackColor
     $borderFrom = $this.FlatAppearance.BorderColor
     $to = $s.Hover; $borderTo = $s.Hover
@@ -179,8 +183,10 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
     } $duration
   }.GetNewClosure())
   $button.Add_MouseLeave({
-    $key = [int]$this.GetHashCode()
-    $s = $script:buttonStyles[$key].Style
+    $key = Get-ButtonStyleKey $this
+    $entry = $script:buttonStyles[$key]
+    if (-not $entry -or -not $entry.Style) { return }
+    $s = $entry.Style
     $from = $this.BackColor
     $borderFrom = $this.FlatAppearance.BorderColor
     $to = $s.Base; $borderTo = $s.Border

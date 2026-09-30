@@ -296,13 +296,25 @@ function Get-ButtonRoleStyle([string]$role) {
   }
 }
 
+function Get-ButtonStyleKey($button) {
+  # La clave NO es GetHashCode(). Ese hash de un control WinForms CAMBIA cuando el
+  # control recibe su handle: en esta maquina un boton pasa de 63161730 a 18198883
+  # entre construirse y dibujarse. Set-ButtonRole guarda el estilo antes del handle
+  # y el hover lo busca despues, con la otra clave: $buttonStyles[$clave] sale $null
+  # y el manejador revienta con "No se puede indizar en una matriz nula" en cuanto
+  # el raton pasa por encima de un boton.
+  # RuntimeHelpers.GetHashCode da la identidad real del objeto y no cambia nunca.
+  if ($null -eq $button) { return 0 }
+  return [Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($button)
+}
+
 function Set-ButtonRole($button, [string]$role) {
   $style = Get-ButtonRoleStyle $role
   $button.BackColor = $style.Base
   $button.ForeColor = $style.Fore
   $button.FlatAppearance.BorderColor = $style.Border
   $button.FlatAppearance.MouseDownBackColor = $style.Pressed
-  $script:buttonStyles[[int]$button.GetHashCode()] = @{ Role = $role; Style = $style }
+  $script:buttonStyles[(Get-ButtonStyleKey $button)] = @{ Role = $role; Style = $style }
   return $style
 }
 
