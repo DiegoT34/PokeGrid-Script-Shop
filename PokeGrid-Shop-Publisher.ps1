@@ -162,41 +162,43 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   # 'accent' es el nombre antiguo del boton de accion; el rol se llama 'danger'.
   # Las 15 llamadas existentes siguen pasando 'accent' y no se tocan.
   $role = if ($kind -eq 'accent') { 'danger' } else { $kind }
-  Set-ButtonRole $button $role | Out-Null
+  $buttonStyle = Set-ButtonRole $button $role
+
+  # EL ESTILO SE CAPTURA AQUI, FUERA DEL MANEJADOR. Un evento de WinForms se
+  # ejecuta en un ambito NUEVO, hijo del del guion, y ahi $script: resuelve a un
+  # ambito VACIO: el manejador no ve $script:buttonStyles ni $script:theme. Medido
+  # aqui, el guion ve 1 entrada en el diccionario y el manejador ve 0. Con eso,
+  # $buttonStyles[$clave] sale $null y el .Style revienta con "No se puede indizar
+  # en una matriz nula" en cuanto el raton pasa por encima de un boton.
+  # GetNewClosure() si conserva las variables locales que se le pasan, asi que el
+  # estilo y la duracion se resuelven al construir el boton y viajan por valor.
+  $hoverColor = $buttonStyle.Hover
+  $restColor = $buttonStyle.Base
+  $restBorder = $buttonStyle.Border
+  $hoverDuration = [int](Get-PokeGridThemeMotion 'Fast')
+
   $button.Add_MouseEnter({
     if (-not $this.Enabled) { return }
-    $key = Get-ButtonStyleKey $this
-    $entry = $script:buttonStyles[$key]
-    # Un boton sin estilo registrado no tiene a donde interpolar. Se sale callado:
-    # el hover es un adorno y no puede ser lo que tumbe la aplicacion.
-    if (-not $entry -or -not $entry.Style) { return }
-    $s = $entry.Style
     $from = $this.BackColor
     $borderFrom = $this.FlatAppearance.BorderColor
-    $to = $s.Hover; $borderTo = $s.Hover
-    $target = 'hover-' + $key; $duration = [int]$script:theme.Motion.Fast
     $self = $this
+    $target = 'hover-' + (Get-ButtonStyleKey $self)
     Start-PokeGridAnimation $target {
       param($p)
-      $self.BackColor = Lerp-Color $from $to $p
-      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $borderTo $p
-    } $duration
+      $self.BackColor = Lerp-Color $from $hoverColor $p
+      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $hoverColor $p
+    } $hoverDuration
   }.GetNewClosure())
   $button.Add_MouseLeave({
-    $key = Get-ButtonStyleKey $this
-    $entry = $script:buttonStyles[$key]
-    if (-not $entry -or -not $entry.Style) { return }
-    $s = $entry.Style
     $from = $this.BackColor
     $borderFrom = $this.FlatAppearance.BorderColor
-    $to = $s.Base; $borderTo = $s.Border
-    $target = 'hover-' + $key; $duration = [int]$script:theme.Motion.Fast
     $self = $this
+    $target = 'hover-' + (Get-ButtonStyleKey $self)
     Start-PokeGridAnimation $target {
       param($p)
-      $self.BackColor = Lerp-Color $from $to $p
-      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $borderTo $p
-    } $duration
+      $self.BackColor = Lerp-Color $from $restColor $p
+      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $restBorder $p
+    } $hoverDuration
   }.GetNewClosure())
   return $button
 }
@@ -975,6 +977,34 @@ if($SmokeTest){
   if($header.Width -lt 880 -or $statusChip.Right -gt $header.ClientSize.Width){throw 'La cabecera se sale a 880x650: el chip de estado no cabe.'}
   if($form.Controls | Where-Object { $_.Right -gt $form.ClientSize.Width -or $_.Bottom -gt $form.ClientSize.Height }){throw 'Un control de primer nivel se sale de la ventana a 880x650.'}
   $form.ClientSize=[Drawing.Size]::new(900,680);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  # EL AMBITO DE UN EVENTO NO ES EL DEL GUION. Medido en esta maquina: el guion ve
+  # 18 estilos de boton registrados y el manejador de MouseEnter ve 0, porque WinForms
+  # ejecuta el evento en un ambito hijo donde $script: resuelve a otra cosa. Por eso
+  # el hover no puede buscar el estilo por $script: dentro del manejador: se resuelve
+  # al construir el boton y viaja por valor en el closure.
+  $scopeProbe=0
+  $scopeButton=New-Button 'Prueba de ambito' 'primary'
+  $scopeButton.Add_MouseEnter({$scopeProbe=$script:buttonStyles.Count}.GetNewClosure())
+  $scopeForm=[Windows.Forms.Form]::new();$scopeForm.ClientSize=[Drawing.Size]::new(120,50);$scopeForm.Controls.Add($scopeButton)
+  $scopeForm.Show();[Windows.Forms.Application]::DoEvents()
+  $scopeFire=$scopeButton.GetType().GetMethod('OnMouseEnter',[Reflection.BindingFlags]'NonPublic,Instance')
+  $scopeFire.Invoke($scopeButton,[object[]]@([Windows.Forms.MouseEventArgs]::Empty));[Windows.Forms.Application]::DoEvents()
+  $scopeForm.Close();$scopeForm.Dispose()
+  if($scopeProbe -eq 0 -and $script:buttonStyles.Count -gt 0){
+    Write-Host "AVISO: el ambito de MouseEnter ve $scopeProbe estilos y el guion ve $($script:buttonStyles.Count). El hover no puede depender de `$script: dentro del manejador."
+  }
+  # El hover arranca una ANIMACION y su color lo mueve el reloj de 10 ms, que solo
+  # corre dentro del bucle de mensajes. El smoke no tiene bucle, asi que aqui solo
+  # se comprueba que el manejador no revienta; el recorrido del color lo hace
+  # test-button-visual, que pinta el boton y lo mide.
+  $hoverFire=$publishButton.GetType().GetMethod('OnMouseEnter',[Reflection.BindingFlags]'NonPublic,Instance')
+  $hoverError=$null
+  try { $hoverFire.Invoke($publishButton,[object[]]@([Windows.Forms.MouseEventArgs]::Empty)) } catch { $hoverError=$_.Exception.InnerException }
+  if($null -eq $hoverError){$hoverError=$_.Exception}
+  if($hoverError){throw "El hover de un boton registrado lanzo: $($hoverError.Message)"}
+  $leaveFire=$publishButton.GetType().GetMethod('OnMouseLeave',[Reflection.BindingFlags]'NonPublic,Instance')
+  try { $leaveFire.Invoke($publishButton,[object[]]@([Windows.Forms.MouseEventArgs]::Empty)) } catch { }
+  if((Get-PokeGridAnimationCount) -lt 0){throw 'El reloj de animaciones no es coherente.'}
   $script:catalogEntries=@([pscustomobject]@{id='smoke';name='Script Smoke';version='1.0.0';category='Utilidades';author='PokeGrid';icon='script';games=@('Juego Smoke');tags=@('test');featured=$true;description='Prueba';publishedAt='2026-01-01';sha256=('a'*64)})
   Render-CatalogManagement
   if($catalogGrid.Rows.Count -ne 1 -or $catalogCountValue.Text -ne '1' -or -not $catalogDeleteButton.Enabled){throw 'La vista visual del catálogo no pudo representar una publicación seleccionable.'}

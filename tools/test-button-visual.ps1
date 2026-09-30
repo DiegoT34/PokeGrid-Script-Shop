@@ -157,4 +157,57 @@ Assert ($null -eq $script:hoverFailure) `
   "El hover sin estilo registrado revienta con '$($script:hoverFailure.Exception.Message)'. Tiene que salir callado: es un adorno, no puede tumbar la aplicacion."
 $plainForm.Close(); $plainForm.Dispose()
 
+# LA CAUSA REAL, y no era que faltara el estilo. Un manejador de evento de WinForms
+# se ejecuta en un ambito NUEVO, hijo del del guion, y ahi $script: resuelve a un
+# ambito VACIO: el manejador no ve $script:buttonStyles ni $script:theme.
+# GetNewClosure() congela el ambito donde se creo el scriptblock, asi que la
+# variable que ve el evento NO es la del guion.
+#
+# Medido en este equipo: el guion ve 1 entrada en el diccionario y el manejador ve
+# 0. Con eso, $buttonStyles[$clave] sale $null y el .Style revienta con "No se
+# puede indizar en una matriz nula" al pasar el raton por encima de un boton. Por
+# eso la guarda anterior no bastaba: no era que faltara el estilo, era que el
+# diccionario entero era otro.
+#
+# Se comprueba con la forma EXACTA que usa el guion: el color se resuelve al crear
+# el boton y viaja por valor en el closure, sin tocar $script: dentro del evento.
+$script:theme = $themes['crystal-dark']
+$script:buttonStyles = @{}
+$styleForProbe = Set-ButtonRole ([Windows.Forms.Button]::new()) 'danger'
+$hoverColor = $styleForProbe.Hover
+$restColor = $styleForProbe.Base
+$hoverDuration = [int](Get-PokeGridThemeMotion 'Fast')
+# El unico estado que el manejador puede cambiar de verdad es el PROPIO boton: las
+# variables del guion tampoco se ven desde el evento, en ninguna direccion. Por eso
+# se mide el color del control y no un centinela en $script:.
+function New-HoverProbe {
+  $probeButton = [Windows.Forms.Button]::new()
+  $probeButton.Dock = 'Fill'
+  $probeButton.BackColor = $restColor
+  # Sin una sola referencia a $script: dentro del manejador.
+  $probeButton.Add_MouseEnter({
+    $self = $this
+    $self.BackColor = Lerp-Color $self.BackColor $hoverColor 1.0
+  }.GetNewClosure())
+  return $probeButton
+}
+$scopeForm = [Windows.Forms.Form]::new()
+$scopeForm.ClientSize = [Drawing.Size]::new(160, 60)
+$scopeButton = New-HoverProbe
+$scopeForm.Controls.Add($scopeButton)
+$scopeForm.Show()
+[Windows.Forms.Application]::DoEvents()
+Assert ($scopeButton.BackColor.ToArgb() -eq $restColor.ToArgb()) 'El probe no arranca en el color de reposo.'
+$fire2 = $scopeButton.GetType().GetMethod('OnMouseEnter', [Reflection.BindingFlags]'NonPublic,Instance')
+$fire2.Invoke($scopeButton, [object[]]@([Windows.Forms.MouseEventArgs]::Empty))
+[Windows.Forms.Application]::DoEvents()
+# Si el manejador reventara, el color se queda en reposo: eso es el sintoma.
+Assert ($scopeButton.BackColor.ToArgb() -eq $hoverColor.ToArgb()) `
+  "El hover no llevo el boton al color de hover: se queda en $($scopeButton.BackColor) en vez de $hoverColor. Con el codigo antigo reventaba con 'No se puede indizar en una matriz nula' y el color no cambiaba."
+
+# Y la duracion del tema se lee por una funcion, no por $script:theme.Motion dentro
+# del evento: es el mismo problema con otra variable.
+Assert ((Get-PokeGridThemeMotion 'Fast') -gt 0) 'Get-PokeGridThemeMotion devolvio 0: el hover no tendria duracion.'
+$scopeForm.Close(); $scopeForm.Dispose()
+
 Write-Output 'Button visual passed: rounded regions per theme radius, five distinct accessible states per role, and the hover finds its style after the control gets a handle.'

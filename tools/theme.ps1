@@ -296,6 +296,17 @@ function Get-ButtonRoleStyle([string]$role) {
   }
 }
 
+function Get-PokeGridThemeMotion([string]$Name) {
+  # Lee una duracion de la tabla Motion del tema activo. Existe como funcion, y no
+  # como acceso directo a $script:theme.Motion, porque los manejadores de evento de
+  # WinForms se ejecutan en un ambito donde $script: no resuelve al ambito del guion.
+  $motion = $script:theme.Motion
+  if ($null -eq $motion) { return 120 }
+  $value = $motion[$Name]
+  if ($null -eq $value) { return 120 }
+  return $value
+}
+
 function Get-ButtonStyleKey($button) {
   # La clave NO es GetHashCode(). Ese hash de un control WinForms CAMBIA cuando el
   # control recibe su handle: en esta maquina un boton pasa de 63161730 a 18198883
