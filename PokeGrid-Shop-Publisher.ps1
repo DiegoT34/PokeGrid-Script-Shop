@@ -102,7 +102,7 @@ function Style-Input($control, [switch]$ReadOnly) {
   # si comparte su cristal, el texto se pierde contra el texto de al lado.
   $control.BackColor = $(if ($ReadOnly) { Get-GlassColor 'Surface.Soft' 0.55 } else { Get-GlassColor 'Surface.Soft' 0.75 })
   $control.ForeColor = $(if ($ReadOnly) { Get-ThemeColor 'Text.Secondary' } else { $palette.Text })
-  $control.Font = [Drawing.Font]::new('Segoe UI', 9.25)
+  $control.Font = Get-TextStyle 'body'
   $control.Margin = [Windows.Forms.Padding]::new(0, 2, 0, 0)
   if ($control -is [Windows.Forms.TextBox]) { $control.BorderStyle = 'FixedSingle'; $control.ReadOnly = [bool]$ReadOnly }
   # Un ComboBox pinta su fondo con los estilos visuales del sistema salvo que
@@ -131,7 +131,7 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   $button.Text = $text
   $button.FlatStyle = 'Flat'
   $button.FlatAppearance.BorderSize = 1
-  $button.Font = [Drawing.Font]::new('Segoe UI Semibold', 9.5, [Drawing.FontStyle]::Bold)
+  $button.Font = Get-TextStyle 'body'
   $button.Cursor = 'Hand'
   $button.Margin = [Windows.Forms.Padding]::new(4)
   $button.UseVisualStyleBackColor = $false
@@ -498,25 +498,25 @@ function Wait-LauncherRelease([string]$version) {
 $workingArea=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $form=[Windows.Forms.Form]::new();$form.Text='PokeGrid Publisher 1.3.1';$form.StartPosition='CenterScreen'
 $form.ClientSize=[Drawing.Size]::new([Math]::Min(1280,[Math]::Max(900,$workingArea.Width-90)),[Math]::Min(860,[Math]::Max(660,$workingArea.Height-80)))
-$form.MinimumSize=[Drawing.Size]::new(880,650);$form.BackColor=$palette.Background;$form.ForeColor=$palette.Text;$form.Font=[Drawing.Font]::new('Segoe UI',9);$form.AutoScaleMode='Dpi';$form.KeyPreview=$true;$form.AllowDrop=$true
+$form.MinimumSize=[Drawing.Size]::new(880,650);$form.BackColor=$palette.Background;$form.ForeColor=$palette.Text;$form.Font=Get-TextStyle 'body';$form.AutoScaleMode='Dpi';$form.KeyPreview=$true;$form.AllowDrop=$true
 
 $header=[Windows.Forms.TableLayoutPanel]::new();$header.Dock='Top';$header.Height=88;$header.Padding=[Windows.Forms.Padding]::new(20,12,20,10);$header.BackColor=$palette.Surface;$header.ColumnCount=2;$header.RowCount=2
 $header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',62))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',38))|Out-Null
-$appTitle=New-Label 'PokeGrid Publisher' 19 $palette.Text ([Drawing.FontStyle]::Bold);$appTitle.Dock='Fill'
-$appSubtitle=New-Label 'Publica userscripts y nuevas versiones del launcher desde un solo lugar.' 8.5 $palette.Muted;$appSubtitle.Dock='Fill'
-$statusChip=New-Label '  PREPARADO  ' 7.5 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22;$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
+$appTitle=New-Label 'PokeGrid Publisher' 22 $palette.Text ([Drawing.FontStyle]::Bold);$appTitle.Dock='Fill'
+$appSubtitle=New-Label 'Publica userscripts y nuevas versiones del launcher desde un solo lugar.' 9.5 $palette.Muted;$appSubtitle.Dock='Fill'
+$statusChip=New-Label '  PREPARADO  ' 7.7 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22;$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
 $header.Controls.Add($appTitle,0,0);$header.Controls.Add($appSubtitle,0,1);$header.Controls.Add($statusChip,1,0);$header.SetRowSpan($statusChip,2)
 
 $footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Get-GlassColor 'Surface.Soft' 0.45;$footer.ColumnCount=4
 $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',18))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',330))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',90))|Out-Null
-$statusDot=New-Label '●' 9 $palette.Primary ([Drawing.FontStyle]::Bold);$statusDot.Dock='Fill';$statusLabel=New-Label 'Preparando interfaz…' 8 $palette.Primary;$statusLabel.Dock='Fill'
+$statusDot=New-Label '●' 9.5 $palette.Primary ([Drawing.FontStyle]::Bold);$statusDot.Dock='Fill';$statusLabel=New-Label 'Preparando interfaz…' 9.5 $palette.Primary;$statusLabel.Dock='Fill'
 $repoFooter=New-Label ("Repositorio: "+$repoRoot) 7.5 $palette.Dim;$repoFooter.Dock='Fill';$repoFooter.TextAlign='MiddleRight';$repoFooter.AutoEllipsis=$true
-$versionFooter=New-Label 'v1.3.1' 7.5 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
+$versionFooter=New-Label 'v1.3.1' 7.7 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
 $footer.Controls.Add($statusDot,0,0);$footer.Controls.Add($statusLabel,1,0);$footer.Controls.Add($repoFooter,2,0);$footer.Controls.Add($versionFooter,3,0)
 
 $sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Get-GlassColor 'Surface.Soft' 0.35
-$sideBrand=New-Label '◈  POKEGRID' 11 $palette.Primary ([Drawing.FontStyle]::Bold);$sideBrand.Dock='Top';$sideBrand.Height=42
-$sideIntro=New-Label 'Flujo de publicación' 8 $palette.Muted ([Drawing.FontStyle]::Bold);$sideIntro.Dock='Top';$sideIntro.Height=24
+$sideBrand=New-Label '◈  POKEGRID' 13.5 $palette.Primary ([Drawing.FontStyle]::Bold);$sideBrand.Dock='Top';$sideBrand.Height=42
+$sideIntro=New-Label 'Flujo de publicación' 9.5 $palette.Muted ([Drawing.FontStyle]::Bold);$sideIntro.Dock='Top';$sideIntro.Height=24
 $stepsPanel=[Windows.Forms.FlowLayoutPanel]::new();$stepsPanel.Dock='Top';$stepsPanel.Height=200;$stepsPanel.FlowDirection='TopDown';$stepsPanel.WrapContents=$false
 foreach($step in @(@('01','Selecciona el script','Lee y valida los metadatos.'),@('02','Completa la ficha','Información visible en la Shop.'),@('03','Publica','Catálogo, hash, commit y push.'))){
   $stepPanel=[Windows.Forms.Panel]::new();$stepPanel.Size=[Drawing.Size]::new(190,59);$stepPanel.BackColor=$palette.Surface;$stepPanel.Margin=[Windows.Forms.Padding]::new(0,0,0,6)
@@ -525,13 +525,13 @@ foreach($step in @(@('01','Selecciona el script','Lee y valida los metadatos.'),
   $stepCopy=New-Label $step[2] 7.3 $palette.Muted;$stepCopy.Location=[Drawing.Point]::new(43,30);$stepCopy.Size=[Drawing.Size]::new(137,30)
   $stepPanel.Controls.AddRange(@($stepNumber,$stepTitle,$stepCopy));$stepsPanel.Controls.Add($stepPanel)
 }
-$previewPanel=[Windows.Forms.Panel]::new();$previewPanel.Dock='Top';$previewPanel.Height=120;$previewPanel.BackColor=$palette.SurfaceRaised;$previewPanel.Padding=[Windows.Forms.Padding]::new(12)
-$modeLabel=New-Label 'SCRIPT NUEVO' 7.2 $palette.Primary ([Drawing.FontStyle]::Bold);$modeLabel.Dock='Top';$modeLabel.Height=22
-$previewIcon=New-Label '🧩' 23 $palette.Text;$previewIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',22);$previewIcon.Dock='Left';$previewIcon.Width=54;$previewIcon.TextAlign='MiddleCenter'
+$previewPanel=[Windows.Forms.Panel]::new();$previewPanel.Dock='Top';$previewPanel.Height=126;$previewPanel.BackColor=Get-GlassColor 'Surface.Raised' 0.30;$previewPanel.Padding=[Windows.Forms.Padding]::new(12)
+$modeLabel=New-Label 'SCRIPT NUEVO' 7.7 $palette.Primary ([Drawing.FontStyle]::Bold);$modeLabel.Dock='Top';$modeLabel.Height=22
+$previewIcon=New-Label '🧩' 22 $palette.Text;$previewIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',22);$previewIcon.Dock='Left';$previewIcon.Width=54;$previewIcon.TextAlign='MiddleCenter'
 $previewCopy=[Windows.Forms.Panel]::new();$previewCopy.Dock='Fill';$previewCopy.Padding=[Windows.Forms.Padding]::new(8,6,0,0)
-$previewName=New-Label 'Nombre del script' 9.5 $palette.Text ([Drawing.FontStyle]::Bold);$previewName.Dock='Top';$previewName.Height=28;$previewName.AutoEllipsis=$true
-$previewMeta=New-Label 'Selecciona un userscript' 7.5 $palette.Muted;$previewMeta.Dock='Top';$previewMeta.Height=23
-$previewId=New-Label 'id-estable' 7 $palette.Dim;$previewId.Dock='Top';$previewId.Height=22;$previewId.AutoEllipsis=$true
+$previewName=New-Label 'Nombre del script' 9.5 $palette.Text ([Drawing.FontStyle]::Bold);$previewName.Dock='Top';$previewName.Height=30;$previewName.AutoEllipsis=$true
+$previewMeta=New-Label 'Selecciona un userscript' 7.7 $palette.Muted;$previewMeta.Dock='Top';$previewMeta.Height=23
+$previewId=New-Label 'id-estable' 7.7 $palette.Dim;$previewId.Dock='Top';$previewId.Height=22;$previewId.AutoEllipsis=$true
 $previewCopy.Controls.Add($previewId);$previewCopy.Controls.Add($previewMeta);$previewCopy.Controls.Add($previewName);$previewPanel.Controls.Add($previewCopy);$previewPanel.Controls.Add($previewIcon);$previewPanel.Controls.Add($modeLabel)
 $sideLinks=[Windows.Forms.FlowLayoutPanel]::new();$sideLinks.Dock='Bottom';$sideLinks.Height=88;$sideLinks.FlowDirection='TopDown';$sideLinks.WrapContents=$false
 $openRepoButton=New-Button '↗ Abrir repositorio' 'ghost';$openRepoButton.Size=[Drawing.Size]::new(188,36);$openRepoButton.Margin=[Windows.Forms.Padding]::new(0,0,0,5);$catalogButton=New-Button '↗ Ver catálogo online' 'ghost';$catalogButton.Size=[Drawing.Size]::new(188,36);$catalogButton.Margin=[Windows.Forms.Padding]::new(0);$sideLinks.Controls.AddRange(@($openRepoButton,$catalogButton))
@@ -548,7 +548,7 @@ $pathRow.Controls.Add($pathBox,0,0);$pathRow.Controls.Add($browseButton,1,0);$pa
 $detectedGrid=[Windows.Forms.TableLayoutPanel]::new();$detectedGrid.Dock='Fill';$detectedGrid.ColumnCount=3;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$detectedGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',16))|Out-Null
 $nameValue=New-TextBox -ReadOnly;$namespaceValue=New-TextBox -ReadOnly;$versionValue=New-TextBox -ReadOnly
 $detectedGrid.Controls.Add((New-Field 'NOMBRE DETECTADO' $nameValue),0,0);$detectedGrid.Controls.Add((New-Field 'NAMESPACE' $namespaceValue),1,0);$detectedGrid.Controls.Add((New-Field 'VERSIÓN' $versionValue),2,0);$sourceLayout.Controls.Add($detectedGrid,0,2)
-$sourceHint=New-Label 'Arrastra un archivo aquí o utiliza Examinar. Tamaño máximo: 10 MB.' 8 $palette.Dim;$sourceHint.Dock='Fill';$sourceHint.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$sourceLayout.Controls.Add($sourceHint,0,3);$sourceCard.Controls.Add($sourceLayout)
+$sourceHint=New-Label 'Arrastra un archivo aquí o utiliza Examinar. Tamaño máximo: 10 MB.' 9.5 $palette.Dim;$sourceHint.Dock='Fill';$sourceHint.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$sourceLayout.Controls.Add($sourceHint,0,3);$sourceCard.Controls.Add($sourceLayout)
 
 $publicationCard=New-Card 493;$publicationLayout=[Windows.Forms.TableLayoutPanel]::new();$publicationLayout.Dock='Fill';$publicationLayout.ColumnCount=1;$publicationLayout.RowCount=6
 foreach($height in @(55,66,66,126,89,45)){ $publicationLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null };$publicationLayout.Controls.Add((New-SectionHeader '02' 'Completa la ficha de la Shop' 'Esta información será visible para todos los usuarios del launcher.'),0,0)
@@ -561,7 +561,7 @@ $detailsGrid=[Windows.Forms.TableLayoutPanel]::new();$detailsGrid.Dock='Fill';$d
 $descriptionBox=New-TextBox -Multiline;$permissionsBox=New-TextBox -Multiline;$detailsGrid.Controls.Add((New-Field 'DESCRIPCIÓN COMPLETA' $descriptionBox),0,0);$detailsGrid.Controls.Add((New-Field 'PERMISOS · UNO POR LÍNEA' $permissionsBox),1,0);$publicationLayout.Controls.Add($detailsGrid,0,3)
 $changelogBox=New-TextBox -Multiline;$publicationLayout.Controls.Add((New-Field 'CAMBIOS DE ESTA VERSIÓN' $changelogBox),0,4)
 $featureBar=[Windows.Forms.TableLayoutPanel]::new();$featureBar.Dock='Fill';$featureBar.ColumnCount=2;$featureBar.Padding=[Windows.Forms.Padding]::new(6,2,6,2);$featureBar.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$featureBar.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',190))|Out-Null
-$featureHint=New-Label 'Nombre + namespace exactos identifican una actualización; cualquier identidad nueva se agrega a la Shop.' 7.7 $palette.Dim;$featureHint.Dock='Fill';$featuredBox=[Windows.Forms.CheckBox]::new();$featuredBox.Text='★ Marcar como destacado';$featuredBox.Dock='Fill';$featuredBox.ForeColor=$palette.Warning;$featuredBox.BackColor=$palette.Surface;$featuredBox.Font=[Drawing.Font]::new('Segoe UI Semibold',8.5,[Drawing.FontStyle]::Bold)
+$featureHint=New-Label 'Nombre + namespace exactos identifican una actualización; cualquier identidad nueva se agrega a la Shop.' 7.7 $palette.Dim;$featureHint.Font=Get-TextStyle 'label';$featureHint.Dock='Fill';$featuredBox=[Windows.Forms.CheckBox]::new();$featuredBox.Text='★ Marcar como destacado';$featuredBox.Dock='Fill';$featuredBox.ForeColor=$palette.Warning;$featuredBox.BackColor=$palette.Surface;$featuredBox.Font=Get-TextStyle 'label'
 $featureBar.Controls.Add($featureHint,0,0);$featureBar.Controls.Add($featuredBox,1,0);$publicationLayout.Controls.Add($featureBar,0,5);$publicationCard.Controls.Add($publicationLayout)
 
 $actionCard=New-Card 245;$actionLayout=[Windows.Forms.TableLayoutPanel]::new();$actionLayout.Dock='Fill';$actionLayout.ColumnCount=1;$actionLayout.RowCount=3;$actionLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',55))|Out-Null;$actionLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',51))|Out-Null;$actionLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',100))|Out-Null
@@ -569,7 +569,7 @@ $actionLayout.Controls.Add((New-SectionHeader '03' 'Valida y publica' 'La aplica
 $actions=[Windows.Forms.TableLayoutPanel]::new();$actions.Dock='Fill';$actions.ColumnCount=5;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',122))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',110))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',110))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',220))|Out-Null
 $validateButton=New-Button '✓ Validar' 'primary';$validateButton.Dock='Fill';$clearButton=New-Button 'Limpiar' 'ghost';$clearButton.Dock='Fill';$openFolderButton=New-Button 'Carpeta local' 'ghost';$openFolderButton.Dock='Fill';$publishButton=New-Button '↑ Agregar nuevo script' 'accent';$publishButton.Dock='Fill'
 $actions.Controls.Add($validateButton,0,0);$actions.Controls.Add($clearButton,1,0);$actions.Controls.Add($openFolderButton,2,0);$actions.Controls.Add($publishButton,4,0);$actionLayout.Controls.Add($actions,0,1)
-$logBox=New-TextBox -Multiline -ReadOnly;$logBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$logBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$logBox.Margin=[Windows.Forms.Padding]::new(5,4,5,3);$actionLayout.Controls.Add($logBox,0,2);$actionCard.Controls.Add($actionLayout)
+$logBox=New-TextBox -Multiline -ReadOnly;$logBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$logBox.Font=Get-TextStyle 'mono';$logBox.Margin=[Windows.Forms.Padding]::new(5,4,5,3);$actionLayout.Controls.Add($logBox,0,2);$actionCard.Controls.Add($actionLayout)
 
 $contentStack.Controls.AddRange(@($sourceCard,$publicationCard,$actionCard))
 
@@ -583,7 +583,7 @@ $launcherPathRow=[Windows.Forms.TableLayoutPanel]::new();$launcherPathRow.Dock='
 $launcherPathBox=New-TextBox;$launcherPathBox.Text=$launcherRepoRoot;$launcherPathBox.Dock='Fill';$launcherPathBox.Margin=[Windows.Forms.Padding]::new(5)
 $launcherBrowseButton=New-Button 'Elegir carpeta…' 'primary';$launcherBrowseButton.Dock='Fill';$launcherRefreshButton=New-Button '↻ Detectar';$launcherRefreshButton.Dock='Fill'
 $launcherPathRow.Controls.Add($launcherPathBox,0,0);$launcherPathRow.Controls.Add($launcherBrowseButton,1,0);$launcherPathRow.Controls.Add($launcherRefreshButton,2,0);$launcherRepoLayout.Controls.Add($launcherPathRow,0,1)
-$launcherRepoHint=New-Label 'Selecciona el repositorio para detectar versión, rama y cambios pendientes.' 8 $palette.Dim;$launcherRepoHint.Dock='Fill';$launcherRepoHint.Margin=[Windows.Forms.Padding]::new(6,2,0,0);$launcherRepoLayout.Controls.Add($launcherRepoHint,0,2);$launcherRepoCard.Controls.Add($launcherRepoLayout)
+$launcherRepoHint=New-Label 'Selecciona el repositorio para detectar versión, rama y cambios pendientes.' 9.5 $palette.Dim;$launcherRepoHint.Dock='Fill';$launcherRepoHint.Margin=[Windows.Forms.Padding]::new(6,2,0,0);$launcherRepoLayout.Controls.Add($launcherRepoHint,0,2);$launcherRepoCard.Controls.Add($launcherRepoLayout)
 
 $launcherReleaseCard=New-Card 292;$launcherReleaseLayout=[Windows.Forms.TableLayoutPanel]::new();$launcherReleaseLayout.Dock='Fill';$launcherReleaseLayout.ColumnCount=1;$launcherReleaseLayout.RowCount=4
 foreach($height in @(55,66,61,88)){$launcherReleaseLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null}
@@ -593,7 +593,7 @@ $launcherCurrentValue=New-TextBox -ReadOnly;$launcherLatestValue=New-TextBox -Re
 $launcherSummaryGrid.Controls.Add((New-Field 'VERSIÓN LOCAL' $launcherCurrentValue),0,0);$launcherSummaryGrid.Controls.Add((New-Field 'ÚLTIMA RELEASE' $launcherLatestValue),1,0);$launcherSummaryGrid.Controls.Add((New-Field 'CAMBIOS A PUBLICAR' $launcherChangesValue),2,0);$launcherReleaseLayout.Controls.Add($launcherSummaryGrid,0,1)
 $launcherVersionRow=[Windows.Forms.TableLayoutPanel]::new();$launcherVersionRow.Dock='Fill';$launcherVersionRow.ColumnCount=2;$launcherVersionRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',230))|Out-Null;$launcherVersionRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null
 $launcherVersionBox=New-TextBox;$launcherVersionRow.Controls.Add((New-Field 'NUEVA VERSIÓN · X.Y.Z' $launcherVersionBox 'Debe ser superior a la versión local y a la última Release.'),0,0)
-$launcherVersionHint=New-Label 'El número se escribe en package.json y se usa para la etiqueta, el ZIP y el actualizador.' 8 $palette.Muted;$launcherVersionHint.Dock='Fill';$launcherVersionHint.Margin=[Windows.Forms.Padding]::new(12,5,0,0);$launcherVersionRow.Controls.Add($launcherVersionHint,1,0);$launcherReleaseLayout.Controls.Add($launcherVersionRow,0,2)
+$launcherVersionHint=New-Label 'El número se escribe en package.json y se usa para la etiqueta, el ZIP y el actualizador.' 9.5 $palette.Muted;$launcherVersionHint.Dock='Fill';$launcherVersionHint.Margin=[Windows.Forms.Padding]::new(12,5,0,0);$launcherVersionRow.Controls.Add($launcherVersionHint,1,0);$launcherReleaseLayout.Controls.Add($launcherVersionRow,0,2)
 $launcherNotesBox=New-TextBox -Multiline;$launcherNotesBox.Text='Actualización manual del launcher';$launcherReleaseLayout.Controls.Add((New-Field 'RESUMEN DE LOS CAMBIOS' $launcherNotesBox 'La primera línea se utiliza en el commit y aparecerá en las notas generadas por GitHub.'),0,3);$launcherReleaseCard.Controls.Add($launcherReleaseLayout)
 
 $launcherActionCard=New-Card 286;$launcherActionLayout=[Windows.Forms.TableLayoutPanel]::new();$launcherActionLayout.Dock='Fill';$launcherActionLayout.ColumnCount=1;$launcherActionLayout.RowCount=5
@@ -606,8 +606,8 @@ $launcherOptions.Controls.AddRange(@($launcherChecksBox,$launcherBuildBox));$lau
 $launcherActions=[Windows.Forms.TableLayoutPanel]::new();$launcherActions.Dock='Fill';$launcherActions.ColumnCount=5;$launcherActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',132))|Out-Null;$launcherActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',132))|Out-Null;$launcherActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',132))|Out-Null;$launcherActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$launcherActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',245))|Out-Null
 $launcherValidateButton=New-Button '✓ Validar versión' 'primary';$launcherValidateButton.Dock='Fill';$launcherOpenRepoButton=New-Button '↗ Repositorio' 'ghost';$launcherOpenRepoButton.Dock='Fill';$launcherOpenActionsButton=New-Button '↗ Compilaciones' 'ghost';$launcherOpenActionsButton.Dock='Fill';$launcherPublishButton=New-Button '↑ Publicar nueva versión' 'accent';$launcherPublishButton.Dock='Fill'
 $launcherActions.Controls.Add($launcherValidateButton,0,0);$launcherActions.Controls.Add($launcherOpenRepoButton,1,0);$launcherActions.Controls.Add($launcherOpenActionsButton,2,0);$launcherActions.Controls.Add($launcherPublishButton,4,0);$launcherActionLayout.Controls.Add($launcherActions,0,2)
-$launcherProgress=New-Label 'Preparado para validar el repositorio.' 7.8 $palette.Dim;$launcherProgress.Dock='Fill';$launcherProgress.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$launcherActionLayout.Controls.Add($launcherProgress,0,3)
-$launcherLogBox=New-TextBox -Multiline -ReadOnly;$launcherLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$launcherLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$launcherLogBox.Margin=[Windows.Forms.Padding]::new(5,2,5,3);$launcherActionLayout.Controls.Add($launcherLogBox,0,4);$launcherActionCard.Controls.Add($launcherActionLayout)
+$launcherProgress=New-Label 'Preparado para validar el repositorio.' 7.7 $palette.Dim;$launcherProgress.Dock='Fill';$launcherProgress.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$launcherActionLayout.Controls.Add($launcherProgress,0,3)
+$launcherLogBox=New-TextBox -Multiline -ReadOnly;$launcherLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$launcherLogBox.Font=Get-TextStyle 'mono';$launcherLogBox.Margin=[Windows.Forms.Padding]::new(5,2,5,3);$launcherActionLayout.Controls.Add($launcherLogBox,0,4);$launcherActionCard.Controls.Add($launcherActionLayout)
 $launcherStack.Controls.AddRange(@($launcherRepoCard,$launcherReleaseCard,$launcherActionCard))
 
 # Catálogo remoto: consulta visual y retirada segura de publicaciones.
@@ -621,13 +621,13 @@ $catalogStats.Controls.Add((New-Field 'PUBLICACIONES' $catalogCountValue),0,0);$
 $catalogToolbar=[Windows.Forms.TableLayoutPanel]::new();$catalogToolbar.Dock='Fill';$catalogToolbar.ColumnCount=3;$catalogToolbar.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$catalogToolbar.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))|Out-Null;$catalogToolbar.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',145))|Out-Null
 $catalogSearchBox=New-TextBox;$catalogSearchBox.Dock='Fill';$catalogSearchBox.Margin=[Windows.Forms.Padding]::new(5);$catalogRefreshButton=New-Button '↻ Sincronizar' 'primary';$catalogRefreshButton.Dock='Fill';$catalogOpenRepoButton=New-Button '↗ Abrir GitHub' 'ghost';$catalogOpenRepoButton.Dock='Fill'
 $catalogToolbar.Controls.Add($catalogSearchBox,0,0);$catalogToolbar.Controls.Add($catalogRefreshButton,1,0);$catalogToolbar.Controls.Add($catalogOpenRepoButton,2,0);$catalogSummaryLayout.Controls.Add($catalogToolbar,0,2)
-$catalogSyncLabel=New-Label 'Pulsa Sincronizar para cargar la última versión del catálogo.' 7.6 $palette.Dim;$catalogSyncLabel.Dock='Fill';$catalogSyncLabel.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$catalogSummaryLayout.Controls.Add($catalogSyncLabel,0,3);$catalogSummaryCard.Controls.Add($catalogSummaryLayout)
+$catalogSyncLabel=New-Label 'Pulsa Sincronizar para cargar la última versión del catálogo.' 7.7 $palette.Dim;$catalogSyncLabel.Dock='Fill';$catalogSyncLabel.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$catalogSummaryLayout.Controls.Add($catalogSyncLabel,0,3);$catalogSummaryCard.Controls.Add($catalogSummaryLayout)
 
 $catalogBodyCard=New-Card 570;$catalogSplit=[Windows.Forms.TableLayoutPanel]::new();$catalogSplit.Dock='Fill';$catalogSplit.ColumnCount=2;$catalogSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',58))|Out-Null;$catalogSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null
 $catalogListPanel=[Windows.Forms.TableLayoutPanel]::new();$catalogListPanel.Dock='Fill';$catalogListPanel.RowCount=2;$catalogListPanel.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',36))|Out-Null;$catalogListPanel.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',100))|Out-Null;$catalogListPanel.Margin=[Windows.Forms.Padding]::new(0,0,8,0)
-$catalogVisibleLabel=New-Label '0 publicaciones visibles' 9 $palette.Muted ([Drawing.FontStyle]::Bold);$catalogVisibleLabel.Dock='Fill';$catalogVisibleLabel.Padding=[Windows.Forms.Padding]::new(5,0,0,0);$catalogListPanel.Controls.Add($catalogVisibleLabel,0,0)
+$catalogVisibleLabel=New-Label '0 publicaciones visibles' 9.5 $palette.Muted ([Drawing.FontStyle]::Bold);$catalogVisibleLabel.Dock='Fill';$catalogVisibleLabel.Padding=[Windows.Forms.Padding]::new(5,0,0,0);$catalogListPanel.Controls.Add($catalogVisibleLabel,0,0)
 $catalogGrid=[Windows.Forms.DataGridView]::new();$catalogGrid.Dock='Fill';$catalogGrid.BackgroundColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.10;$catalogGrid.BorderStyle='None';$catalogGrid.RowHeadersVisible=$false;$catalogGrid.AllowUserToAddRows=$false;$catalogGrid.AllowUserToDeleteRows=$false;$catalogGrid.AllowUserToResizeRows=$false;$catalogGrid.ReadOnly=$true;$catalogGrid.MultiSelect=$false;$catalogGrid.SelectionMode='FullRowSelect';$catalogGrid.AutoGenerateColumns=$false;$catalogGrid.EnableHeadersVisualStyles=$false;$catalogGrid.ColumnHeadersHeight=34;$catalogGrid.RowTemplate.Height=46;$catalogGrid.GridColor=$palette.Border
-$catalogGrid.ColumnHeadersDefaultCellStyle.BackColor=$palette.SurfaceRaised;$catalogGrid.ColumnHeadersDefaultCellStyle.ForeColor=$palette.Muted;$catalogGrid.ColumnHeadersDefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI Semibold',8,[Drawing.FontStyle]::Bold);$catalogGrid.DefaultCellStyle.BackColor=$palette.SurfaceSoft;$catalogGrid.DefaultCellStyle.ForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.SelectionBackColor=Blend-Color (Get-ThemeColor 'Surface.Raised') (Get-ThemeColor 'Rest.Primary.Base') 0.45;$catalogGrid.DefaultCellStyle.SelectionForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI',8.5);$catalogGrid.DefaultCellStyle.Padding=[Windows.Forms.Padding]::new(4)
+$catalogGrid.ColumnHeadersDefaultCellStyle.BackColor=$palette.SurfaceRaised;$catalogGrid.ColumnHeadersDefaultCellStyle.ForeColor=$palette.Muted;$catalogGrid.ColumnHeadersDefaultCellStyle.Font=Get-TextStyle 'label';$catalogGrid.DefaultCellStyle.BackColor=$palette.SurfaceSoft;$catalogGrid.DefaultCellStyle.ForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.SelectionBackColor=Blend-Color (Get-ThemeColor 'Surface.Raised') (Get-ThemeColor 'Rest.Primary.Base') 0.45;$catalogGrid.DefaultCellStyle.SelectionForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.Font=Get-TextStyle 'body';$catalogGrid.DefaultCellStyle.Padding=[Windows.Forms.Padding]::new(4)
 $iconColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$iconColumn.HeaderText='';$iconColumn.Width=42;$iconColumn.DefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI Emoji',13);$iconColumn.DefaultCellStyle.Alignment='MiddleCenter'
 $nameColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$nameColumn.HeaderText='SCRIPT';$nameColumn.AutoSizeMode='Fill';$nameColumn.MinimumWidth=160
 $versionColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$versionColumn.HeaderText='VERSIÓN';$versionColumn.Width=74
@@ -636,20 +636,20 @@ $categoryColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$categoryColumn
 foreach($column in @($iconColumn,$nameColumn,$versionColumn,$gameColumn,$categoryColumn)){[void]$catalogGrid.Columns.Add($column)};$catalogListPanel.Controls.Add($catalogGrid,0,1)
 
 $catalogDetailPanel=[Windows.Forms.Panel]::new();$catalogDetailPanel.Dock='Fill';$catalogDetailPanel.BackColor=$palette.SurfaceRaised;$catalogDetailPanel.BorderStyle='FixedSingle';$catalogDetailPanel.Padding=[Windows.Forms.Padding]::new(16);$catalogDetailPanel.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
-$catalogDetailIcon=New-Label '◌' 28 $palette.Primary;$catalogDetailIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',26);$catalogDetailIcon.Dock='Top';$catalogDetailIcon.Height=55;$catalogDetailIcon.TextAlign='MiddleLeft'
-$catalogDetailName=New-Label 'Selecciona una publicación' 15 $palette.Text ([Drawing.FontStyle]::Bold);$catalogDetailName.Dock='Top';$catalogDetailName.Height=38;$catalogDetailName.AutoEllipsis=$true
-$catalogDetailMeta=New-Label 'La información completa aparecerá aquí.' 8.5 $palette.Muted;$catalogDetailMeta.Dock='Top';$catalogDetailMeta.Height=28;$catalogDetailMeta.AutoEllipsis=$true
-$catalogDetailGames=New-Label '—' 8 $palette.Primary ([Drawing.FontStyle]::Bold);$catalogDetailGames.Dock='Top';$catalogDetailGames.Height=32;$catalogDetailGames.AutoEllipsis=$true
+$catalogDetailIcon=New-Label '◌' 22 $palette.Primary;$catalogDetailIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',26);$catalogDetailIcon.Dock='Top';$catalogDetailIcon.Height=55;$catalogDetailIcon.TextAlign='MiddleLeft'
+$catalogDetailName=New-Label 'Selecciona una publicación' 13.5 $palette.Text ([Drawing.FontStyle]::Bold);$catalogDetailName.Dock='Top';$catalogDetailName.Height=38;$catalogDetailName.AutoEllipsis=$true
+$catalogDetailMeta=New-Label 'La información completa aparecerá aquí.' 9.5 $palette.Muted;$catalogDetailMeta.Dock='Top';$catalogDetailMeta.Height=28;$catalogDetailMeta.AutoEllipsis=$true
+$catalogDetailGames=New-Label '—' 9.5 $palette.Primary ([Drawing.FontStyle]::Bold);$catalogDetailGames.Dock='Top';$catalogDetailGames.Height=32;$catalogDetailGames.AutoEllipsis=$true
 $catalogDetailDescription=New-TextBox -Multiline -ReadOnly;$catalogDetailDescription.Dock='Top';$catalogDetailDescription.Height=118;$catalogDetailDescription.Margin=[Windows.Forms.Padding]::new(0,4,0,4);$catalogDetailDescription.BackColor=$palette.SurfaceSoft
-$catalogDetailId=New-Label '' 7.5 $palette.Muted;$catalogDetailId.Dock='Top';$catalogDetailId.Height=26;$catalogDetailId.AutoEllipsis=$true
-$catalogDetailHash=New-Label '' 7 $palette.Dim;$catalogDetailHash.Dock='Top';$catalogDetailHash.Height=25;$catalogDetailHash.AutoEllipsis=$true
+$catalogDetailId=New-Label '' 7.7 $palette.Muted;$catalogDetailId.Dock='Top';$catalogDetailId.Height=26;$catalogDetailId.AutoEllipsis=$true
+$catalogDetailHash=New-Label '' 7.7 $palette.Dim;$catalogDetailHash.Dock='Top';$catalogDetailHash.Height=25;$catalogDetailHash.AutoEllipsis=$true
 $catalogActions=[Windows.Forms.TableLayoutPanel]::new();$catalogActions.Dock='Top';$catalogActions.Height=48;$catalogActions.ColumnCount=2;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',58))|Out-Null
 $catalogOpenScriptButton=New-Button '↗ Ver archivo' 'ghost';$catalogOpenScriptButton.Dock='Fill';$catalogOpenScriptButton.Enabled=$false;$catalogDeleteButton=New-Button '🗑 Retirar de la Shop' 'accent';$catalogDeleteButton.Dock='Fill';$catalogDeleteButton.Enabled=$false;$catalogActions.Controls.Add($catalogOpenScriptButton,0,0);$catalogActions.Controls.Add($catalogDeleteButton,1,0)
 $catalogLogBox=New-TextBox -Multiline -ReadOnly;$catalogLogBox.Dock='Fill';$catalogLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$catalogLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8);$catalogLogBox.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
 $catalogDetailPanel.Controls.Add($catalogLogBox);$catalogDetailPanel.Controls.Add($catalogActions);$catalogDetailPanel.Controls.Add($catalogDetailHash);$catalogDetailPanel.Controls.Add($catalogDetailId);$catalogDetailPanel.Controls.Add($catalogDetailDescription);$catalogDetailPanel.Controls.Add($catalogDetailGames);$catalogDetailPanel.Controls.Add($catalogDetailMeta);$catalogDetailPanel.Controls.Add($catalogDetailName);$catalogDetailPanel.Controls.Add($catalogDetailIcon)
 $catalogSplit.Controls.Add($catalogListPanel,0,0);$catalogSplit.Controls.Add($catalogDetailPanel,1,0);$catalogBodyCard.Controls.Add($catalogSplit);$catalogStack.Controls.AddRange(@($catalogSummaryCard,$catalogBodyCard))
 
-$tabs=[Windows.Forms.TabControl]::new();$tabs.Dock='Fill';$tabs.Appearance='FlatButtons';$tabs.SizeMode='Fixed';$tabs.ItemSize=[Drawing.Size]::new(190,34);$tabs.Font=[Drawing.Font]::new('Segoe UI Semibold',9,[Drawing.FontStyle]::Bold);$tabs.Padding=[Drawing.Point]::new(14,5)
+$tabs=[Windows.Forms.TabControl]::new();$tabs.Dock='Fill';$tabs.Appearance='FlatButtons';$tabs.SizeMode='Fixed';$tabs.ItemSize=[Drawing.Size]::new(190,34);$tabs.Font=Get-TextStyle 'body';$tabs.Padding=[Drawing.Point]::new(14,5)
 $shopPage=[Windows.Forms.TabPage]::new('  🧩  Shop de scripts  ');$shopPage.BackColor=$palette.Background;$shopPage.Padding=[Windows.Forms.Padding]::new(0)
 $catalogPage=[Windows.Forms.TabPage]::new('  ☁  Catálogo publicado  ');$catalogPage.BackColor=$palette.Background;$catalogPage.Padding=[Windows.Forms.Padding]::new(0)
 $launcherPage=[Windows.Forms.TabPage]::new('  🚀  Versiones del launcher  ');$launcherPage.BackColor=$palette.Background;$launcherPage.Padding=[Windows.Forms.Padding]::new(0)

@@ -306,6 +306,22 @@ function Set-ButtonRole($button, [string]$role) {
   return $style
 }
 
+function Get-TextStyle([string]$level) {
+  # Cinco niveles y ni uno mas. Antes el guion tenia quince tamanos sueltos
+  # repartidos por las llamadas, y no se podia saber cual era el titulo y cual
+  # un texto auxiliar sin mirar el numero.
+  # Las familias se comprueban contra las instaladas: Bahnschrift y Cascadia Mono
+  # vienen con Windows 10; Inter o Aptos NO estan y no se usan.
+  switch ($level) {
+    'display' { return [Drawing.Font]::new('Bahnschrift SemiBold', 22, [Drawing.FontStyle]::Bold) }
+    'title'   { return [Drawing.Font]::new('Segoe UI Semibold', 13.5, [Drawing.FontStyle]::Bold) }
+    'body'    { return [Drawing.Font]::new('Segoe UI', 9.5) }
+    'label'   { return [Drawing.Font]::new('Segoe UI Semibold', 7.7, [Drawing.FontStyle]::Bold) }
+    'mono'    { return [Drawing.Font]::new('Cascadia Mono', 8.6) }
+    default   { return [Drawing.Font]::new('Segoe UI', 9.5) }
+  }
+}
+
 function Get-GlassColor([string]$token, [double]$opacity = 0.14) {
   # El cristal es una mezcla del token contra el fondo de la ventana. WinForms no
   # pinta paneles con alfa por pixel, asi que esto NO es transparencia real: es
