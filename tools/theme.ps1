@@ -306,6 +306,21 @@ function Set-ButtonRole($button, [string]$role) {
   return $style
 }
 
+function Get-PokeGridEasing([string]$name, [double]$t) {
+  # Curvas de interpolacion. Todas van de 0 a 1 y son monotonas: una curva que
+  # retrocede hace que un boton "rebote" al entrar en vez de asentarse.
+  # t se recorta en lugar de lanzar, para que un llamador con 1.5 no tumbe la app.
+  if ($t -lt 0) { $t = 0.0 }
+  if ($t -gt 1) { $t = 1.0 }
+  switch ($name) {
+    'linear'        { return $t }
+    'easeOutCubic'  { $u = 1.0 - $t; return 1.0 - ($u * $u * $u) }
+    'easeInOutQuad' { if ($t -lt 0.5) { return 2.0 * $t * $t }; $u = (-2.0 * $t) + 2.0; return 1.0 - ($u * $u / 2.0) }
+    'easeOutQuad'   { return 1.0 - (1.0 - $t) * (1.0 - $t) }
+    default         { return $t }
+  }
+}
+
 function Get-TextStyle([string]$level) {
   # Cinco niveles y ni uno mas. Antes el guion tenia quince tamanos sueltos
   # repartidos por las llamadas, y no se podia saber cual era el titulo y cual

@@ -146,3 +146,70 @@ function New-IconPictureBox([string]$name, [int]$size = 18) {
   $box.Image = $bitmap
   return $box
 }
+# ---------------------------------------------------------------------------
+# El reloj de animaciones.
+#
+# Un unico Timer de 16 ms adelanta TODAS las animaciones vivas. Un Timer por
+# animacion los haria competir por el hilo de la interfaz, que en Windows Forms
+# es un solo hilo: varias animaciones simultaneas se ralentizarian entre si.
+# ---------------------------------------------------------------------------
+
+$script:animations = @{}
+$script:animationClock = $null
+
+function Initialize-PokeGridAnimationClock {
+  if ($script:animationClock) { return }
+  $script:animationClock = [Windows.Forms.Timer]::new()
+  # 10 ms y no 16: el reloj del sistema de Windows va a ~15.6 ms, y un intervalo
+  # de 16 cae justo encima y da 19 ticks de los 31 teoricos. Con 10 se mide
+  # 30 ticks reales. Una transicion de 240 ms da ~15 pasos, que es lo que hace
+  # que se vea continua en vez de a saltos.
+  $script:animationClock.Interval = 10
+  $script:animationClock.Add_Tick({
+    $now = [DateTime]::UtcNow
+    foreach ($target in @($script:animations.Keys)) {
+      if (-not $script:animations.ContainsKey($target)) { continue }
+      $a = $script:animations[$target]
+      $elapsed = ($now - $a.Start).TotalMilliseconds
+      $t = $(if ($a.Duration -le 0) { 1.0 } else { [Math]::Min(1.0, $elapsed / $a.Duration) })
+      $eased = Get-PokeGridEasing $a.Easing $t
+      # Un paso que lanza no puede tumbar el reloj ni borrar las demas: se
+      # atrapa aqui y la animacion sigue su curso.
+      try { & $a.Step $eased } catch { }
+      if ($t -ge 1.0) {
+        $script:animations.Remove($target)
+        if ($a.Done) { try { & $a.Done } catch { } }
+      }
+    }
+  })
+  $script:animationClock.Start()
+}
+
+function Start-PokeGridAnimation([string]$target, [scriptblock]$step, [int]$durationMs, [scriptblock]$done = $null) {
+  # Relanzar sobre el mismo objetivo REEMPLAZA la animacion anterior. Sin esto,
+  # un hover seguido de un clic deja dos animaciones peleandose por el mismo
+  # control y se queda a medias.
+  if ($script:animations.ContainsKey($target)) { $script:animations.Remove($target) }
+  if ($durationMs -le 0) {
+    # PLANE: duracion 0, se resuelve ya sin tocar el reloj.
+    if ($step) { try { & $step 1.0 } catch { } }
+    if ($done) { try { & $done } catch { } }
+    return $target
+  }
+  Initialize-PokeGridAnimationClock
+  $script:animations[$target] = @{
+    Step = $step; Done = $done; Duration = $durationMs
+    Easing = $script:theme.Motion.Easing
+    Start = [DateTime]::UtcNow
+  }
+  return $target
+}
+
+function Stop-PokeGridAnimation([string]$target) {
+  if ($target -eq '-All') { $script:animations = @{}; return }
+  if ($script:animations.ContainsKey($target)) { $script:animations.Remove($target) }
+}
+
+function Get-PokeGridAnimationCount() {
+  return $script:animations.Count
+}

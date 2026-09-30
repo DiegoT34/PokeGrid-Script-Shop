@@ -33,6 +33,7 @@ jobs:
             'test-surface-visual.ps1'
             'test-typography-scale.ps1'
             'test-vector-icons.ps1'
+            'test-animation-clock.ps1'
             'test-validate-catalog.ps1'
             'test-catalog-schema.ps1'
             'test-workflow-wiring.ps1'

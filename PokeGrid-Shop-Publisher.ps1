@@ -142,8 +142,35 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   # Las 15 llamadas existentes siguen pasando 'accent' y no se tocan.
   $role = if ($kind -eq 'accent') { 'danger' } else { $kind }
   Set-ButtonRole $button $role | Out-Null
-  $button.Add_MouseEnter(({ if ($this.Enabled) { $s = $script:buttonStyles[[int]$this.GetHashCode()].Style; $this.BackColor = $s.Hover; $this.FlatAppearance.BorderColor = $s.Hover } }.GetNewClosure()))
-  $button.Add_MouseLeave(({ $s = $script:buttonStyles[[int]$this.GetHashCode()].Style; $this.BackColor = $s.Base; $this.FlatAppearance.BorderColor = $s.Border; $this.Region = New-RoundedRegion $this.Width $this.Height ([int]$script:theme.Radius) }.GetNewClosure()))
+  $button.Add_MouseEnter({
+    if (-not $this.Enabled) { return }
+    $key = [int]$this.GetHashCode()
+    $s = $script:buttonStyles[$key].Style
+    $from = $this.BackColor
+    $borderFrom = $this.FlatAppearance.BorderColor
+    $to = $s.Hover; $borderTo = $s.Hover
+    $target = 'hover-' + $key; $duration = [int]$script:theme.Motion.Fast
+    $self = $this
+    Start-PokeGridAnimation $target {
+      param($p)
+      $self.BackColor = Lerp-Color $from $to $p
+      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $borderTo $p
+    } $duration
+  }.GetNewClosure())
+  $button.Add_MouseLeave({
+    $key = [int]$this.GetHashCode()
+    $s = $script:buttonStyles[$key].Style
+    $from = $this.BackColor
+    $borderFrom = $this.FlatAppearance.BorderColor
+    $to = $s.Base; $borderTo = $s.Border
+    $target = 'hover-' + $key; $duration = [int]$script:theme.Motion.Fast
+    $self = $this
+    Start-PokeGridAnimation $target {
+      param($p)
+      $self.BackColor = Lerp-Color $from $to $p
+      $self.FlatAppearance.BorderColor = Lerp-Color $borderFrom $borderTo $p
+    } $duration
+  }.GetNewClosure())
   return $button
 }
 
