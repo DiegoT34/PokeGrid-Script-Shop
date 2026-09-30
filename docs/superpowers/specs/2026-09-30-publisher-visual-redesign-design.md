@@ -84,7 +84,7 @@ de qué color es, solo de qué **papel** juega.
 | `crystal-dark` | Cristal oscuro | glass | azul profundo | Por defecto |
 | `crystal-light` | Cristal claro | glass | gris azulado claro | Luz diurna, texto oscuro |
 | `midnight` | Nocturno | glass | azul casi negro, acento cian | identidad de marca |
-| `flat` | Plano | flat | gris sólido, bordes nítidos | VMs, bajo rendimiento, sin blur |
+| `flat` | PLANE | flat | gris sólido, bordes nítidos | VMs, bajo rendimiento, sin blur |
 
 Los cuatro comparten **estructura de claves**. Un tema que le falte una clave se rechaza al
 cargar, con mensaje explícito, en vez deShown en negro.
@@ -115,6 +115,9 @@ ve roto.
 ## 5. Sistema de movimiento
 
 Todos los valores salen de `Motion` del tema, así que el tema plano puede tenerlos a 0.
+
+El tema **PLANE** es el que se muestra en el selector como cuarta opción, y su etiqueta visible
+en la interfaz es exactamente `PLANE`, en mayúsculas, sin traducir.
 
 | Interacción | Duración | Curva | Efecto |
 |---|---|---|---|
