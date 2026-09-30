@@ -115,6 +115,27 @@ function Style-Input($control, [switch]$ReadOnly) {
     $control.FlatStyle = 'Flat'
     $control.DrawMode = 'OwnerDrawFixed'
     $control.ItemHeight = 18
+    # OwnerDrawFixed NO dibuja el texto por su cuenta: sin este manejador el combo
+    # sale con el color del tema pero VACIO, y no hay error ni excepcion que lo
+    # delate. Solo se ve al mirar la ventana.
+    $control.Add_DrawItem({
+      param($sender, $e)
+      $g = $e.Graphics
+      $selected = ($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0
+      $back = $(if ($selected) { Blend-Color $sender.BackColor (Get-ThemeColor 'Rest.Primary.Base') 0.30 } else { $sender.BackColor })
+      $brush = [Drawing.SolidBrush]::new($back)
+      $g.FillRectangle($brush, $e.Bounds)
+      $brush.Dispose()
+      if ($e.Index -ge 0) {
+        $text = [string]$sender.Items[$e.Index]
+        $format = [Drawing.StringFormat]::new()
+        $format.LineAlignment = [Drawing.StringAlignment]::Center
+        $format.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+        $pen = [Drawing.SolidBrush]::new($sender.ForeColor)
+        $g.DrawString($text, $sender.Font, $pen, [Drawing.RectangleF]::new($e.Bounds.X + 3, $e.Bounds.Y, $e.Bounds.Width - 5, $e.Bounds.Height), $format)
+        $pen.Dispose(); $format.Dispose()
+      }
+    })
     $control.BackColor = $control.BackColor
     $control.ForeColor = $control.ForeColor
   }
@@ -720,12 +741,32 @@ foreach($p in @($sidebar,$footer)){Register-ThemedControl $p 'Glass'}
 foreach($p in @($header,$shopPage,$catalogPage,$launcherPage)){Register-ThemedControl $p 'Base'}
 foreach($p in @($sourceCard,$publicationCard,$actionCard,$catalogSummaryCard,$catalogBodyCard,$launcherRepoCard,$launcherReleaseCard,$launcherActionCard)){Register-ThemedControl $p 'Surface'}
 
+function Get-StackAvailableWidth($stack) {
+  # NO se mide $stack.ClientSize: un TabControl solo dimensions las paginas que estan
+  # visibles, asi que al arrancar en la pestaña Shop las otras dos conservan el ancho
+  # de la ventana anterior y las tarjetas se quedan pegadas ahi, mas anchas que la
+  # ventana, con barra horizontal. PerformLayout no las corrige: no se puede medir lo
+  # que no esta visible. DisplayRectangle SI sigue a la ventana: lo calcula el
+  # propio TabControl.
+  $display=$tabs.DisplayRectangle.Width
+  $page=$stack.Parent
+  $border=$(if($page){$page.Width-$page.ClientSize.Width}else{0})
+  $width=$display-$border-$stack.Padding.Horizontal-24
+  # El ancho de la ventana NO es el del contenido: el sidebar de 224 px se lleva una
+  # parte. Sin descontarlo aqui, las tarjetas se salen por la derecha y el boton
+  # Examinar queda cortado, que es justo lo que hacia la medicion ingenua.
+  if($sidebar.Visible -and $stack.Parent -eq $shopPage){ $width-=$sidebar.Width }
+  if($width -lt 400){ $width=$stack.ClientSize.Width-$stack.Padding.Horizontal-24 }
+  return $width
+}
+
 function Apply-ResponsiveLayout {
-  $compact=$form.ClientSize.Width -lt 1040;$sidebar.Visible=-not $compact;$available=$contentStack.ClientSize.Width-$contentStack.Padding.Horizontal-24
+  $compact=$form.ClientSize.Width -lt 1040;$sidebar.Visible=-not $compact
+  $available=Get-StackAvailableWidth $contentStack
   foreach($card in @($sourceCard,$publicationCard,$actionCard)){ $card.Width=[Math]::Max(700,$available) }
-  $catalogAvailable=$catalogStack.ClientSize.Width-$catalogStack.Padding.Horizontal-24
+  $catalogAvailable=Get-StackAvailableWidth $catalogStack
   foreach($card in @($catalogSummaryCard,$catalogBodyCard)){ $card.Width=[Math]::Max(700,$catalogAvailable) }
-  $launcherAvailable=$launcherStack.ClientSize.Width-$launcherStack.Padding.Horizontal-24
+  $launcherAvailable=Get-StackAvailableWidth $launcherStack
   foreach($card in @($launcherRepoCard,$launcherReleaseCard,$launcherActionCard)){ $card.Width=[Math]::Max(700,$launcherAvailable) }
   $repoFooter.Visible=$form.ClientSize.Width -ge 1080
   $repoFooter.Text=$(if($tabs.SelectedTab -eq $launcherPage){"Launcher: "+$launcherPathBox.Text}elseif($tabs.SelectedTab -eq $catalogPage){"Catálogo: "+$repoRoot}else{"Repositorio: "+$repoRoot})
@@ -880,6 +921,54 @@ if($SmokeTest){
   if(($seen|Sort-Object -Unique).Count -ne 4){throw "El recorrido de temas no cubrio los cuatro: $($seen -join ', ')."}
   if($themeBox.Items -notcontains 'PLANE'){throw 'El cuarto tema no se muestra como PLANE.'}
   $themeBox.SelectedIndex=[Math]::Max(0,$themeKeys.IndexOf((Read-PokeGridThemeKey)))
+
+  # El tamano MINIMO declarado, 880x650, que hasta aqui no se habia probado nunca:
+  # el smoke se quedaba en 900x680. A esa medida no basta con que nada se salga: el
+  # contenido tiene que CABER, sin barra horizontal ni recorte en ninguna tarjeta.
+  $form.ClientSize=[Drawing.Size]::new(880,650);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  # Se mide cada tarjeta contra el ancho REAL de la ventana, no contra el ancho que
+  # dice la propia pila. Comparar la tarjeta con su contenedor no sirve: cuando la
+  # pagina esta sin medir, los dos vienen del mismo valor obsoleto y la comprobacion
+  # se compararia consigo misma, dando siempre igual.
+  $windowWidth=$form.ClientSize.Width
+  $stacksWithCards=@(@('Shop',$contentStack,@($sourceCard,$publicationCard,$actionCard)),@('Catalogo',$catalogStack,@($catalogSummaryCard,$catalogBodyCard)),@('Launcher',$launcherStack,@($launcherRepoCard,$launcherReleaseCard,$launcherActionCard)))
+  foreach($pair in $stacksWithCards){
+    $pageName=$pair[0];$cards=$pair[2]
+    foreach($card in $cards){
+      if($card.Width -gt $windowWidth){throw "La tarjeta de $pageName se sale a ${windowWidth}x650: mide $($card.Width) px."}
+      if($card.Right -gt $card.Parent.ClientSize.Width -and $card.Parent.Visible){throw "La tarjeta de $pageName se sale por la derecha a ${windowWidth}x650."}
+      if($card.Width -lt 700){throw "Una tarjeta de $pageName se encoge por debajo del minimo de 700 px: $($card.Width)."}
+    }
+  }
+  # Recorrer las tres pestañas: solo asi se mide de verdad la que no esta visible.
+  # Ademas se compara la tarjeta con el ancho REAL de su pila, yadimensionada: es la
+  # unica forma de detectar que se salen por la derecha, porque la tarjeta puede ser
+  # menor que la ventana y aun asi desbordar el area visible (con el sidebar de por
+  # medio, la ventana no es el ancho del contenido).
+  foreach($page in @($shopPage,$catalogPage,$launcherPage)){
+    $tabs.SelectedTab=$page;[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout;[Windows.Forms.Application]::DoEvents()
+    $stack=$page.Controls[0]
+    if($stack.HorizontalScroll.Visible){throw "La pestana $($page.Text.Trim()) saca barra horizontal a ${windowWidth}x650."}
+    foreach($card in $stack.Controls){
+      if($card.Width -gt $stack.ClientSize.Width){throw "En $($page.Text.Trim()) una tarjeta mide $($card.Width) px y la pila solo da $($stack.ClientSize.Width)."}
+    }
+  }
+  $tabs.SelectedTab=$shopPage;[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  # Con el sidebar desplegado el area visible es mas estrecha que la ventana: si el
+  # ancho se calcula sobre la ventana, las tarjetas se salen por la derecha y el
+  # boton Examinar queda cortado. A 1280 con sidebar, y a 880 sin el.
+  $form.ClientSize=[Drawing.Size]::new(1280,860);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  if(-not $sidebar.Visible){throw 'A 1280 el sidebar deberia estar desplegado.'}
+  if($sourceCard.Width -gt $contentStack.ClientSize.Width){throw "Con sidebar desplegado una tarjeta mide $($sourceCard.Width) px y la pila solo da $($contentStack.ClientSize.Width): se sale por la derecha."}
+  if($contentStack.HorizontalScroll.Visible){throw 'Con sidebar desplegado sale una barra horizontal.'}
+  $form.ClientSize=[Drawing.Size]::new(880,650);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  if($sidebar.Visible){throw 'A 880 el sidebar deberia recogerse.'}
+  if($header.Width -lt 880 -or $statusChip.Right -gt $header.ClientSize.Width){throw "La cabecera se sale a ${windowWidth}x650: el chip de estado no cabe."}
+  if($form.Controls | Where-Object { $_.Right -gt $form.ClientSize.Width -or $_.Bottom -gt $form.ClientSize.Height }){throw "Un control de primer nivel se sale de la ventana a ${windowWidth}x650."}
+  $form.ClientSize=[Drawing.Size]::new(900,680);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
+  if($header.Width -lt 880 -or $statusChip.Right -gt $header.ClientSize.Width){throw 'La cabecera se sale a 880x650: el chip de estado no cabe.'}
+  if($form.Controls | Where-Object { $_.Right -gt $form.ClientSize.Width -or $_.Bottom -gt $form.ClientSize.Height }){throw 'Un control de primer nivel se sale de la ventana a 880x650.'}
+  $form.ClientSize=[Drawing.Size]::new(900,680);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
   $script:catalogEntries=@([pscustomobject]@{id='smoke';name='Script Smoke';version='1.0.0';category='Utilidades';author='PokeGrid';icon='script';games=@('Juego Smoke');tags=@('test');featured=$true;description='Prueba';publishedAt='2026-01-01';sha256=('a'*64)})
   Render-CatalogManagement
   if($catalogGrid.Rows.Count -ne 1 -or $catalogCountValue.Text -ne '1' -or -not $catalogDeleteButton.Enabled){throw 'La vista visual del catálogo no pudo representar una publicación seleccionable.'}

@@ -80,9 +80,56 @@ Assert ((Hex $palette.Background) -eq (Hex (Get-ThemeColor 'Base'))) 'El fondo d
 # Y el guion engancha el selector al manejador, con el indice mapeado a la clave
 # del tema. Sin esto el combo se mueve y no pasa nada.
 $gui = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'PokeGrid-Shop-Publisher.ps1') -Raw -Encoding UTF8
-Assert ($gui -match 'Apply-PokeGridTheme') 'El guion no offersce el cambio de tema en caliente.'
+Assert ($gui -match 'Apply-PokeGridTheme') 'El guion no ofrece el cambio de tema en caliente.'
 Assert ($gui -match 'SelectedIndexChanged') 'El selector de tema no tiene manejador de cambio.'
 Assert ($gui -match 'Register-ThemedControl \$themeBox') 'El selector de tema no se registra como control con tema.'
+
+# Un ComboBox con DrawMode OwnerDrawFixed NO dibuja el texto por su cuenta: sin un
+# manejador DrawItem sale con el color del tema pero VACIO. No lanza error ni
+# excepcion, asi que solo se ve mirando la ventana. Se comprueba que el guion
+# engancha DrawItem al construir cualquier combo.
+Assert ($gui -match 'Add_DrawItem') `
+  'Los ComboBox no tienen manejador DrawItem: saldrian vacios, con el color del tema pero sin texto.'
+
+# Y se comprueba de verdad: un combo con el mismo tratamiento tiene que pintar.
+# Se mide SOLO la mitad izquierda, donde vive el texto: la flecha y el borde de la
+# derecha hacen de ruido y darian pixeles de tinta incluso con el combo vacio.
+$probe = [Windows.Forms.ComboBox]::new()
+$probe.DropDownStyle = 'DropDownList'
+$script:theme = $themes['crystal-dark']
+$probe.DrawMode = 'OwnerDrawFixed'
+$probe.ItemHeight = 18
+$probe.BackColor = Get-GlassColor 'Surface.Soft' 0.75
+$probe.ForeColor = Get-ThemeColor 'Text.Primary'
+$probe.Add_DrawItem({
+  param($sender, $e)
+  $brush = [Drawing.SolidBrush]::new($sender.BackColor)
+  $e.Graphics.FillRectangle($brush, $e.Bounds)
+  $brush.Dispose()
+  $pen = [Drawing.SolidBrush]::new($sender.ForeColor)
+  $e.Graphics.DrawString([string]$sender.Items[$e.Index], $sender.Font, $pen, $e.Bounds.X + 3, $e.Bounds.Y + 1)
+  $pen.Dispose()
+})
+$probe.Items.AddRange([object[]]@('Cristal oscuro', 'Nocturno'))
+$probe.SelectedIndex = 0
+$probeForm = [Windows.Forms.Form]::new()
+$probeForm.ClientSize = [Drawing.Size]::new(240, 80)
+$probeForm.BackColor = Get-ThemeColor 'Base'
+$probe.Left = 20; $probe.Top = 20; $probe.Width = 200
+$probeForm.Controls.Add($probe)
+$probeForm.Show()
+[Windows.Forms.Application]::DoEvents()
+$shot = [Drawing.Bitmap]::new($probe.Width, $probe.Height)
+$probe.DrawToBitmap($shot, [Drawing.Rectangle]::new(0, 0, $probe.Width, $probe.Height))
+$ink = 0
+$limit = [int]($probe.Width * 0.6)
+for ($x = 2; $x -lt $limit; $x += 1) {
+  for ($y = 2; $y -lt $probe.Height - 2; $y += 1) {
+    if ([Math]::Abs([int]$shot.GetPixel($x, $y).R - [int]$probe.BackColor.R) -gt 50) { $ink += 1 }
+  }
+}
+Assert ($ink -gt 60) "El ComboBox se pinta VACIO: solo hay $ink pixeles de tinta en la zona del texto. Sin manejador DrawItem no dibuja las letras, y no hay ningun error que lo delate."
+$shot.Dispose(); $probeForm.Close(); $probeForm.Dispose()
 
 # Guardar y leer la preferencia.
 $path = Get-PokeGridThemePath
