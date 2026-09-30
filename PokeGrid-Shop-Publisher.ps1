@@ -51,12 +51,33 @@ if (-not $launcherRepoRoot) { $launcherRepoRoot = Join-Path $env:USERPROFILE 'Do
 
 function Color([string]$hex) { [Drawing.ColorTranslator]::FromHtml($hex) }
 
-$palette = @{
-  Background = Color '#07111D'; Surface = Color '#0C1928'; SurfaceRaised = Color '#112238'
-  SurfaceSoft = Color '#0A1624'; Border = Color '#263D56'; BorderFocus = Color '#42C8EF'
-  Text = Color '#F2F6FC'; Muted = Color '#8396AE'; Dim = Color '#5E728B'
-  Primary = Color '#35C4EB'; PrimaryDark = Color '#167B9B'; Accent = Color '#FF715B'
-  AccentDark = Color '#A43F34'; Success = Color '#48D49B'; Warning = Color '#F1C75B'; Danger = Color '#FF7D8F'
+# Los tokens visuales viven en tools/theme.ps1 como DATOS, no como codigo: cambiar
+# el aspecto de la aplicacion es cambiar el tema activo, no editar esta tabla.
+$themePath = Join-Path $PSScriptRoot 'tools\theme.ps1'
+if (-not (Test-Path -LiteralPath $themePath -PathType Leaf)) { throw 'No se encontró tools\theme.ps1.' }
+. $themePath
+$script:theme = Get-PokeGridTheme (Read-PokeGridThemeKey)
+
+# $palette se mantiene como proxy para no tocar los usos ya escritos: cada clave
+# apunta a un token del tema activo, no a un color fijo. Los botones usan tokens
+# Rest.*, que en el tema oscuro son mas saturados que los antiguos Primary y Accent.
+$palette = [pscustomobject]@{
+  Background   = Get-ThemeColor 'Base'
+  Surface      = Get-ThemeColor 'Surface.Base'
+  SurfaceRaised= Get-ThemeColor 'Surface.Raised'
+  SurfaceSoft  = Get-ThemeColor 'Surface.Soft'
+  Border       = Get-ThemeColor 'Border.Base'
+  BorderFocus  = Get-ThemeColor 'Rest.Primary.Hover'
+  Text         = Get-ThemeColor 'Text.Primary'
+  Muted        = Get-ThemeColor 'Text.Secondary'
+  Dim          = Get-ThemeColor 'Text.Disabled'
+  Primary      = Get-ThemeColor 'Rest.Primary.Hover'
+  PrimaryDark  = Get-ThemeColor 'Rest.Primary.Base'
+  Accent       = Get-ThemeColor 'Rest.Danger.Hover'
+  AccentDark   = Get-ThemeColor 'Rest.Danger.Base'
+  Success      = Get-ThemeColor 'Rest.Success.Base'
+  Warning      = Get-ThemeColor 'Rest.Warning.Base'
+  Danger       = Get-ThemeColor 'Rest.Danger.Fore'
 }
 
 $toolTip = [Windows.Forms.ToolTip]::new()
@@ -76,8 +97,8 @@ function New-Label([string]$text, [float]$size = 9, [Drawing.Color]$color = $pal
 }
 
 function Style-Input($control, [switch]$ReadOnly) {
-  $control.BackColor = $(if ($ReadOnly) { $palette.SurfaceSoft } else { Color '#081523' })
-  $control.ForeColor = $(if ($ReadOnly) { Color '#A8B8CA' } else { $palette.Text })
+  $control.BackColor = $(if ($ReadOnly) { $palette.SurfaceSoft } else { Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.14 })
+  $control.ForeColor = $(if ($ReadOnly) { Get-ThemeColor 'Text.Secondary' } else { $palette.Text })
   $control.Font = [Drawing.Font]::new('Segoe UI', 9.25)
   $control.Margin = [Windows.Forms.Padding]::new(0, 2, 0, 0)
   if ($control -is [Windows.Forms.TextBox]) { $control.BorderStyle = 'FixedSingle'; $control.ReadOnly = [bool]$ReadOnly }
@@ -101,9 +122,9 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   $button.ForeColor = $palette.Text
   $button.Cursor = 'Hand'
   $button.Margin = [Windows.Forms.Padding]::new(4)
-  $normal = $palette.SurfaceRaised; $hover = Color '#19314B'; $border = $palette.Border
-  if ($kind -eq 'primary') { $normal = $palette.PrimaryDark; $hover = Color '#1B91B4'; $border = $palette.Primary }
-  if ($kind -eq 'accent') { $normal = $palette.AccentDark; $hover = Color '#C95143'; $border = $palette.Accent }
+  $normal = $palette.SurfaceRaised; $hover = Get-ThemeColor 'Surface.Hover'; $border = $palette.Border
+  if ($kind -eq 'primary') { $normal = $palette.PrimaryDark; $hover = Get-ThemeColor 'Rest.Primary.Hover'; $border = $palette.Primary }
+  if ($kind -eq 'accent') { $normal = $palette.AccentDark; $hover = Get-ThemeColor 'Rest.Danger.Hover'; $border = $palette.Accent }
   if ($kind -eq 'ghost') { $normal = $palette.SurfaceSoft; $hover = $palette.SurfaceRaised; $border = $palette.Border }
   $button.BackColor = $normal
   $button.FlatAppearance.BorderColor = $border
@@ -133,7 +154,7 @@ function New-SectionHeader([string]$number, [string]$title, [string]$subtitle) {
   $header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent', 58)) | Out-Null
   $header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent', 42)) | Out-Null
   $badge = New-Label $number 11 $palette.Primary ([Drawing.FontStyle]::Bold)
-  $badge.Dock = 'Fill'; $badge.TextAlign = 'MiddleCenter'; $badge.BackColor = Color '#102D40'; $badge.Margin = [Windows.Forms.Padding]::new(3, 5, 8, 5)
+  $badge.Dock = 'Fill'; $badge.TextAlign = 'MiddleCenter'; $badge.BackColor = Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22; $badge.Margin = [Windows.Forms.Padding]::new(3, 5, 8, 5)
   $heading = New-Label $title 12.5 $palette.Text ([Drawing.FontStyle]::Bold)
   $heading.Dock = 'Fill'; $heading.Margin = [Windows.Forms.Padding]::new(0, 2, 0, 0)
   $copy = New-Label $subtitle 8 $palette.Muted
@@ -215,7 +236,7 @@ function Log([string]$message, [string]$kind = 'info') {
   $statusDot.ForeColor = $(if ($kind -eq 'error') { $palette.Danger } elseif ($kind -eq 'ok') { $palette.Success } else { $palette.Primary })
   $statusLabel.ForeColor = $statusDot.ForeColor; $statusLabel.Text = $message
   $statusChip.Text = $(if ($kind -eq 'error') { '  REVISAR  ' } elseif ($kind -eq 'ok') { '  LISTO  ' } else { '  EN PROCESO  ' })
-  $statusChip.BackColor = $(if ($kind -eq 'error') { Color '#3B1821' } elseif ($kind -eq 'ok') { Color '#123329' } else { Color '#102D40' })
+  $statusChip.BackColor = $(if ($kind -eq 'error') { Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Danger.Base') 0.22 } elseif ($kind -eq 'ok') { Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Success.Base') 0.22 } else { Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22 })
   [Windows.Forms.Application]::DoEvents()
 }
 
@@ -326,7 +347,7 @@ function Log-Catalog([string]$message,[string]$kind='info'){
   $statusDot.ForeColor=$(if($kind -eq 'error'){$palette.Danger}elseif($kind -eq 'ok'){$palette.Success}else{$palette.Primary})
   $statusLabel.ForeColor=$statusDot.ForeColor;$statusLabel.Text=$message
   $statusChip.Text=$(if($kind -eq 'error'){'  REVISAR  '}elseif($kind -eq 'ok'){'  LISTO  '}else{'  EN PROCESO  '})
-  $statusChip.BackColor=$(if($kind -eq 'error'){Color '#3B1821'}elseif($kind -eq 'ok'){Color '#123329'}else{Color '#102D40'})
+  $statusChip.BackColor=$(if($kind -eq 'error'){Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Danger.Base') 0.22}elseif($kind -eq 'ok'){Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Success.Base') 0.22}else{Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22})
   [Windows.Forms.Application]::DoEvents()
 }
 
@@ -408,7 +429,7 @@ function Log-Launcher([string]$message, [string]$kind = 'info') {
   $statusDot.ForeColor = $(if ($kind -eq 'error') { $palette.Danger } elseif ($kind -eq 'ok') { $palette.Success } else { $palette.Primary })
   $statusLabel.ForeColor=$statusDot.ForeColor; $statusLabel.Text=$message
   $statusChip.Text=$(if($kind -eq 'error'){'  REVISAR  '}elseif($kind -eq 'ok'){'  LISTO  '}else{'  EN PROCESO  '})
-  $statusChip.BackColor=$(if($kind -eq 'error'){Color '#3B1821'}elseif($kind -eq 'ok'){Color '#123329'}else{Color '#102D40'})
+  $statusChip.BackColor=$(if($kind -eq 'error'){Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Danger.Base') 0.22}elseif($kind -eq 'ok'){Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Success.Base') 0.22}else{Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22})
   [Windows.Forms.Application]::DoEvents()
 }
 
@@ -467,17 +488,17 @@ $header=[Windows.Forms.TableLayoutPanel]::new();$header.Dock='Top';$header.Heigh
 $header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',62))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',38))|Out-Null
 $appTitle=New-Label 'PokeGrid Publisher' 19 $palette.Text ([Drawing.FontStyle]::Bold);$appTitle.Dock='Fill'
 $appSubtitle=New-Label 'Publica userscripts y nuevas versiones del launcher desde un solo lugar.' 8.5 $palette.Muted;$appSubtitle.Dock='Fill'
-$statusChip=New-Label '  PREPARADO  ' 7.5 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Color '#102D40';$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
+$statusChip=New-Label '  PREPARADO  ' 7.5 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22;$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
 $header.Controls.Add($appTitle,0,0);$header.Controls.Add($appSubtitle,0,1);$header.Controls.Add($statusChip,1,0);$header.SetRowSpan($statusChip,2)
 
-$footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Color '#08131F';$footer.ColumnCount=4
+$footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.22;$footer.ColumnCount=4
 $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',18))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',330))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',90))|Out-Null
 $statusDot=New-Label '●' 9 $palette.Primary ([Drawing.FontStyle]::Bold);$statusDot.Dock='Fill';$statusLabel=New-Label 'Preparando interfaz…' 8 $palette.Primary;$statusLabel.Dock='Fill'
 $repoFooter=New-Label ("Repositorio: "+$repoRoot) 7.5 $palette.Dim;$repoFooter.Dock='Fill';$repoFooter.TextAlign='MiddleRight';$repoFooter.AutoEllipsis=$true
 $versionFooter=New-Label 'v1.3.1' 7.5 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
 $footer.Controls.Add($statusDot,0,0);$footer.Controls.Add($statusLabel,1,0);$footer.Controls.Add($repoFooter,2,0);$footer.Controls.Add($versionFooter,3,0)
 
-$sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Color '#091523'
+$sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Get-ThemeColor 'Surface.Soft'
 $sideBrand=New-Label '◈  POKEGRID' 11 $palette.Primary ([Drawing.FontStyle]::Bold);$sideBrand.Dock='Top';$sideBrand.Height=42
 $sideIntro=New-Label 'Flujo de publicación' 8 $palette.Muted ([Drawing.FontStyle]::Bold);$sideIntro.Dock='Top';$sideIntro.Height=24
 $stepsPanel=[Windows.Forms.FlowLayoutPanel]::new();$stepsPanel.Dock='Top';$stepsPanel.Height=200;$stepsPanel.FlowDirection='TopDown';$stepsPanel.WrapContents=$false
@@ -532,7 +553,7 @@ $actionLayout.Controls.Add((New-SectionHeader '03' 'Valida y publica' 'La aplica
 $actions=[Windows.Forms.TableLayoutPanel]::new();$actions.Dock='Fill';$actions.ColumnCount=5;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',122))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',110))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',110))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$actions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',220))|Out-Null
 $validateButton=New-Button '✓ Validar' 'primary';$validateButton.Dock='Fill';$clearButton=New-Button 'Limpiar' 'ghost';$clearButton.Dock='Fill';$openFolderButton=New-Button 'Carpeta local' 'ghost';$openFolderButton.Dock='Fill';$publishButton=New-Button '↑ Agregar nuevo script' 'accent';$publishButton.Dock='Fill'
 $actions.Controls.Add($validateButton,0,0);$actions.Controls.Add($clearButton,1,0);$actions.Controls.Add($openFolderButton,2,0);$actions.Controls.Add($publishButton,4,0);$actionLayout.Controls.Add($actions,0,1)
-$logBox=New-TextBox -Multiline -ReadOnly;$logBox.BackColor=Color '#06101B';$logBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$logBox.Margin=[Windows.Forms.Padding]::new(5,4,5,3);$actionLayout.Controls.Add($logBox,0,2);$actionCard.Controls.Add($actionLayout)
+$logBox=New-TextBox -Multiline -ReadOnly;$logBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$logBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$logBox.Margin=[Windows.Forms.Padding]::new(5,4,5,3);$actionLayout.Controls.Add($logBox,0,2);$actionCard.Controls.Add($actionLayout)
 
 $contentStack.Controls.AddRange(@($sourceCard,$publicationCard,$actionCard))
 
@@ -570,7 +591,7 @@ $launcherActions=[Windows.Forms.TableLayoutPanel]::new();$launcherActions.Dock='
 $launcherValidateButton=New-Button '✓ Validar versión' 'primary';$launcherValidateButton.Dock='Fill';$launcherOpenRepoButton=New-Button '↗ Repositorio' 'ghost';$launcherOpenRepoButton.Dock='Fill';$launcherOpenActionsButton=New-Button '↗ Compilaciones' 'ghost';$launcherOpenActionsButton.Dock='Fill';$launcherPublishButton=New-Button '↑ Publicar nueva versión' 'accent';$launcherPublishButton.Dock='Fill'
 $launcherActions.Controls.Add($launcherValidateButton,0,0);$launcherActions.Controls.Add($launcherOpenRepoButton,1,0);$launcherActions.Controls.Add($launcherOpenActionsButton,2,0);$launcherActions.Controls.Add($launcherPublishButton,4,0);$launcherActionLayout.Controls.Add($launcherActions,0,2)
 $launcherProgress=New-Label 'Preparado para validar el repositorio.' 7.8 $palette.Dim;$launcherProgress.Dock='Fill';$launcherProgress.Margin=[Windows.Forms.Padding]::new(6,0,0,0);$launcherActionLayout.Controls.Add($launcherProgress,0,3)
-$launcherLogBox=New-TextBox -Multiline -ReadOnly;$launcherLogBox.BackColor=Color '#06101B';$launcherLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$launcherLogBox.Margin=[Windows.Forms.Padding]::new(5,2,5,3);$launcherActionLayout.Controls.Add($launcherLogBox,0,4);$launcherActionCard.Controls.Add($launcherActionLayout)
+$launcherLogBox=New-TextBox -Multiline -ReadOnly;$launcherLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$launcherLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8.4);$launcherLogBox.Margin=[Windows.Forms.Padding]::new(5,2,5,3);$launcherActionLayout.Controls.Add($launcherLogBox,0,4);$launcherActionCard.Controls.Add($launcherActionLayout)
 $launcherStack.Controls.AddRange(@($launcherRepoCard,$launcherReleaseCard,$launcherActionCard))
 
 # Catálogo remoto: consulta visual y retirada segura de publicaciones.
@@ -589,8 +610,8 @@ $catalogSyncLabel=New-Label 'Pulsa Sincronizar para cargar la última versión d
 $catalogBodyCard=New-Card 570;$catalogSplit=[Windows.Forms.TableLayoutPanel]::new();$catalogSplit.Dock='Fill';$catalogSplit.ColumnCount=2;$catalogSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',58))|Out-Null;$catalogSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null
 $catalogListPanel=[Windows.Forms.TableLayoutPanel]::new();$catalogListPanel.Dock='Fill';$catalogListPanel.RowCount=2;$catalogListPanel.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',36))|Out-Null;$catalogListPanel.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',100))|Out-Null;$catalogListPanel.Margin=[Windows.Forms.Padding]::new(0,0,8,0)
 $catalogVisibleLabel=New-Label '0 publicaciones visibles' 9 $palette.Muted ([Drawing.FontStyle]::Bold);$catalogVisibleLabel.Dock='Fill';$catalogVisibleLabel.Padding=[Windows.Forms.Padding]::new(5,0,0,0);$catalogListPanel.Controls.Add($catalogVisibleLabel,0,0)
-$catalogGrid=[Windows.Forms.DataGridView]::new();$catalogGrid.Dock='Fill';$catalogGrid.BackgroundColor=Color '#07131F';$catalogGrid.BorderStyle='None';$catalogGrid.RowHeadersVisible=$false;$catalogGrid.AllowUserToAddRows=$false;$catalogGrid.AllowUserToDeleteRows=$false;$catalogGrid.AllowUserToResizeRows=$false;$catalogGrid.ReadOnly=$true;$catalogGrid.MultiSelect=$false;$catalogGrid.SelectionMode='FullRowSelect';$catalogGrid.AutoGenerateColumns=$false;$catalogGrid.EnableHeadersVisualStyles=$false;$catalogGrid.ColumnHeadersHeight=34;$catalogGrid.RowTemplate.Height=46;$catalogGrid.GridColor=$palette.Border
-$catalogGrid.ColumnHeadersDefaultCellStyle.BackColor=$palette.SurfaceRaised;$catalogGrid.ColumnHeadersDefaultCellStyle.ForeColor=$palette.Muted;$catalogGrid.ColumnHeadersDefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI Semibold',8,[Drawing.FontStyle]::Bold);$catalogGrid.DefaultCellStyle.BackColor=$palette.SurfaceSoft;$catalogGrid.DefaultCellStyle.ForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.SelectionBackColor=Color '#12344A';$catalogGrid.DefaultCellStyle.SelectionForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI',8.5);$catalogGrid.DefaultCellStyle.Padding=[Windows.Forms.Padding]::new(4)
+$catalogGrid=[Windows.Forms.DataGridView]::new();$catalogGrid.Dock='Fill';$catalogGrid.BackgroundColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.10;$catalogGrid.BorderStyle='None';$catalogGrid.RowHeadersVisible=$false;$catalogGrid.AllowUserToAddRows=$false;$catalogGrid.AllowUserToDeleteRows=$false;$catalogGrid.AllowUserToResizeRows=$false;$catalogGrid.ReadOnly=$true;$catalogGrid.MultiSelect=$false;$catalogGrid.SelectionMode='FullRowSelect';$catalogGrid.AutoGenerateColumns=$false;$catalogGrid.EnableHeadersVisualStyles=$false;$catalogGrid.ColumnHeadersHeight=34;$catalogGrid.RowTemplate.Height=46;$catalogGrid.GridColor=$palette.Border
+$catalogGrid.ColumnHeadersDefaultCellStyle.BackColor=$palette.SurfaceRaised;$catalogGrid.ColumnHeadersDefaultCellStyle.ForeColor=$palette.Muted;$catalogGrid.ColumnHeadersDefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI Semibold',8,[Drawing.FontStyle]::Bold);$catalogGrid.DefaultCellStyle.BackColor=$palette.SurfaceSoft;$catalogGrid.DefaultCellStyle.ForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.SelectionBackColor=Blend-Color (Get-ThemeColor 'Surface.Raised') (Get-ThemeColor 'Rest.Primary.Base') 0.45;$catalogGrid.DefaultCellStyle.SelectionForeColor=$palette.Text;$catalogGrid.DefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI',8.5);$catalogGrid.DefaultCellStyle.Padding=[Windows.Forms.Padding]::new(4)
 $iconColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$iconColumn.HeaderText='';$iconColumn.Width=42;$iconColumn.DefaultCellStyle.Font=[Drawing.Font]::new('Segoe UI Emoji',13);$iconColumn.DefaultCellStyle.Alignment='MiddleCenter'
 $nameColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$nameColumn.HeaderText='SCRIPT';$nameColumn.AutoSizeMode='Fill';$nameColumn.MinimumWidth=160
 $versionColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$versionColumn.HeaderText='VERSIÓN';$versionColumn.Width=74
@@ -608,7 +629,7 @@ $catalogDetailId=New-Label '' 7.5 $palette.Muted;$catalogDetailId.Dock='Top';$ca
 $catalogDetailHash=New-Label '' 7 $palette.Dim;$catalogDetailHash.Dock='Top';$catalogDetailHash.Height=25;$catalogDetailHash.AutoEllipsis=$true
 $catalogActions=[Windows.Forms.TableLayoutPanel]::new();$catalogActions.Dock='Top';$catalogActions.Height=48;$catalogActions.ColumnCount=2;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',58))|Out-Null
 $catalogOpenScriptButton=New-Button '↗ Ver archivo' 'ghost';$catalogOpenScriptButton.Dock='Fill';$catalogOpenScriptButton.Enabled=$false;$catalogDeleteButton=New-Button '🗑 Retirar de la Shop' 'accent';$catalogDeleteButton.Dock='Fill';$catalogDeleteButton.Enabled=$false;$catalogActions.Controls.Add($catalogOpenScriptButton,0,0);$catalogActions.Controls.Add($catalogDeleteButton,1,0)
-$catalogLogBox=New-TextBox -Multiline -ReadOnly;$catalogLogBox.Dock='Fill';$catalogLogBox.BackColor=Color '#06101B';$catalogLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8);$catalogLogBox.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
+$catalogLogBox=New-TextBox -Multiline -ReadOnly;$catalogLogBox.Dock='Fill';$catalogLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$catalogLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8);$catalogLogBox.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
 $catalogDetailPanel.Controls.Add($catalogLogBox);$catalogDetailPanel.Controls.Add($catalogActions);$catalogDetailPanel.Controls.Add($catalogDetailHash);$catalogDetailPanel.Controls.Add($catalogDetailId);$catalogDetailPanel.Controls.Add($catalogDetailDescription);$catalogDetailPanel.Controls.Add($catalogDetailGames);$catalogDetailPanel.Controls.Add($catalogDetailMeta);$catalogDetailPanel.Controls.Add($catalogDetailName);$catalogDetailPanel.Controls.Add($catalogDetailIcon)
 $catalogSplit.Controls.Add($catalogListPanel,0,0);$catalogSplit.Controls.Add($catalogDetailPanel,1,0);$catalogBodyCard.Controls.Add($catalogSplit);$catalogStack.Controls.AddRange(@($catalogSummaryCard,$catalogBodyCard))
 
