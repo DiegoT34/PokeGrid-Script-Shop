@@ -21,6 +21,49 @@ gh auth login --hostname github.com --git-protocol https --web
 gh auth setup-git
 ```
 
+## Tema y apariencia
+
+El selector de la cabecera cambia el tema **al instante**, sin reiniciar y sin
+perder nada de lo que tengas escrito. La elección se guarda sola y se recupera la
+próxima vez que abras la aplicación.
+
+Hay cuatro temas:
+
+| Tema | Para qué |
+| --- | --- |
+| **Cristal oscuro** | El de Windows 11: translúcido, con desenfoque del escritorio. |
+| **Cristal claro** | El mismo efecto, sobre fondo claro. |
+| **Nocturno** | Oscuro y plano, sin nada de cristal. |
+| **PLANE** | Sin transparencias ni desenfoque, para pantallas muyarias o para quien prefiera el máximo contraste. |
+
+### Qué es cristal y qué no
+
+El cristal del **fondo** de la ventana es real: el escritorio se ve borroso detrás,
+como en Windows 11. Los **paneles** de encima no lo son, y conviene saber por qué:
+Windows Forms no pinta controles con transparencia por píxel, así que en lugar de
+intentar algo que se vería mal, cada panel usa el color del tema ya mezclado con
+el fondo. Se ve igual y no depende de que la máquina sepa dibujar translúcido.
+
+Por eso los cuatro temas tienen exactamente el mismo texto con exactamente el
+mismo contraste. **PLANE no es una versión recortada**: es el mismo aspecto sin
+los efectos que un equipo puede no tener.
+
+### Si el sistema no admite cristal
+
+Windows 10 1803 y posterior lo admiten. En sesiones remotas, máquinas virtuales
+y algunos equipos antiguos, no. Cuando el publicador detecta que no puede, hace
+dos cosas: usa la **variante plana del mismo tema que elegiste** —no cambia a
+otro, ni te quita el que tenías— y te lo dice en la barra de pie:
+
+> Tema Cristal oscuro en modo plano: el sistema no admite cristal.
+
+En la siguiente ejecución ya sabes que lo chose a propósito y no que algo falló.
+
+Los colores de los cuatro temas están medidos contra el WCAG AA: **4.5:1** para
+el texto normal, y **3:1** para el texto deshabilitado, que es donde la norma lo
+permite. Los iconos son vectores dibujados por la propia aplicación, no emojis del
+sistema: se ven igual en todos los equipos y no cambian de fuente.
+
 ## Publicar o actualizar un script
 
 1. Arrastra el userscript sobre la ventana o pulsa **Examinar**.

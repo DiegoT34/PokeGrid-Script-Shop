@@ -530,12 +530,31 @@ $form=[Windows.Forms.Form]::new();$form.Text='PokeGrid Publisher 1.3.1';$form.St
 $form.ClientSize=[Drawing.Size]::new([Math]::Min(1280,[Math]::Max(900,$workingArea.Width-90)),[Math]::Min(860,[Math]::Max(660,$workingArea.Height-80)))
 $form.MinimumSize=[Drawing.Size]::new(880,650);$form.BackColor=$palette.Background;$form.ForeColor=$palette.Text;$form.Font=Get-TextStyle 'body';$form.AutoScaleMode='Dpi';$form.KeyPreview=$true;$form.AllowDrop=$true
 
-$header=[Windows.Forms.TableLayoutPanel]::new();$header.Dock='Top';$header.Height=88;$header.Padding=[Windows.Forms.Padding]::new(20,12,20,10);$header.BackColor=$palette.Surface;$header.ColumnCount=2;$header.RowCount=2
-$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',62))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',38))|Out-Null
+$header=[Windows.Forms.TableLayoutPanel]::new();$header.Dock='Top';$header.Height=88;$header.Padding=[Windows.Forms.Padding]::new(20,12,20,10);$header.BackColor=$palette.Surface;$header.ColumnCount=3;$header.RowCount=2
+$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',168))|Out-Null;$header.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',62))|Out-Null;$header.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',38))|Out-Null
 $appTitle=New-Label 'PokeGrid Publisher' 22 $palette.Text ([Drawing.FontStyle]::Bold);$appTitle.Dock='Fill'
 $appSubtitle=New-Label 'Publica userscripts y nuevas versiones del launcher desde un solo lugar.' 9.5 $palette.Muted;$appSubtitle.Dock='Fill'
 $statusChip=New-Label '  PREPARADO  ' 7.7 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22;$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
-$header.Controls.Add($appTitle,0,0);$header.Controls.Add($appSubtitle,0,1);$header.Controls.Add($statusChip,1,0);$header.SetRowSpan($statusChip,2)
+$header.Controls.Add($appTitle,0,0);$header.Controls.Add($appSubtitle,0,1);$header.Controls.Add($statusChip,2,0);$header.SetRowSpan($statusChip,2)
+
+# El selector de tema. Los items se rellenan con el NOMBRE visible de cada tema
+# (PLANE va en mayusculas y asi se ve), pero el indice es lo que se guarda: el
+# orden de las claves es fijo, asi que SelectedIndex siempre apunta al mismo tema.
+$themeBox=[Windows.Forms.ComboBox]::new()
+$themeBox.DropDownStyle='DropDownList'
+Style-Input $themeBox | Out-Null
+$themeKeys=@((Get-PokeGridThemes).Keys)
+foreach($tKey in $themeKeys){[void]$themeBox.Items.Add((Get-PokeGridTheme $tKey).Name)}
+$themeBox.Dock='Fill';$themeBox.Margin=[Windows.Forms.Padding]::new(10,7,10,7)
+$themeBox.SelectedIndex=[Math]::Max(0,$themeKeys.IndexOf($script:theme.Key))
+$header.Controls.Add($themeBox,1,0);$header.SetRowSpan($themeBox,2)
+Register-ThemedControl $themeBox 'Input'
+$themeBox.Add_SelectedIndexChanged({
+  $key=$themeKeys[[int]$this.SelectedIndex]
+  if(-not $key){return}
+  $shown=Apply-PokeGridTheme $key
+  if($this.SelectedIndex -ge 0){Log "Tema: $shown" 'ok'}
+})
 
 $footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Get-GlassColor 'Surface.Soft' 0.45;$footer.ColumnCount=4
 $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',18))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',330))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',90))|Out-Null
@@ -687,6 +706,20 @@ $shopPage.Controls.Add($contentStack);$shopPage.Controls.Add($sidebar);$catalogP
 $tabs.SelectedTab=$(if($InitialTab -eq 'Launcher'){$launcherPage}elseif($InitialTab -eq 'Catalog'){$catalogPage}else{$shopPage})
 $form.Controls.Add($tabs);$form.Controls.Add($footer);$form.Controls.Add($header)
 
+# El registro de controles con tema: cada uno declara que PAPEL juega, nunca un
+# color. Cambiar de tema despues es sustituir la tabla y repintar esta lista, sin
+# tocar los 89 usos de $palette que ya estan escritos.
+foreach($l in @($appTitle,$appSubtitle)){Register-ThemedControl $l 'TextPrimary'}
+foreach($l in @($statusLabel)){Register-ThemedControl $l 'TextPrimary'}
+foreach($l in @($statusChip)){Register-ThemedControl $l 'TextPrimary'}
+foreach($l in @($repoFooter,$versionFooter,$sourceHint)){Register-ThemedControl $l 'TextDim'}
+foreach($b in @($publishButton)){Register-ThemedControl $b 'ButtonDanger'}
+foreach($b in @($validateButton,$browseButton,$catalogRefreshButton)){Register-ThemedControl $b 'ButtonPrimary'}
+foreach($b in @($clearButton,$openFolderButton,$openRepoButton,$catalogButton,$catalogOpenRepoButton)){Register-ThemedControl $b 'ButtonGhost'}
+foreach($p in @($sidebar,$footer)){Register-ThemedControl $p 'Glass'}
+foreach($p in @($header,$shopPage,$catalogPage,$launcherPage)){Register-ThemedControl $p 'Base'}
+foreach($p in @($sourceCard,$publicationCard,$actionCard,$catalogSummaryCard,$catalogBodyCard,$launcherRepoCard,$launcherReleaseCard,$launcherActionCard)){Register-ThemedControl $p 'Surface'}
+
 function Apply-ResponsiveLayout {
   $compact=$form.ClientSize.Width -lt 1040;$sidebar.Visible=-not $compact;$available=$contentStack.ClientSize.Width-$contentStack.Padding.Horizontal-24
   foreach($card in @($sourceCard,$publicationCard,$actionCard)){ $card.Width=[Math]::Max(700,$available) }
@@ -829,6 +862,24 @@ if($SmokeTest){
   if((Get-UniqueScriptId ([pscustomobject]@{scripts=@([pscustomobject]@{id='script-completamente-nuevo'})}) 'Script completamente nuevo') -ne 'script-completamente-nuevo-2'){throw 'La generación segura de ID para scripts nuevos no funciona.'}
   $largeWidth=$sourceCard.Width;$form.ClientSize=[Drawing.Size]::new(900,680);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
   if($sidebar.Visible -or $sourceCard.Width -ge $largeWidth -or $sourceCard.Width -lt 700 -or $catalogSummaryCard.Width -lt 700 -or $launcherRepoCard.Width -lt 700){throw "La respuesta compacta del layout no funciona. Shop=$($sourceCard.Width), Catalog=$($catalogSummaryCard.Width), Launcher=$($launcherRepoCard.Width), Large=$largeWidth"}
+  if($themeBox.Items.Count -ne 4 -or $themeBox.SelectedIndex -lt 0){throw 'El selector de tema no ofrece los cuatro temas.'}
+  if($themeBox.Items[[int]$themeBox.SelectedIndex] -ne $script:theme.Name){throw "El selector de tema no arranca mostrando el tema activo: $($themeBox.SelectedItem) en vez de $($script:theme.Name)."}
+  # Se recorren los cuatro temas comprobando que el fondo del formulario y el del
+  # proxy del guion siguen al activo. Sin esto, cambiar el selector se limitaba a
+  # repintar controles sueltos mientras media ventana se quedaba con el tema viejo.
+  $seen=@()
+  for($probe=0;$probe -lt $themeBox.Items.Count;$probe++){
+    $probeIndex=($themeBox.SelectedIndex+1)%$themeBox.Items.Count
+    $themeBox.SelectedIndex=$probeIndex
+    [Windows.Forms.Application]::DoEvents()
+    $expected=[Drawing.ColorTranslator]::FromHtml((Get-PokeGridTheme $themeKeys[$probeIndex]).Base)
+    if($form.BackColor.ToArgb() -ne $expected.ToArgb()){throw "El fondo del formulario no siguio al tema $($themeKeys[$probeIndex])."}
+    if($palette.Background.ToArgb() -ne $expected.ToArgb()){throw "El proxy del guion no siguio al tema $($themeKeys[$probeIndex])."}
+    $seen+=$themeKeys[$probeIndex]
+  }
+  if(($seen|Sort-Object -Unique).Count -ne 4){throw "El recorrido de temas no cubrio los cuatro: $($seen -join ', ')."}
+  if($themeBox.Items -notcontains 'PLANE'){throw 'El cuarto tema no se muestra como PLANE.'}
+  $themeBox.SelectedIndex=[Math]::Max(0,$themeKeys.IndexOf((Read-PokeGridThemeKey)))
   $script:catalogEntries=@([pscustomobject]@{id='smoke';name='Script Smoke';version='1.0.0';category='Utilidades';author='PokeGrid';icon='script';games=@('Juego Smoke');tags=@('test');featured=$true;description='Prueba';publishedAt='2026-01-01';sha256=('a'*64)})
   Render-CatalogManagement
   if($catalogGrid.Rows.Count -ne 1 -or $catalogCountValue.Text -ne '1' -or -not $catalogDeleteButton.Enabled){throw 'La vista visual del catálogo no pudo representar una publicación seleccionable.'}

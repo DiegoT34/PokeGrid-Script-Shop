@@ -35,6 +35,7 @@ jobs:
             'test-vector-icons.ps1'
             'test-animation-clock.ps1'
             'test-blur-degradation.ps1'
+            'test-theme-hot-swap.ps1'
             'test-validate-catalog.ps1'
             'test-catalog-schema.ps1'
             'test-workflow-wiring.ps1'

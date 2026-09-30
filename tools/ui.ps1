@@ -268,3 +268,109 @@ function Resolve-PokeGridEffectiveTheme([bool]$BlurSupported = $false) {
   $fallback['Blur'] = $false
   return $fallback
 }
+# ---------------------------------------------------------------------------
+# El registro de controles con tema.
+#
+# Cada control se registra UNA vez diciendo que PAPEL juega: TextPrimary,
+# ButtonDanger, Surface... Nunca un color. Asi el unico sitio que sabe que
+# "el boton de peligro es rojo en este tema" es la tabla del tema, y cambiar de
+# tema es sustituirla.
+# ---------------------------------------------------------------------------
+
+$script:themedControls = [Collections.Generic.List[object]]::new()
+
+function Register-ThemedControl($control, [string]$role) {
+  foreach ($entry in $script:themedControls) {
+    if ($entry.Control -eq $control) { return }
+  }
+  $entry = [pscustomobject]@{ Control = $control; Role = $role }
+  $script:themedControls.Add($entry)
+  Update-ThemedControl $entry
+}
+
+function Update-ThemedControl($entry) {
+  $c = $entry.Control
+  if ($null -eq $c -or $c.IsDisposed) { return }
+  switch ($entry.Role) {
+    'TextPrimary'   { $c.ForeColor = Get-ThemeColor 'Text.Primary' }
+    'TextSecondary' { $c.ForeColor = Get-ThemeColor 'Text.Secondary' }
+    'TextMuted'     { $c.ForeColor = Get-ThemeColor 'Text.Secondary' }
+    'TextDim'       { $c.ForeColor = Get-ThemeColor 'Text.Disabled' }
+    'ButtonPrimary' { Set-ButtonRole $c 'primary' | Out-Null }
+    'ButtonDanger'  { Set-ButtonRole $c 'danger' | Out-Null }
+    'ButtonGhost'   { Set-ButtonRole $c 'ghost' | Out-Null }
+    'ButtonSecondary' { Set-ButtonRole $c 'secondary' | Out-Null }
+    'Surface'       { $c.BackColor = Get-GlassColor 'Surface.Base' 0.14 }
+    'Glass'         { $c.BackColor = Get-GlassColor 'Surface.Soft' 0.35 }
+    'GlassStrong'   { $c.BackColor = Get-GlassColor 'Surface.Soft' 0.45 }
+    'Input'         {
+      # Un campo es MAS opaco que la tarjeta que lo contiene: si comparte su
+      # cristal, el texto se pierde contra el de al lado.
+      $c.BackColor = Get-GlassColor 'Surface.Soft' 0.75
+      $c.ForeColor = Get-ThemeColor 'Text.Primary'
+      if ($c -is [Windows.Forms.ComboBox]) {
+        # Sin esto un ComboBox ignora BackColor/ForeColor y sale con el gris de Windows.
+        $c.DrawMode = 'OwnerDrawFixed'
+        $c.BackColor = $c.BackColor
+        $c.ForeColor = $c.ForeColor
+      }
+    }
+    'Base'          { $c.BackColor = Get-ThemeColor 'Base' }
+    'LogSurface'    { $c.BackColor = Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25 }
+    'Grid'          {
+      $c.BackgroundColor = Get-ThemeColor 'Base'
+      $c.DefaultCellStyle.BackColor = Get-ThemeColor 'Surface.Soft'
+      $c.DefaultCellStyle.ForeColor = Get-ThemeColor 'Text.Primary'
+      $c.DefaultCellStyle.SelectionBackColor = Blend-Color (Get-ThemeColor 'Surface.Raised') (Get-ThemeColor 'Rest.Primary.Base') 0.45
+      $c.ColumnHeadersDefaultCellStyle.BackColor = Get-ThemeColor 'Surface.Raised'
+      $c.ColumnHeadersDefaultCellStyle.ForeColor = Get-ThemeColor 'Text.Secondary'
+      $c.GridColor = Get-ThemeColor 'Border.Base'
+    }
+    default { }
+  }
+}
+
+function New-ThemePaletteProxy($theme) {
+  # $palette es una variable local del guion, no del ambito Script. Para que los
+  # usos existentes vean el tema nuevo hay que RECONSTRUIR el objeto en su sitio.
+  # Add-Variable -Scope Script crearia otra variable distinta y no tocaria esta.
+  return [pscustomobject]@{
+    Background = Get-ThemeColor 'Base' -Theme $theme
+    Surface = Get-ThemeColor 'Surface.Base' -Theme $theme
+    SurfaceRaised = Get-ThemeColor 'Surface.Raised' -Theme $theme
+    SurfaceSoft = Get-ThemeColor 'Surface.Soft' -Theme $theme
+    Border = Get-ThemeColor 'Border.Base' -Theme $theme
+    BorderFocus = Get-ThemeColor 'Rest.Primary.Hover' -Theme $theme
+    Text = Get-ThemeColor 'Text.Primary' -Theme $theme
+    Muted = Get-ThemeColor 'Text.Secondary' -Theme $theme
+    Dim = Get-ThemeColor 'Text.Disabled' -Theme $theme
+    Primary = Get-ThemeColor 'Rest.Primary.Hover' -Theme $theme
+    PrimaryDark = Get-ThemeColor 'Rest.Primary.Base' -Theme $theme
+    Accent = Get-ThemeColor 'Rest.Danger.Hover' -Theme $theme
+    AccentDark = Get-ThemeColor 'Rest.Danger.Base' -Theme $theme
+    Success = Get-ThemeColor 'Rest.Success.Base' -Theme $theme
+    Warning = Get-ThemeColor 'Rest.Warning.Base' -Theme $theme
+    Danger = Get-ThemeColor 'Rest.Danger.Fore' -Theme $theme
+  }
+}
+function Apply-PokeGridTheme([string]$key, [switch]$SkipSave) {
+  # Cambiar de tema es sustituir una tabla de datos y repintar lo registrado.
+  $theme = Get-PokeGridTheme $key
+  $script:theme = $theme
+
+  # $palette vive en el ambito del GUION, no en el de esta funcion. Asignarla aqui
+  # crearia una copia local y las 89 referencias ya escritas en la interfaz seguirian
+  # viendo los colores del tema anterior: la ventana se repintaria a medias.
+  # Set-Variable con -Force es lo que sustituye de verdad la variable del guion.
+  Set-Variable -Name palette -Value (New-ThemePaletteProxy $theme) -Scope Script -Force
+
+  foreach ($entry in $script:themedControls) { Update-ThemedControl $entry }
+  if ($form) {
+    $form.BackColor = Get-ThemeColor 'Base'
+    $form.ForeColor = Get-ThemeColor 'Text.Primary'
+    Apply-RoundedRegions $form
+    $form.Invalidate()
+  }
+  if (-not $SkipSave) { Save-PokeGridTheme $theme.Key }
+  return $theme.Name
+}
