@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Better Market and More
+// @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.7.1
-// @description  Mercado Global rediseñado, sin alertas y con Exact IV Scanner completo y catálogo base integrado.
-// @match        https://poke.idleworld.online/play
+// @version      10.20.8
+// @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
+// @match        *://poke.idleworld.online/*
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -11,15 +11,30 @@
 (function() {
     'use strict';
 
+    // Marca mínima de diagnóstico: confirma la inyección incluso si una mejora
+    // posterior encuentra una interfaz del juego todavía en construcción.
+    try {
+        document.documentElement?.setAttribute('data-better-market-and-more', 'loading');
+    } catch (_) { /* La marca no debe afectar el arranque del juego. */ }
+
     const NativeWebSocket = window.WebSocket;
     const nativeWebSocketSend = NativeWebSocket.prototype.send;
     let gameSocket = null;
     let latestInventory = null;
     let latestPokemon = null;
     let latestFamily = null;
+    /* O servidor responde con {type:'error', message} quando recusa uma acao.
+       Esse evento nao tinha nenhum ouvinte, entao o motivo real era descartado e
+       todas as recusas viravam a mesma mensagem generica. Guardamos o ultimo. */
+    let lastGameError = null;
     let latestAutohelper = null;
     const gameEventWaiters = new Map();
     const trackedGameSockets = new WeakSet();
+    /* Todos los sockets /ws vivos y el que trae los eventos del juego (familia,
+       pokes, inventario). Dentro de una hunt hay mas de uno abierto. */
+    const liveGameSockets = new Set();
+    let primaryGameSocket = null;
+    const GAME_SOCKET_EVENT_TYPES = new Set(['family', 'pokes', 'inventory', 'autohelper', 'chat', 'pokedex', 'quests', 'friends']);
     let lastSocketMessageAt = Date.now();
     let lastHuntSocketActivityAt = Date.now();
     let lastAutoReconnectAt = 0;
@@ -50,6 +65,10 @@
         } catch {
             return;
         }
+        /* El socket que entrega estos eventos es el principal para enviar ordenes. */
+        if (message && GAME_SOCKET_EVENT_TYPES.has(message.type) && event?.currentTarget) {
+            primaryGameSocket = event.currentTarget;
+        }
         lastSocketMessageAt = Date.now();
         if (isInHuntContext() && isHuntProgressMessage(message)) {
             lastHuntSocketActivityAt = Date.now();
@@ -59,8 +78,20 @@
         }
         if (message?.type === 'family') latestFamily = message;
         if (message?.type === 'autohelper') latestAutohelper = message;
+        if (message?.type === 'error') {
+            lastGameError = {
+                message: message.message || message.error || 'O servidor recusou a operação.',
+                at: Date.now()
+            };
+        }
         if (message?.type === 'pokes') {
             latestPokemon = message.list || [];
+            /* Auto-venta del deposito. Sin void el manejador devolveria una
+               promesa y el resto del script notaria el retorno; con void sigue
+               su curso y el error lo come el catch de dentro. */
+            /* Apoyo: si el servidor SI empuja pokes al capturar, esto lo coge al
+               vuelo. Ya no es la unica via, porque no siempre lo empuja. */
+            void handleMarketAutoSellTick(message.list || []);
             if (updateCachedLeaderPokemon(latestPokemon)) {
                 lastMapRenderSignature = '';
                 setTimeout(buildSimpleList, 0);
@@ -76,13 +107,23 @@
 
     function trackGameSocket(socket, url = socket?.url) {
         if (!socket || !String(url || '').includes('/ws')) return socket;
+        /* Antes gameSocket era "el ultimo que hablo" y NativeWebSocket.prototype.send
+           reasignaba en cada envio. Dentro de una hunt hay un segundo socket: en cuanto
+           ese envoyaba algo, se quedaba con el puntero y las ordenes de familia (y las
+           de cualquier otra cosa) iban por el socket equivocado, que no las procesa:
+           no hay respuesta y el scriptlaubia un rechazo inexistente.
+           Ahora se guardan todos y se prefiere el socket principal, que es el que
+           realmente trae los eventos del juego. */
+        if (!liveGameSockets.has(socket)) {
+            liveGameSockets.add(socket);
+            socket.addEventListener('message', handleGameSocketMessage);
+            socket.addEventListener('close', () => {
+                liveGameSockets.delete(socket);
+                if (gameSocket === socket) gameSocket = null;
+                if (primaryGameSocket === socket) primaryGameSocket = null;
+            });
+        }
         gameSocket = socket;
-        if (trackedGameSockets.has(socket)) return socket;
-        trackedGameSockets.add(socket);
-        socket.addEventListener('message', handleGameSocketMessage);
-        socket.addEventListener('close', () => {
-            if (gameSocket === socket) gameSocket = null;
-        });
         return socket;
     }
 
@@ -96,23 +137,46 @@
     Object.setPrototypeOf(TrackedWebSocket, NativeWebSocket);
     window.WebSocket = TrackedWebSocket;
     NativeWebSocket.prototype.send = function(data) {
-        trackGameSocket(this);
+        const tracked = String(this?.url || '').includes('/ws');
+        if (tracked && !liveGameSockets.has(this)) trackGameSocket(this);
+        if (!tracked) trackGameSocket(this);
         return nativeWebSocketSend.call(this, data);
     };
 
     function sendGameMessage(message) {
-        if (!gameSocket || gameSocket.readyState !== NativeWebSocket.OPEN) return false;
-        gameSocket.send(JSON.stringify(message));
-        return true;
+        /* Se prefiere el socket principal; si no, cualquiera abierto conocido. */
+        const candidates = [primaryGameSocket, gameSocket, ...liveGameSockets];
+        for (const socket of candidates) {
+            if (socket && socket.readyState === NativeWebSocket.OPEN) {
+                gameSocket = socket;
+                socket.send(JSON.stringify(message));
+                return true;
+            }
+        }
+        return false;
     }
 
+    function isGameSocketOpen(socket) {
+        return Boolean(socket) && socket.readyState === NativeWebSocket.OPEN;
+    }
+    /* Devuelve el socket que hay que usar: el principal si esta abierto, si no
+       cualquiera de los conocidos que lo este. */
+    function pickOpenGameSocket() {
+        if (isGameSocketOpen(primaryGameSocket)) return primaryGameSocket;
+        if (isGameSocketOpen(gameSocket)) return gameSocket;
+        for (const socket of liveGameSockets) {
+            if (isGameSocketOpen(socket)) return socket;
+        }
+        return null;
+    }
     async function waitForGameSocket(timeoutMs = 5000) {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            if (gameSocket?.readyState === NativeWebSocket.OPEN) return true;
+            const open = pickOpenGameSocket();
+            if (open) return open;
             await new Promise(resolve => setTimeout(resolve, 100));
         }
-        return gameSocket?.readyState === NativeWebSocket.OPEN;
+        return pickOpenGameSocket();
     }
 
     setInterval(async () => {
@@ -126,7 +190,7 @@
         }
         if (!isAutoReconnectActive() || autoReconnectInProgress) return;
         const now = Date.now();
-        const connectionLost = !gameSocket || gameSocket.readyState !== NativeWebSocket.OPEN;
+        const connectionLost = !pickOpenGameSocket();
         const captureBarSignature = captureBar?.innerHTML || '';
         if (!connectionLost && captureBar && captureBarSignature !== lastCaptureBarSignature) {
             lastCaptureBarSignature = captureBarSignature;
@@ -212,9 +276,87 @@
     const STORAGE_HUNT_MARKET = 'script_hunt_market_v1';
     const STORAGE_HUNT_BULK_BUY = 'script_hunt_bulk_buy_v1';
     const STORAGE_HUNT_SELL = 'script_hunt_sell_v1';
+    /* Hunt de la que se salio para usar el Deposto familiar. Queda guardada para
+       que el regreso ocurra aunque el usuario cierre la ventana del Depot. */
+    const STORAGE_FAMILY_HUNT_PENDING = 'script_family_hunt_pending_v1';
+    let familyHuntTravelBusy = false;
+    let pendingFamilyHuntRecoveryStarted = false;
     const STORAGE_MARK_ENHANCEMENTS = 'script_mark_enhancements_v1';
     const STORAGE_MAP_FILTERS = 'script_map_filters_v1';
     const STORAGE_HA_HISTORY = 'script_ha_history_v1';
+    const STORAGE_SELL_BOTANY_LABELS = 'script_sell_botany_labels_v1';
+
+    const BOTANY_BERRY_META = [
+        ['Chilan',64831,64809],['Babiri',64832,64810],['Colbur',64833,64811],['Haban',64834,64812],
+        ['Kasib',64835,64813],['Charti',64836,64814],['Tanga',64837,64815],['Payapa',64838,64816],
+        ['Coba',64839,64817],['Shuca',64840,64818],['Kebia',64841,64819],['Chople',64842,64820],
+        ['Yache',64843,64821],['Rindo',64844,64822],['Wacan',64845,64823],['Passho',64846,64824],
+        ['Occa',64847,64825],['Roseli',64848,64826],['Kee',64849,64830],['Rovia',64850,44457]
+    ];
+    const BOTANY_BERRY_COLORS = Object.freeze({
+        Chilan:'#a8a878',Babiri:'#8fa8bd',Colbur:'#8a6754',Haban:'#7b55d9',Kasib:'#8067a1',Charti:'#b8a038',Tanga:'#a8b820',Payapa:'#f06493',
+        Coba:'#85a6ed',Shuca:'#d7b75c',Kebia:'#b252b2',Chople:'#cf4b43',Yache:'#72cfd3',Rindo:'#58b957',Wacan:'#e8c12e',Passho:'#5790e8',
+        Occa:'#e66738',Roseli:'#e58ab3',Kee:'#9aa4b2',Rovia:'#4ed98a'
+    });
+    const BOTANY_RECIPE_PARTS = {
+        64809:[[73,960],[24,2160],[59222,6000]],64810:[[97,960],[83,3950],[59246,6000]],64811:[[137,2670],[59235,6000],[59237,9000]],
+        64812:[[115,960],[37,720],[59241,6000]],64813:[[111,4800],[137,2040],[59232,6000]],64814:[[35,960],[128,2280],[59239,6000]],
+        64815:[[17,1200],[11592,3130],[59220,6000]],64816:[[89,960],[103,2040],[59229,6000]],64817:[[38,790],[114,720],[59221,6000]],
+        64818:[[94,1290],[3,2400],[59243,6000]],64819:[[125,4000],[127,3120],[59242,6000]],64820:[[86,2400],[105,2640],[59224,6000]],
+        64821:[[122,960],[116,2400],[59233,6000]],64822:[[12,960],[99,3120],[59217,6000]],64823:[[43,960],[42,2760],[59226,6000]],
+        64824:[[74,3900],[65,720],[59219,6000]],64825:[[82,960],[54,2760],[59218,6000]],64826:[[136,3270],[88,2400],[59238,6000]],
+        64830:[[2,22],[27304,2]],44457:[[204,6000],[21,600]],64831:[[108,2310],[11556,1450]],64832:[[11537,130],[11549,1380]],
+        64833:[[11550,1460],[59249,6550]],64834:[[38,430],[37,530]],64835:[[137,1460],[11595,850]],64836:[[69,530],[11560,580]],
+        64837:[[11532,1790],[11540,1450]],64838:[[11530,1460],[11521,1560]],64839:[[11515,3370],[11514,1780]],
+        64840:[[11534,2920],[11552,1460]],64841:[[11516,3370],[11517,1460]],64842:[[11540,1460],[11555,1940]],
+        64843:[[11547,2920],[11544,1460]],64844:[[11529,3800],[11510,1990]],64845:[[11518,2300],[11522,1990]],
+        64846:[[11586,3370],[11512,1990]],64847:[[11543,1940],[11511,1990]],64848:[[11520,180],[11535,2340]],
+        64849:[[2,11],[27304,1]],64850:[[204,3000],[21,300]]
+    };
+    const BOTANY_BERRIES_BY_MATERIAL = (() => {
+        const result = new Map();
+        const add = (itemId, berryName) => {
+            const names = result.get(String(itemId)) || [];
+            if (!names.includes(berryName)) names.push(berryName);
+            result.set(String(itemId), names);
+        };
+        BOTANY_BERRY_META.forEach(([baseName, commonId, wildId]) => {
+            [[commonId, `${baseName} Berry`, 19354], [wildId, `Wild ${baseName} Berry`, 19356]].forEach(([berryId, berryName, herbId]) => {
+                add(herbId, berryName);
+                (BOTANY_RECIPE_PARTS[berryId] || []).forEach(([itemId]) => add(itemId, berryName));
+            });
+        });
+        return result;
+    })();
+
+    function getBotanyBerryLabels(itemId) {
+        return BOTANY_BERRIES_BY_MATERIAL.get(String(itemId)) || [];
+    }
+
+    function buildBotanySellTags(labels) {
+        const names = Array.isArray(labels) ? labels : [];
+        if (!names.length) return '';
+        const allWild = names.every(name => /^Wild\s/i.test(name));
+        const allCommon = names.every(name => !/^Wild\s/i.test(name));
+        let tags;
+        if (names.length >= 8 && (allWild || allCommon)) {
+            tags = [{ label: `${names.length} Berries ${allWild ? 'silvestres' : 'comunes'}`, wild: allWild }];
+        } else {
+            tags = names.slice(0, 3).map(name => {
+                const baseName = name.replace(/^Wild\s+/i, '').replace(/\s+Berry$/i, '');
+                return { label: name, wild: /^Wild\s/i.test(name), color: BOTANY_BERRY_COLORS[baseName] || '#69c98d' };
+            });
+            if (names.length > tags.length) tags.push({ label: `+${names.length - tags.length} recetas`, more: true });
+        }
+        return `<span class="hunt-botany-tags" title="Material de: ${escapeHTML(names.join(', '))}">
+            <small class="hunt-botany-caption">MATERIAL PARA</small>
+            <span class="hunt-botany-tag-list">${tags.map(tag => `<span class="hunt-botany-tag${tag.wild ? ' wild' : ''}${tag.more ? ' more' : ''}"${tag.color ? ` style="--berry-tag:${tag.color}"` : ''}>${tag.more ? '＋' : tag.wild ? '🍃' : '🌿'} ${escapeHTML(tag.label)}</span>`).join('')}</span>
+        </span>`;
+    }
+
+    function isSellBotanyLabelsEnabled() {
+        try { return localStorage.getItem(STORAGE_SELL_BOTANY_LABELS) === 'true'; } catch (_) { return false; }
+    }
     // Limpieza definitiva de los datos pertenecientes al historial retirado.
     try {
         localStorage.removeItem('script_market_price_history_v1');
@@ -649,9 +791,15 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { mapFavorites:'Favoritos', mapAdvantage:'Ventaja', mapNeutral:'Neutral', mapDisadvantage:'Desventaja', mapLocked:'Bloqueados', mapNotFavorites:'No favoritos', mapLast:'Última zona', mapHere:'AQUÍ', mapRequires:'Requiere nivel', mapYourLevel:'tu nivel' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { mapFavorites:'Favoritos', mapAdvantage:'Vantagem', mapNeutral:'Neutra', mapDisadvantage:'Desvantagem', mapLocked:'Bloqueadas', mapNotFavorites:'Não favoritas', mapLast:'Última hunt', mapHere:'AQUI', mapRequires:'Requer nível', mapYourLevel:'seu nível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { mapFavorites:'Favorites', mapAdvantage:'Advantage', mapNeutral:'Neutral', mapDisadvantage:'Disadvantage', mapLocked:'Locked', mapNotFavorites:'Not favorites', mapLast:'Last area', mapHere:'HERE', mapRequires:'Requires level', mapYourLevel:'your level' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { depotAccess:'Depósito', shopBarHide:'Ocultar botonera', shopBarShow:'Mostrar botonera' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotAccess:'Depósito', shopBarHide:'Ocultar barra de botões', shopBarShow:'Mostrar barra de botões' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { depotAccess:'Depot', shopBarHide:'Collapse button bar', shopBarShow:'Expand button bar' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotItems:'Objetos', depotPokemon:'Pokémon', depotFamilyItems:'Familia: objetos', depotFamilyPokemon:'Familia: Pokémon', depotSubtitle:'Almacenamiento personal y familiar', depotBag:'Mochila', depotTeam:'Equipo', depotBox:'Box', depotFamily:'Depósito familiar', depotYourBag:'Tu mochila', depotYourPokemon:'Tus Pokémon · equipo y Box', depotSearchPokemon:'Buscar Pokémon por nombre', depotClear:'Limpiar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'OBJETO', depotPokemonKind:'POKÉMON', depotAvailable:'disponibles', depotEmpty:'No hay contenido disponible' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotItems:'Itens', depotPokemon:'Pokémon', depotFamilyItems:'Família: itens', depotFamilyPokemon:'Família: Pokémon', depotSubtitle:'Armazenamento pessoal e familiar', depotBag:'Mochila', depotTeam:'Equipe', depotBox:'Box', depotFamily:'Depósito da família', depotYourBag:'Sua mochila', depotYourPokemon:'Seus Pokémon · equipe e Box', depotSearchPokemon:'Buscar Pokémon pelo nome', depotClear:'Limpar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'disponíveis', depotEmpty:'Nenhum conteúdo disponível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotItems:'Items', depotPokemon:'Pokémon', depotFamilyItems:'Family: items', depotFamilyPokemon:'Family: Pokémon', depotSubtitle:'Personal and family storage', depotBag:'Bag', depotTeam:'Team', depotBox:'Box', depotFamily:'Family depot', depotYourBag:'Your bag', depotYourPokemon:'Your Pokémon · team and Box', depotSearchPokemon:'Search Pokémon by name', depotClear:'Clear', depotStore:'Store', depotDeposit:'Deposit', depotWithdraw:'Withdraw', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'available', depotEmpty:'No content available' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { depotSearchItems:'Buscar objeto por nombre…', depotItemFilters:'Filtros de objetos', depotFilterAll:'Todo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotSearchItems:'Buscar item pelo nome…', depotItemFilters:'Filtros de itens', depotFilterAll:'Tudo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { depotSearchItems:'Search item by name…', depotItemFilters:'Item filters', depotFilterAll:'All', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotTierFilter:'Tiers de Quality visibles', depotAllTiers:'Todos', depotNoTiers:'Ninguno' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotTierFilter:'Tiers de Quality visíveis', depotAllTiers:'Todos', depotNoTiers:'Nenhum' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotTierFilter:'Visible Quality tiers', depotAllTiers:'All', depotNoTiers:'None' });
@@ -666,7 +814,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.en, { historyJustNow:'a few seconds ago' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { itemRarity:'Rareza', allRarities:'Todas las rarezas', rarityCommon:'Común', rarityUncommon:'Poco común', rarityRare:'Raro', rarityEpic:'Épico', rarityLegendary:'Legendario', rarityMythic:'Mítico', rarityAncient:'Ancestral', rarityDivine:'Divino' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { itemRarity:'Raridade', allRarities:'Todas as raridades', rarityCommon:'Comum', rarityUncommon:'Incomum', rarityRare:'Raro', rarityEpic:'Épico', rarityLegendary:'Lendário', rarityMythic:'Mítico', rarityAncient:'Ancião', rarityDivine:'Divino' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { itemRarity:'Rarity', allRarities:'All rarities', rarityCommon:'Common', rarityUncommon:'Uncommon', rarityRare:'Rare', rarityEpic:'Epic', rarityLegendary:'Legendary', rarityMythic:'Mythic', rarityAncient:'Ancient', rarityDivine:'Divine' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { marketHeldMachine:'Held Machine', marketHeldAllItems:'Todos los held', marketHeldTier:'Tier', marketHeldAllTiers:'Todos los tiers', marketHeldQuantityMin:'Cantidad mínima', marketBotanyItems:'🌿 Items de Botánica', marketBotanyOnly:'Solo items de Botánica' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { marketHeldMachine:'Held Machine', marketHeldAllItems:'Todos os held', marketHeldTier:'Tier', marketHeldAllTiers:'Todos os tiers', marketHeldQuantityMin:'Quantidade mínima', marketBotanyItems:'🌿 Itens de Botânica', marketBotanyOnly:'Apenas itens de Botânica' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { marketHeldMachine:'Held Machine', marketHeldAllItems:'All held items', marketHeldTier:'Tier', marketHeldAllTiers:'All tiers', marketHeldQuantityMin:'Minimum quantity', marketBotanyItems:'🌿 Botany Items', marketBotanyOnly:'Botany items only' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { marketConversion:'Conversión' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { marketConversion:'Conversão' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { marketConversion:'Conversion' });
@@ -676,9 +826,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { pokemonEstimatedPrice:'Precio estimado:', similarPokemon:'Pokémon similares', pokemonCompareDetails:'misma especie · Quality, IV y nivel cercanos', checkingPokemonPrice:'Buscando Pokémon similares a', noSimilarPokemon:'No hay Pokémon similares publicados; el precio queda a tu criterio.', viewSimilar:'Ver similares', similarWindowTitle:'Pokémon usados para la comparación', comparedWith:'Comparando con', bestSimilarMatch:'MÁS PARECIDO' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { pokemonEstimatedPrice:'Preço estimado:', similarPokemon:'Pokémon similares', pokemonCompareDetails:'mesma espécie · Quality, IV e nível próximos', checkingPokemonPrice:'Buscando Pokémon similares a', noSimilarPokemon:'Não há Pokémon similares anunciados; defina o preço livremente.', viewSimilar:'Ver similares', similarWindowTitle:'Pokémon usados na comparação', comparedWith:'Comparando com', bestSimilarMatch:'MAIS PARECIDO' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { pokemonEstimatedPrice:'Estimated price:', similarPokemon:'similar Pokémon', pokemonCompareDetails:'same species · similar Quality, IV, and level', checkingPokemonPrice:'Finding Pokémon similar to', noSimilarPokemon:'No similar Pokémon are listed; choose your own price.', viewSimilar:'View similar', similarWindowTitle:'Pokémon used for comparison', comparedWith:'Comparing against', bestSimilarMatch:'CLOSEST MATCH' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { marketFavorites:'Favoritos', addMarketFavorite:'Añadir a favoritos', removeMarketFavorite:'Quitar de favoritos', marketFeatured:'Destacados', addMarketFeatured:'Destacar Pokémon', removeMarketFeatured:'Quitar de destacados', featuredUnavailable:'Anuncio ya no disponible', featuredEmpty:'No has destacado ningún Pokémon todavía.', marketAlerts:'Alertas', alertCreate:'Crear alerta', alertName:'Pokémon (opcional)', alertNamePlaceholder:'Ej. Charizard', alertPriceMin:'Precio mín.', alertPriceMax:'Precio máx.', alertActiveRules:'Alertas activas', alertAutoBuy:'Compra automática', alertCopyFilters:'Copiar filtros', alertPasteFilters:'Pegar filtros', alertFiltersCopied:'Filtros copiados al portapapeles.', alertFiltersPasted:'Filtros pegados. Ajusta el Pokémon si lo deseas.', alertFiltersInvalid:'No se encontraron filtros de alerta válidos en el portapapeles.', alertExport:'Exportar', alertImport:'Importar', alertExported:'Alertas exportadas y listas para importar.', alertImported:'Alertas importadas: {count}.', alertImportInvalid:'No se encontraron alertas válidas para importar.', alertNoRules:'Crea una alerta para recibir avisos de nuevos Pokémon publicados.', alertNoMatches:'No hay alertas disponibles para comprar.', alertNewListing:'Nuevo Pokémon en alerta', alertAutoBought:'Compra automática completada', alertRemove:'Eliminar alerta', alertAnyPokemon:'Cualquier Pokémon', alertSaved:'Alerta creada. Solo avisará de anuncios publicados a partir de ahora.', telegram:'Telegram', telegramSettings:'Conexión de Telegram', telegramToken:'Token del bot', telegramChatId:'Chat ID', telegramEnabled:'Enviar alertas a Telegram', telegramSave:'Guardar conexión', telegramTest:'Probar conexión', telegramSaved:'Conexión de Telegram guardada.', telegramTestMessage:'Telegram conectado correctamente.', telegramBuy:'Comprar', telegramBought:'Compra completada desde Telegram.', telegramUnavailable:'Este anuncio ya no está disponible.', marketSaleFinished:'Venta finalizada' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { marketFavorites:'Favoritos', addMarketFavorite:'Adicionar aos favoritos', removeMarketFavorite:'Remover dos favoritos', marketFeatured:'Destaques', addMarketFeatured:'Destacar Pokémon', removeMarketFeatured:'Remover dos destaques', featuredUnavailable:'Anúncio não está mais disponível', featuredEmpty:'Você ainda não destacou nenhum Pokémon.', marketAlerts:'Alertas', alertCreate:'Criar alerta', alertName:'Pokémon (opcional)', alertNamePlaceholder:'Ex. Charizard', alertPriceMin:'Preço mín.', alertPriceMax:'Preço máx.', alertActiveRules:'Alertas ativas', alertAutoBuy:'Compra automática', alertNoRules:'Crie um alerta para receber avisos de novos Pokémon anunciados.', alertNoMatches:'Não há alertas disponíveis para comprar.', alertNewListing:'Novo Pokémon no alerta', alertAutoBought:'Compra automática concluída', alertRemove:'Excluir alerta', alertAnyPokemon:'Qualquer Pokémon', alertSaved:'Alerta criada. Ela só avisará sobre anúncios publicados a partir de agora.', telegram:'Telegram', telegramSettings:'Conexão do Telegram', telegramToken:'Token do bot', telegramChatId:'Chat ID', telegramEnabled:'Enviar alertas ao Telegram', telegramSave:'Salvar conexão', telegramTest:'Testar conexão', telegramSaved:'Conexão do Telegram salva.', telegramTestMessage:'Telegram conectado corretamente.', telegramBuy:'Comprar', telegramBought:'Compra concluída pelo Telegram.', telegramUnavailable:'Este anúncio não está mais disponível.', marketSaleFinished:'Venda concluída' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { marketFavorites:'Favorites', addMarketFavorite:'Add to favorites', removeMarketFavorite:'Remove from favorites', marketFeatured:'Featured', addMarketFeatured:'Feature Pokémon', removeMarketFeatured:'Remove from featured', featuredUnavailable:'Listing is no longer available', featuredEmpty:'You have not featured any Pokémon yet.', marketAlerts:'Alerts', alertCreate:'Create alert', alertName:'Pokémon (optional)', alertNamePlaceholder:'E.g. Charizard', alertPriceMin:'Min. price', alertPriceMax:'Max. price', alertActiveRules:'Active alerts', alertAutoBuy:'Automatic purchase', alertNoRules:'Create an alert to receive notices of newly listed Pokémon.', alertNoMatches:'There are no alerts available to buy.', alertNewListing:'New Pokémon alert', alertAutoBought:'Automatic purchase completed', alertRemove:'Delete alert', alertAnyPokemon:'Any Pokémon', alertSaved:'Alert created. It will only notify you of listings published from now on.', telegram:'Telegram', telegramSettings:'Telegram connection', telegramToken:'Bot token', telegramChatId:'Chat ID', telegramEnabled:'Send alerts to Telegram', telegramSave:'Save connection', telegramTest:'Test connection', telegramSaved:'Telegram connection saved.', telegramTestMessage:'Telegram connected successfully.', telegramBuy:'Buy', telegramBought:'Purchase completed from Telegram.', telegramUnavailable:'This listing is no longer available.', marketSaleFinished:'Sale completed' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { marketFavorites:'Favoritos', addMarketFavorite:'Añadir a favoritos', removeMarketFavorite:'Quitar de favoritos', marketFeatured:'Destacados', addMarketFeatured:'Destacar Pokémon', removeMarketFeatured:'Quitar de destacados', featuredUnavailable:'Anuncio ya no disponible', featuredEmpty:'No has destacado ningún Pokémon todavía.', marketAlerts:'Alertas', alertCreate:'Crear alerta', alertName:'Pokémon (opcional)', alertNamePlaceholder:'Ej. Charizard', alertPriceMin:'Precio mín.', alertPriceMax:'Precio máx.', alertActiveRules:'Alertas activas', alertCopyFilters:'Copiar filtros', alertPasteFilters:'Pegar filtros', alertFiltersCopied:'Filtros copiados al portapapeles.', alertFiltersPasted:'Filtros pegados. Ajusta el Pokémon si lo deseas.', alertFiltersInvalid:'No se encontraron filtros de alerta válidos en el portapapeles.', alertExport:'Exportar', alertImport:'Importar', alertExported:'Alertas exportadas y listas para importar.', alertImported:'Alertas importadas: {count}.', alertImportInvalid:'No se encontraron alertas válidas para importar.', alertNoRules:'Crea una alerta para recibir avisos de nuevos Pokémon publicados.', alertNoMatches:'No hay alertas disponibles para comprar.', alertNewListing:'Nuevo Pokémon en alerta', alertRemove:'Eliminar alerta', alertAnyPokemon:'Cualquier Pokémon', alertSaved:'Alerta creada. Solo avisará de anuncios publicados a partir de ahora.', telegram:'Telegram', telegramSettings:'Conexión de Telegram', telegramToken:'Token del bot', telegramChatId:'Chat ID', telegramEnabled:'Enviar alertas a Telegram', telegramSave:'Guardar conexión', telegramTest:'Probar conexión', telegramSaved:'Conexión de Telegram guardada.', telegramTestMessage:'Telegram conectado correctamente.', telegramBuy:'Comprar', telegramBought:'Compra completada desde Telegram.', telegramUnavailable:'Este anuncio ya no está disponible.', marketSaleFinished:'Venta finalizada' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { marketFavorites:'Favoritos', addMarketFavorite:'Adicionar aos favoritos', removeMarketFavorite:'Remover dos favoritos', marketFeatured:'Destaques', addMarketFeatured:'Destacar Pokémon', removeMarketFeatured:'Remover dos destaques', featuredUnavailable:'Anúncio não está mais disponível', featuredEmpty:'Você ainda não destacou nenhum Pokémon.', marketAlerts:'Alertas', alertCreate:'Criar alerta', alertName:'Pokémon (opcional)', alertNamePlaceholder:'Ex. Charizard', alertPriceMin:'Preço mín.', alertPriceMax:'Preço máx.', alertActiveRules:'Alertas ativas', alertNoRules:'Crie um alerta para receber avisos de novos Pokémon anunciados.', alertNoMatches:'Não há alertas disponíveis para comprar.', alertNewListing:'Novo Pokémon no alerta', alertRemove:'Excluir alerta', alertAnyPokemon:'Qualquer Pokémon', alertSaved:'Alerta criada. Ela só avisará sobre anúncios publicados a partir de agora.', telegram:'Telegram', telegramSettings:'Conexão do Telegram', telegramToken:'Token do bot', telegramChatId:'Chat ID', telegramEnabled:'Enviar alertas ao Telegram', telegramSave:'Salvar conexão', telegramTest:'Testar conexão', telegramSaved:'Conexão do Telegram salva.', telegramTestMessage:'Telegram conectado corretamente.', telegramBuy:'Comprar', telegramBought:'Compra concluída pelo Telegram.', telegramUnavailable:'Este anúncio não está mais disponível.', marketSaleFinished:'Venda concluída' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { marketFavorites:'Favorites', addMarketFavorite:'Add to favorites', removeMarketFavorite:'Remove from favorites', marketFeatured:'Featured', addMarketFeatured:'Feature Pokémon', removeMarketFeatured:'Remove from featured', featuredUnavailable:'Listing is no longer available', featuredEmpty:'You have not featured any Pokémon yet.', marketAlerts:'Alerts', alertCreate:'Create alert', alertName:'Pokémon (optional)', alertNamePlaceholder:'E.g. Charizard', alertPriceMin:'Min. price', alertPriceMax:'Max. price', alertActiveRules:'Active alerts', alertNoRules:'Create an alert to receive notices of newly listed Pokémon.', alertNoMatches:'There are no alerts available to buy.', alertNewListing:'New Pokémon alert', alertRemove:'Delete alert', alertAnyPokemon:'Any Pokémon', alertSaved:'Alert created. It will only notify you of listings published from now on.', telegram:'Telegram', telegramSettings:'Telegram connection', telegramToken:'Bot token', telegramChatId:'Chat ID', telegramEnabled:'Send alerts to Telegram', telegramSave:'Save connection', telegramTest:'Test connection', telegramSaved:'Telegram connection saved.', telegramTestMessage:'Telegram connected successfully.', telegramBuy:'Buy', telegramBought:'Purchase completed from Telegram.', telegramUnavailable:'This listing is no longer available.', marketSaleFinished:'Sale completed' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { marketAdvancedFilters:'Filtros avanzados', marketFavoritesPrevious:'Favoritos anteriores', marketFavoritesNext:'Siguientes favoritos' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { marketAdvancedFilters:'Filtros avançados', marketFavoritesPrevious:'Favoritos anteriores', marketFavoritesNext:'Próximos favoritos' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { marketAdvancedFilters:'Advanced filters', marketFavoritesPrevious:'Previous favorites', marketFavoritesNext:'Next favorites' });
@@ -694,6 +844,140 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotMoveVisible:'Transferir visibles', depotMoveAllShort:'Todo', depotMoveVisibleConfirm:'¿Transferir todos los elementos visibles de este lado?', depotVisibleMoved:'Elementos visibles transferidos', depotNothingMovable:'No hay elementos visibles que se puedan transferir', depotFamilyFrozen:'El depósito familiar está congelado', depotMoveLimit:'Se alcanzó el límite diario de movimientos familiares' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotMoveVisible:'Transferir visíveis', depotMoveAllShort:'Tudo', depotMoveVisibleConfirm:'Transferir todos os elementos visíveis deste lado?', depotVisibleMoved:'Elementos visíveis transferidos', depotNothingMovable:'Não há elementos visíveis que possam ser transferidos', depotFamilyFrozen:'O depósito da família está congelado', depotMoveLimit:'O limite diário de movimentos familiares foi atingido' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotMoveVisible:'Move visible', depotMoveAllShort:'All', depotMoveVisibleConfirm:'Move every visible entry from this side?', depotVisibleMoved:'Visible entries moved', depotNothingMovable:'There are no visible entries that can be moved', depotFamilyFrozen:'The family depot is frozen', depotMoveLimit:'The daily family movement limit has been reached' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casino:'Casino', casinoTitle:'Casino · Marlon', casinoRefresh:'Refresh', casinoLoading:'Checking Marlon’s offers…', casinoEmpty:'Marlon has no offers available right now.', casinoLoadError:'Marlon could not be reached.', casinoEvolution:'EVOLUTION', casinoBuy:'Buy', casinoTrade:'Trade', casinoNeedGold:'Not enough gold', casinoNeedEevee:'You need an Eevee', casinoNeedStone:'Required Stone missing', casinoNoRoom:'Team full', casinoUnavailable:'Unavailable', casinoEeveeRequirement:'Eevee available', casinoConfirmBuy:'Confirm purchase', casinoConfirmTrade:'Confirm trade', casinoConfirmBuyText:'Buy {name} for 💲 {gold}?', casinoConfirmTradeText:'Trade your Eevee{stone} and pay 💲 {gold} to receive {name}?', casinoBought:'You bought {name} for 💲 {gold}.', casinoTraded:'Trade completed: you received {name} and paid 💲 {gold}.', casinoActionError:'The operation with Marlon could not be completed.', casinoClose:'Close Casino' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoRefresh:'Atualizar', casinoLoading:'Consultando as ofertas de Marlon…', casinoEmpty:'Marlon não possui ofertas disponíveis neste momento.', casinoLoadError:'Não foi possível consultar Marlon.', casinoEvolution:'EVOLUÇÃO', casinoBuy:'Comprar', casinoTrade:'Trocar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Você precisa de um Eevee', casinoNeedStone:'Falta a Stone necessária', casinoNoRoom:'Equipe cheia', casinoUnavailable:'Indisponível', casinoEeveeRequirement:'Eevee disponível', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar troca', casinoConfirmBuyText:'Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'Trocar seu Eevee{stone} e pagar 💲 {gold} para receber {name}?', casinoBought:'Você comprou {name} por 💲 {gold}.', casinoTraded:'Troca concluída: você recebeu {name} e pagou 💲 {gold}.', casinoActionError:'Não foi possível concluir a operação com Marlon.', casinoClose:'Fechar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casino:'Cassino', casinoTitle:'Cassino · Marlon', casinoRefresh:'Actualizar', casinoLoading:'Consultando las ofertas de Marlon…', casinoEmpty:'Marlon no tiene ofertas disponibles en este momento.', casinoLoadError:'No se pudo consultar a Marlon.', casinoEvolution:'EVOLUCIÓN', casinoBuy:'Comprar', casinoTrade:'Intercambiar', casinoNeedGold:'Saldo insuficiente', casinoNeedEevee:'Necesitas un Eevee', casinoNeedStone:'Falta la Stone requerida', casinoNoRoom:'Equipo lleno', casinoUnavailable:'No disponible', casinoEeveeRequirement:'Eevee disponible', casinoConfirmBuy:'Confirmar compra', casinoConfirmTrade:'Confirmar intercambio', casinoConfirmBuyText:'¿Comprar {name} por 💲 {gold}?', casinoConfirmTradeText:'¿Intercambiar tu Eevee{stone} y pagar 💲 {gold} para recibir {name}?', casinoBought:'Compraste {name} por 💲 {gold}.', casinoTraded:'Intercambio completado: recibiste {name} y pagaste 💲 {gold}.', casinoActionError:'No se pudo completar la operación con Marlon.', casinoClose:'Cerrar Cassino' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Datos de cada Pokémon comprado, capturados antes de ir al depósito.', casinoTeamEmpty:'Aún no has comprado Pokémon.', casinoNewPokemon:'RECIÉN OBTENIDO', casinoStored:'{name} fue guardado en el Box.', casinoStoreError:'No se pudo guardar el Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venta', casinoSellConfirm:'¿Vender {name} por 💲 {gold}? Se moverá automáticamente al Box antes de venderlo.', casinoSold:'Vendiste {name} por 💲 {gold}.', casinoSellError:'No se pudo vender el Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nivel', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Naturaleza', casinoIvGoal:'Meta IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'¡Meta IV cumplida!', casinoIvGoalDetail:'{name} alcanzó {iv}/192 (meta {goal}).', casinoSellAll:'Vender comprados', casinoBulkNone:'No hay Pokémon recién comprados disponibles.', casinoBulkSold:'Se vendieron {count} Pokémon comprados por 💲 {gold}.', marketSellPokemonNotFound:'El Pokémon no apareció en la lista de venta', });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoTeamTitle:'Pokémon comprados', casinoTeamSubtitle:'Dados de cada Pokémon comprado, capturados antes de irem ao depósito.', casinoTeamEmpty:'Você ainda não comprou Pokémon.', casinoNewPokemon:'RECÉM-OBTIDO', casinoStored:'{name} foi guardado no Box.', casinoStoreError:'Não foi possível guardar o Pokémon.', casinoSellPokemon:'Vender', casinoSellValue:'Valor de venda', casinoSellConfirm:'Vender {name} por 💲 {gold}? Ele será movido automaticamente para o Box antes da venda.', casinoSold:'Você vendeu {name} por 💲 {gold}.', casinoSellError:'Não foi possível vender o Pokémon.', casinoProtected:'Pokémon protegido', casinoLevel:'Nível', casinoPower:'Poder', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Natureza', casinoIvGoal:'Meta de IV', casinoIvGoalHint:'0–192', casinoIvGoalReached:'Meta de IV alcançada!', casinoIvGoalDetail:'{name} alcançou {iv}/192 (meta {goal}).', casinoSellAll:'Vender comprados', casinoBulkNone:'Não há Pokémon recém-comprados disponíveis.', casinoBulkSold:'{count} Pokémon comprados foram vendidos por 💲 {gold}.', marketSellPokemonNotFound:'O Pokémon não apareceu na lista de venda', });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoTeamTitle:'Purchased Pokémon', casinoTeamSubtitle:'Data from each purchased Pokémon, captured before it goes to storage.', casinoTeamEmpty:'You have not purchased any Pokémon yet.', casinoNewPokemon:'NEWLY OBTAINED', casinoStored:'{name} was stored in the Box.', casinoStoreError:'The Pokémon could not be stored.', casinoSellPokemon:'Sell', casinoSellValue:'Sell value', casinoSellConfirm:'Sell {name} for 💲 {gold}? It will be moved to the Box automatically before the sale.', casinoSold:'You sold {name} for 💲 {gold}.', casinoSellError:'The Pokémon could not be sold.', casinoProtected:'Protected Pokémon', casinoLevel:'Level', casinoPower:'Power', casinoIv:'IV', casinoQuality:'Quality', casinoNature:'Nature', casinoIvGoal:'IV goal', casinoIvGoalHint:'0–192', casinoIvGoalReached:'IV goal reached!', casinoIvGoalDetail:'{name} reached {iv}/192 (goal {goal}).', casinoSellAll:'Sell purchased', casinoBulkNone:'There are no newly purchased Pokémon available.', casinoBulkSold:'Sold {count} purchased Pokémon for 💲 {gold}.', marketSellPokemonNotFound:'The Pokémon did not appear in the sell list', });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { casinoQuantity:'Cantidad', casinoBuyingProgress:'Procesando {current} de {total}: {name}…', casinoBatchBought:'Compraste {done} de {total} {name}.', casinoBatchTraded:'Completaste {done} de {total} intercambios de {name}.', casinoBatchPartial:'Solo se procesaron {done} de {total} {name}.', });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { casinoQuantity:'Quantidade', casinoBuyingProgress:'Processando {current} de {total}: {name}…', casinoBatchBought:'Você comprou {done} de {total} {name}.', casinoBatchTraded:'Você concluiu {done} de {total} trocas de {name}.', casinoBatchPartial:'Apenas {done} de {total} {name} foram processados.', });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { casinoQuantity:'Quantity', casinoBuyingProgress:'Processing {current} of {total}: {name}…', casinoBatchBought:'Bought {done} of {total} {name}.', casinoBatchTraded:'Completed {done} of {total} {name} trades.', casinoBatchPartial:'Only processed {done} of {total} {name}.', });
+    /* Filtros, auto-venta y alerta por tier del Cassino. */
+    Object.assign(SCRIPT_EXTRA_I18N.es, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'Todos', casinoFilterClear:'Limpiar', casinoFilterShowing:'Mostrando {shown} de {total}',
+        casinoFilterIvHint:'140 o más',
+        casinoFilterNone:'Ningún Pokémon comprado coincide con el filtro.',
+        casinoAutoSell:'Auto-venta', casinoAutoSellOn:'ACTIVA', casinoAutoSellOff:'Inactiva',
+        casinoMarketSell:'Vender en el market', casinoStoringForMarket:'Guardando {name}…',
+        casinoMarketError:'No se pudo preparar para el market',
+        casinoAutoSellEnable:'Activar auto-venta', casinoAutoSellAlertTier:'Alertar por tier',
+        casinoAutoSellMinIv:'Vender con menos IVs', casinoAutoSellMinTier:'Vender por debajo de tier', casinoAutoSellMinTierAny:'cualquier tier',
+        casinoAutoSellRule:'IV menor al corte <b>y</b> tier inferior al corte. Si cumple solo uno, se conserva.',
+        casinoAutoSellScope:'IV menor que {iv} y tier inferior a {tier}.',
+        casinoAutoSellRuleOff:'Con la auto-venta desactivada no se vende nada automáticamente.',
+        casinoAutoSellPreview:'Se venderán {count} de {total} Pokémon comprados en esta sesión.',
+        casinoAutoSellSell:'Guardar configuración', casinoAutoSellCancel:'Cancelar',
+        casinoAutoSellClose:'Cerrar configuración', casinoAutoSellTitle:'Auto-venta del Cassino',
+        casinoAutoSellSold:'Auto-vendido: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} y tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} y Q {quality} cumplen el rango',
+        casinoAutoSellProtected:'{name} está protegido y no se auto-vende.',
+        casinoAutoSellSessionSold:'Auto-venta: {count} Pokémon vendidos por 💲 {gold}.',
+        casinoTierAlert:'¡Tier {tier} comprado!', casinoTierAlertDetail:'{name} es {tier}.',
+        casinoTierAlertAndGoal:'y alcanzó {iv}/192 (meta {goal}).',
+        casinoTierAll:'Todos los tiers',
+        casinoAutoSellLog:'Historial de auto-ventas', casinoAutoSellLogTitle:'Auto-vendidos de la sesión',
+        casinoAutoSellLogHint:'Solo lo vendido automáticamente en esta sesión.',
+        casinoAutoSellLogEmpty:'Nada auto-vendido en esta sesión.',
+        casinoAutoSellLogTotal:'{count} vendidos · recibido 💲 {gold} · gastado 💲 {spent} · saldo 💲 {net}',
+        casinoAutoSellLogClear:'Vaciar historial',
+        casinoAutoSellSessionNet:'{count} vendidos · saldo 💲 {net}',
+        casinoAutoSellSessionFailed:'Fallaron {count} ventas.',
+        casinoAutoSellLogValue:'Catálogo 💲 {value} · diferencia 💲 {diff}',
+        casinoAutoSellLogNet:'Costo 💲 {spent} · devolvió 💲 {gold} · saldo 💲 {net}',
+        /* La tira de resultados va en celdas propias, no en la barra de estado. */
+        casinoResultNet:'Saldo', casinoResultLoss:'Pérdida total', casinoResultSpent:'Gastado', casinoResultEarned:'Recuperado',
+        casinoResultSold:'{count} vendidos',
+        casinoTabBuy:'Comprables', casinoTabEvolve:'Evoluciones',
+        casinoTabBuyEmpty:'No hay Pokémon comprables ahora mismo.',
+        casinoTabEvolveEmpty:'No hay evoluciones de Eevee disponibles.',
+        casinoItemHave:'Tienes', casinoItemBadge:'ITEM'
+    });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'Todos', casinoFilterClear:'Limpar', casinoFilterShowing:'Mostrando {shown} de {total}',
+        casinoFilterIvHint:'140 ou mais',
+        casinoFilterNone:'Nenhum Pokémon comprado corresponde ao filtro.',
+        casinoAutoSell:'Auto-venda', casinoAutoSellOn:'ATIVA', casinoAutoSellOff:'Inativa',
+        casinoMarketSell:'Vender no market', casinoStoringForMarket:'Guardando {name}…',
+        casinoMarketError:'Não foi possível preparar para o market',
+        casinoAutoSellEnable:'Ativar auto-venda', casinoAutoSellAlertTier:'Alertar por tier',
+        casinoAutoSellMinIv:'Vender com menos IVs', casinoAutoSellMinTier:'Vender abaixo do tier', casinoAutoSellMinTierAny:'qualquer tier',
+        casinoAutoSellRule:'IV menor que o corte <b>e</b> tier inferior ao corte. Se cumprir só um, é conservado.',
+        casinoAutoSellScope:'IV menor que {iv} e tier inferior a {tier}.',
+        casinoAutoSellRuleOff:'Com a auto-venda desativada nada é vendido automaticamente.',
+        casinoAutoSellPreview:'Serão vendidos {count} de {total} Pokémon comprados nesta sessão.',
+        casinoAutoSellSell:'Salvar configuração', casinoAutoSellCancel:'Cancelar',
+        casinoAutoSellClose:'Fechar configuração', casinoAutoSellTitle:'Auto-venda do Cassino',
+        casinoAutoSellSold:'Auto-vendido: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} e tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} e Q {quality} atendem ao range',
+        casinoAutoSellProtected:'{name} está protegido e não é vendido automaticamente.',
+        casinoAutoSellSessionSold:'Auto-venda: {count} Pokémon vendidos por 💲 {gold}.',
+        casinoTierAlert:'¡Tier {tier} comprado!', casinoTierAlertDetail:'{name} é {tier}.',
+        casinoTierAlertAndGoal:'e alcançou {iv}/192 (meta {goal}).',
+        casinoTierAll:'Todos os tiers',
+        casinoAutoSellLog:'Histórico de auto-vendas', casinoAutoSellLogTitle:'Auto-vendidos da sessão',
+        casinoAutoSellLogHint:'Só o vendido automaticamente nesta sessão.',
+        casinoAutoSellLogEmpty:'Nada auto-vendido nesta sessão.',
+        casinoAutoSellLogTotal:'{count} vendidos · recebido 💲 {gold} · gasto 💲 {spent} · saldo 💲 {net}',
+        casinoAutoSellLogClear:'Esvaziar histórico',
+        casinoAutoSellSessionNet:'{count} vendidos · saldo 💲 {net}',
+        casinoAutoSellSessionFailed:'Falharam {count} vendas.',
+        casinoAutoSellLogValue:'Catálogo 💲 {value} · diferença 💲 {diff}',
+        casinoAutoSellLogNet:'Custou 💲 {spent} · devolveu 💲 {gold} · saldo 💲 {net}',
+        casinoResultNet:'Saldo', casinoResultLoss:'Perda total', casinoResultSpent:'Gasto', casinoResultEarned:'Recuperado',
+        casinoResultSold:'{count} vendidos',
+        casinoTabBuy:'Compráveis', casinoTabEvolve:'Evoluções',
+        casinoTabBuyEmpty:'Nenhum Pokémon comprável no momento.',
+        casinoTabEvolveEmpty:'Nenhuma evolução de Eevee disponível.',
+        casinoItemHave:'Você tem', casinoItemBadge:'ITEM'
+    });
+    Object.assign(SCRIPT_EXTRA_I18N.en, {
+        casinoFilterTier:'Tier', casinoFilterQuality:'Quality', casinoFilterIv:'IVs',
+        casinoFilterAll:'All', casinoFilterClear:'Clear', casinoFilterShowing:'Showing {shown} of {total}',
+        casinoFilterIvHint:'140 or more',
+        casinoFilterNone:'No purchased Pokémon matches the filter.',
+        casinoAutoSell:'Auto-sell', casinoAutoSellOn:'ON', casinoAutoSellOff:'Off',
+        casinoMarketSell:'Sell on market', casinoStoringForMarket:'Storing {name}…',
+        casinoMarketError:'Could not prepare it for the market',
+        casinoAutoSellEnable:'Enable auto-sell', casinoAutoSellAlertTier:'Alert by tier',
+        casinoAutoSellMinIv:'Sell below IVs', casinoAutoSellMinTier:'Sell below tier', casinoAutoSellMinTierAny:'any tier',
+        casinoAutoSellRule:'IV below the cutoff <b>and</b> tier below the cutoff. Meeting only one keeps it.',
+        casinoAutoSellScope:'IV below {iv} and tier below {tier}.',
+        casinoAutoSellRuleOff:'With auto-sell disabled nothing is sold automatically.',
+        casinoAutoSellPreview:'{count} of {total} Pokémon purchased this session will be sold.',
+        casinoAutoSellSell:'Save configuration', casinoAutoSellCancel:'Cancel',
+        casinoAutoSellClose:'Close configuration', casinoAutoSellTitle:'Casino auto-sell',
+        casinoAutoSellSold:'Auto-sold: {name} · IV {iv} < {minIv} · tier {tier} < {minTier}',
+        casinoAutoSellReasonBad:'IV {iv} < {minIv} and tier {tier} < {minTier}',
+        casinoAutoSellReasonGood:'IV {iv} and Q {quality} meet the range',
+        casinoAutoSellProtected:'{name} is protected and is not auto-sold.',
+        casinoAutoSellSessionSold:'Auto-sell: {count} Pokémon sold for 💲 {gold}.',
+        casinoTierAlert:'Tier {tier} purchased!', casinoTierAlertDetail:'{name} is {tier}.',
+        casinoTierAlertAndGoal:'and reached {iv}/192 (goal {goal}).',
+        casinoTierAll:'All tiers',
+        casinoAutoSellLog:'Auto-sell history', casinoAutoSellLogTitle:'Auto-sold this session',
+        casinoAutoSellLogHint:'Only what was auto-sold in this session.',
+        casinoAutoSellLogEmpty:'Nothing auto-sold this session.',
+        casinoAutoSellLogTotal:'{count} sold · received 💲 {gold} · spent 💲 {spent} · balance 💲 {net}',
+        casinoAutoSellLogClear:'Clear history',
+        casinoAutoSellSessionNet:'{count} sold · balance 💲 {net}',
+        casinoAutoSellSessionFailed:'{count} sales failed.',
+        casinoAutoSellLogValue:'Catalog 💲 {value} · diff 💲 {diff}',
+        casinoAutoSellLogNet:'Cost 💲 {spent} · returned 💲 {gold} · balance 💲 {net}',
+        casinoResultNet:'Balance', casinoResultLoss:'Total loss', casinoResultSpent:'Spent', casinoResultEarned:'Recovered',
+        casinoResultSold:'{count} sold',
+        casinoTabBuy:'Buyable', casinoTabEvolve:'Evolutions',
+        casinoTabBuyEmpty:'No buyable Pokémon right now.',
+        casinoTabEvolveEmpty:'No Eevee evolutions available.',
+        casinoItemHave:'You have', casinoItemBadge:'ITEM'
+    });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { stoneSeller:'VENDER STONE', stoneSellerTitle:'Flint · Venta de Stones', stoneSellerSubtitle:'Vende tus Stones de evolución desde cualquier zona de hunt.', stoneSellerLoading:'Consultando las Stones disponibles…', stoneSellerEmpty:'No tienes Stones disponibles para vender.', stoneSellerLoadError:'No se pudo consultar el inventario de Flint.', stoneSellerSellError:'No se pudo completar la venta.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponibles', stoneSellerUnitPrice:'Precio por unidad', stoneSellerQuantity:'Cantidad a vender', stoneSellerEstimated:'Recibirás', stoneSellerSell:'Vender', stoneSellerSelling:'Vendiendo…', stoneSellerSold:'Vendiste {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Elige una cantidad válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Actualizar', stoneSellerClose:'Cerrar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { stoneSeller:'VENDER STONES', stoneSellerTitle:'Flint · Venda de Stones', stoneSellerSubtitle:'Venda suas Stones de evolução de qualquer área de hunt.', stoneSellerLoading:'Consultando as Stones disponíveis…', stoneSellerEmpty:'Você não possui Stones disponíveis para vender.', stoneSellerLoadError:'Não foi possível consultar o inventário de Flint.', stoneSellerSellError:'Não foi possível concluir a venda.', stoneSellerBalance:'Saldo', stoneSellerAvailable:'Disponíveis', stoneSellerUnitPrice:'Preço por unidade', stoneSellerQuantity:'Quantidade para vender', stoneSellerEstimated:'Você receberá', stoneSellerSell:'Vender', stoneSellerSelling:'Vendendo…', stoneSellerSold:'Você vendeu {count}× {item} por 💲 {gold}.', stoneSellerInvalidQty:'Escolha uma quantidade válida.', stoneSellerAll:'Máx.', stoneSellerHalf:'50%', stoneSellerRefresh:'Atualizar', stoneSellerClose:'Fechar vendedor de Stones' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { stoneSeller:'SELL STONES', stoneSellerTitle:'Flint · Stone Sales', stoneSellerSubtitle:'Sell your Evolution Stones from any hunt area.', stoneSellerLoading:'Checking your available Stones…', stoneSellerEmpty:'You have no Stones available to sell.', stoneSellerLoadError:'Flint’s inventory could not be loaded.', stoneSellerSellError:'The sale could not be completed.', stoneSellerBalance:'Balance', stoneSellerAvailable:'Available', stoneSellerUnitPrice:'Unit price', stoneSellerQuantity:'Quantity to sell', stoneSellerEstimated:'You will receive', stoneSellerSell:'Sell', stoneSellerSelling:'Selling…', stoneSellerSold:'Sold {count}× {item} for 💲 {gold}.', stoneSellerInvalidQty:'Choose a valid quantity.', stoneSellerAll:'Max', stoneSellerHalf:'50%', stoneSellerRefresh:'Refresh', stoneSellerClose:'Close Stone seller' });
     function tr(key) {
         const language = getGameLanguage();
         return SCRIPT_I18N[language]?.[key] || SCRIPT_SETTINGS_I18N[language]?.[key]
@@ -718,12 +1002,12 @@
     const STORAGE_MARKET_ALERTS = 'script_market_alerts_v1';
     const STORAGE_MARKET_ALERTS_SEEN = 'script_market_alerts_seen_v1';
     const STORAGE_MARKET_ALERT_INBOX = 'script_market_alert_inbox_v1';
-    const STORAGE_MARKET_ALERT_AUTO_BUY = 'script_market_alert_auto_buy_v1';
+
     const STORAGE_MARKET_ITEM_ALERTS = 'script_market_item_alerts_v1';
     const STORAGE_MARKET_ITEM_ALERTS_SEEN = 'script_market_item_alerts_seen_v1';
     const STORAGE_MARKET_ITEM_ALERT_INBOX = 'script_market_item_alert_inbox_v1';
-    const STORAGE_MARKET_ITEM_ALERT_AUTO_BUY = 'script_market_item_alert_auto_buy_v1';
-    const STORAGE_MARKET_ITEM_ALERT_AUTO_STATUS = 'script_market_item_alert_auto_status_v1';
+
+
     const STORAGE_MARKET_ALERT_CLIPBOARD = 'script_market_alert_clipboard_v1';
     const STORAGE_MARKET_ALERT_EXPORT = 'script_market_alert_export_v1';
     const STORAGE_MARKET_TELEGRAM = 'script_market_telegram_v1';
@@ -731,6 +1015,7 @@
     const STORAGE_MARKET_TELEGRAM_DELIVERED = 'script_market_telegram_delivered_v1';
     const STORAGE_MARKET_SALES_SEEN = 'script_market_sales_seen_v1';
     const STORAGE_MARKET_SALES_UNREAD = 'script_market_sales_unread_v1';
+    const marketAlertPurchaseCooldown = new Map();
     // Alertas fue retirada en 10.1.0. Esta bandera mantiene inerte el código de
     // compatibilidad que aún comparte utilidades con el resto del mercado.
     const MARKET_ALERTS_REMOVED = true;
@@ -969,10 +1254,6 @@
         return available;
     }
 
-    function isMarketAlertAutoBuyEnabled() {
-        return localStorage.getItem(STORAGE_MARKET_ALERT_AUTO_BUY) === 'true';
-    }
-
     function getMarketItemAlerts() {
         if (MARKET_ALERTS_REMOVED) return [];
         return readStoredJSON(STORAGE_MARKET_ITEM_ALERTS, []).filter(alert => alert?.id);
@@ -1049,25 +1330,6 @@
         if (available.length !== inbox.length) saveMarketItemAlertInbox(available);
         else updateMarketAlertBadges();
         return available;
-    }
-
-    function isMarketItemAlertAutoBuyEnabled() {
-        return localStorage.getItem(STORAGE_MARKET_ITEM_ALERT_AUTO_BUY) === 'true';
-    }
-
-    function getMarketItemAlertAutoBuyStatus() {
-        return readStoredJSON(STORAGE_MARKET_ITEM_ALERT_AUTO_STATUS, null);
-    }
-
-    function setMarketItemAlertAutoBuyStatus(state, message = '') {
-        const status = { state, message:String(message || ''), at:Date.now() };
-        localStorage.setItem(STORAGE_MARKET_ITEM_ALERT_AUTO_STATUS, JSON.stringify(status));
-        document.querySelectorAll('.market-item-auto-status').forEach(element => {
-            const time = new Date(status.at).toLocaleTimeString(getGameLanguage() === 'es' ? 'es-VE' : 'en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-            element.textContent = `Auto objetos: ${state}${status.message ? ` · ${status.message}` : ''} · ${time}`;
-            element.dataset.state = state;
-        });
-        return status;
     }
 
     function getMarketTelegramSettings() {
@@ -1254,7 +1516,7 @@
                         ? getMarketItemAlertInbox().find(record => record.key === `item:${listingId}`)
                         : getMarketAlertInbox().find(record => record.key === `pokemon:${listingId}`);
                     if (!listing || !inboxRecord) throw new Error(tr('telegramUnavailable'));
-                    if (kind === 'item') await buyMarketItemAlert(listing); else await buyMarketAlertPokemon(listing);
+
                     await telegramApiRequest('answerCallbackQuery', { callback_query_id:query.id, text:tr('telegramBought') });
                     await sendMarketAlertToTelegramOnce(listing, `${kind}-telegram-bought`, { automatic:true, title:kind === 'item' ? 'Objeto comprado' : tr('telegramBought'), kind, account:inboxRecord.account });
                     await telegramApiRequest('editMessageReplyMarkup', { chat_id:settings.chatId, message_id:query.message?.message_id, reply_markup:{ inline_keyboard:[] } }).catch(() => null);
@@ -1274,7 +1536,7 @@
             return;
         }
         const count = getMarketAlertInbox().length + getMarketItemAlertInbox().length;
-        const dockButton = document.getElementById('dock-btn-shops');
+        const dockButton = document.getElementById('script-shop-bar-market');
         if (dockButton) {
             let badge = dockButton.querySelector('.market-alert-dock-badge');
             if (!count) badge?.remove();
@@ -1327,6 +1589,405 @@
         if (allowedTierIds.length && (!qualityTier || !allowedTierIds.includes(qualityTier.id))) return false;
         if (alert.type && entry?.type1 !== alert.type && entry?.type2 !== alert.type && ref.type1 !== alert.type && ref.type2 !== alert.type) return false;
         return true;
+    }
+
+    let marketPendingListingFilter = null;
+    function showHeldMachineWindow() {
+        const existing = document.querySelector('.script-held-machine-backdrop');
+        if (existing) {
+            existing.hidden = false;
+            return;
+        }
+        if (!document.getElementById('script-held-machine-style')) {
+            const heldMachineStyle = document.createElement('style');
+            heldMachineStyle.id = 'script-held-machine-style';
+            heldMachineStyle.textContent = `
+                .script-held-machine-backdrop {
+                    position:fixed;inset:0;z-index:10080;display:grid;place-items:center;padding:16px;
+                    background:rgba(2,8,16,.82);backdrop-filter:blur(5px);
+                    font-family:var(--piw-game-font,Inter,"Segoe UI",Arial,sans-serif);
+                }
+                .script-held-machine-panel {
+                    --hm-navy-950:#050c16;--hm-navy-900:#081321;--hm-navy-850:#0b1828;--hm-navy-800:#0f1d2e;--hm-line:#263b54;--hm-line-strong:#334c68;--hm-copy:#f2f6fb;--hm-muted:#90a3b9;--hm-blue:#55bfff;--hm-yellow:#f7c858;--hm-green:#66ee91;--hm-danger:#f08089;
+                    box-sizing:border-box;width:min(1024px,100%);max-height:min(760px,calc(100dvh - 32px));display:flex;flex-direction:column;overflow:hidden;
+                    color:var(--hm-copy);background:radial-gradient(circle at 18% 0,rgba(49,82,119,.16),transparent 36%),linear-gradient(145deg,#0c1828,#08131f 70%);
+                    border:1px solid var(--hm-line-strong);border-radius:20px;box-shadow:0 26px 80px rgba(0,0,0,.62),inset 0 1px rgba(255,255,255,.035);
+                }
+                .script-held-machine-head { display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:68px;padding:14px 18px;border-bottom:1px solid var(--hm-line);background:linear-gradient(100deg,rgba(24,42,65,.94),rgba(14,27,44,.9)); }
+                .script-held-machine-heading { display:flex;align-items:center;gap:11px;min-width:0; }
+                .script-held-machine-heading-icon { display:grid;place-items:center;width:38px;height:38px;flex:0 0 38px;border:1px solid #3c5874;border-radius:10px;background:#0a1726;font-size:20px; }
+                .script-held-machine-heading h2 { margin:0;color:var(--hm-copy);font:780 17px/1.15 Inter,"Segoe UI",sans-serif;letter-spacing:-.02em; }
+                .script-held-machine-heading small { display:block;margin-top:3px;color:var(--hm-muted);font-size:9px;letter-spacing:.08em;text-transform:uppercase; }
+                .script-held-machine-close { width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:#91a9b7;font-size:25px;cursor:pointer; }
+                .script-held-machine-close:hover { color:#fff;background:#24364c; }
+                .script-held-machine-body { min-height:0;overflow:auto;padding:18px;scrollbar-width:thin;scrollbar-color:#3c5874 #091421; }
+                .script-held-machine-body::-webkit-scrollbar { width:8px;height:8px; }
+                .script-held-machine-body::-webkit-scrollbar-track { background:#091421;border-radius:8px; }
+                .script-held-machine-body::-webkit-scrollbar-thumb { background:#3c5874;border:2px solid #091421;border-radius:8px; }
+                .script-held-machine-balance { display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 13px;border:1px solid var(--hm-line);border-radius:12px;background:rgba(9,22,37,.76); }
+                .script-held-machine-balance img { width:28px;height:28px;object-fit:contain;image-rendering:pixelated; }
+                .script-held-machine-balance span { color:var(--hm-muted);font-size:11px; }
+                .script-held-machine-balance b { margin-left:auto;color:var(--hm-green);font:800 18px/1 Inter,"Segoe UI",sans-serif; }
+                .script-held-machine-hint { margin:12px 0;color:var(--hm-muted);font-size:11px;line-height:1.5; }
+                .script-held-machine-error { margin:0 0 12px;padding:10px 12px;border:1px solid #734051;border-left:3px solid var(--hm-danger);border-radius:9px;background:#21141d;color:#f7a7b2;font-size:11px; }
+                .script-held-machine-offers { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
+                .script-held-machine-offer { min-width:0;padding:14px;border:1px solid var(--hm-line);border-radius:13px;background:linear-gradient(145deg,#17283d,#122238);box-shadow:0 4px 12px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035); }
+                .script-held-machine-offer.is-ready { border-color:#42617f; }
+                .script-held-machine-offer.is-locked { opacity:.82; }
+                .script-held-machine-offer-head { display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--hm-line); }
+                .script-held-machine-tier { padding:4px 8px;border:1px solid #4b6785;border-radius:6px;background:#14243a;color:#dbeafe;font-size:10px;font-weight:800; }
+                .script-held-machine-cost { display:flex;align-items:center;gap:5px;color:var(--hm-yellow);font-size:13px;font-weight:800; }
+                .script-held-machine-cost img { width:20px;height:20px;object-fit:contain;image-rendering:pixelated; }
+                .script-held-machine-offer-copy { margin:11px 0;color:var(--hm-muted);font-size:10px;line-height:1.4; }
+                .script-held-machine-pool-label { display:block;margin-bottom:7px;color:#8ca0b7;font-size:8px;font-weight:800;letter-spacing:.12em;text-transform:uppercase; }
+                .script-held-machine-pool { display:flex;flex-wrap:wrap;gap:6px;min-height:42px; }
+                .script-held-machine-pool-item { display:flex;align-items:center;gap:5px;max-width:145px;padding:4px 6px;border:1px solid #29415a;border-radius:7px;background:#0a1727;color:#d9e7f1;font-size:9px; }
+                .script-held-machine-pool-item img { width:20px;height:20px;object-fit:contain;image-rendering:pixelated; }
+                .script-held-machine-pool-item span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+                .script-held-machine-action { width:100%;min-height:40px;margin-top:12px;padding:0 14px;border:1px solid #ffe39a;border-radius:8px;background:linear-gradient(180deg,#ffd778,#efba4c);color:#17130a;box-shadow:0 4px 10px rgba(247,200,88,.2);font-size:11px;font-weight:850;cursor:pointer; }
+                .script-held-machine-action:hover:not(:disabled) { filter:brightness(1.06); }
+                .script-held-machine-action:disabled { cursor:not-allowed;opacity:.45;box-shadow:none; }
+                .script-held-machine-action.secondary { border-color:#3d5875;background:#14243a;color:var(--hm-copy);box-shadow:none; }
+                .script-held-machine-action.secondary:hover { background:#1c3049; }
+                .script-held-machine-confirm,.script-held-machine-result { display:grid;gap:12px;max-width:680px;margin:0 auto;padding:20px;border:1px solid var(--hm-line-strong);border-radius:16px;background:linear-gradient(145deg,#17283d,#122238);box-shadow:0 8px 22px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035); }
+                .script-held-machine-confirm h3,.script-held-machine-result h3 { margin:0;color:var(--hm-copy);font:800 18px/1.2 Inter,"Segoe UI",sans-serif; }
+                .script-held-machine-confirm p,.script-held-machine-result p { margin:0;color:var(--hm-muted);font-size:11px;line-height:1.5; }
+                .script-held-machine-confirm-pool { padding:10px;border:1px solid #29415a;border-radius:9px;background:#0a1727;color:#cbd8e2;font-size:10px;line-height:1.5; }
+                .script-held-machine-confirm-pool b { color:#fff0a6; }
+                .script-held-machine-actions { display:flex;justify-content:flex-end;gap:8px; }
+                .script-held-machine-actions .script-held-machine-action { width:auto;min-width:140px;margin-top:0; }
+                .script-held-machine-result { justify-items:center;text-align:center; }
+                .script-held-machine-result-icon { width:76px;height:76px;object-fit:contain;image-rendering:pixelated; }
+                .script-held-machine-result-tier { padding:4px 9px;border:1px solid #4b6785;border-radius:6px;background:#14243a;color:#dbeafe;font-size:10px;font-weight:800; }
+                .script-held-machine-result .script-held-machine-actions { width:100%;justify-content:center; }
+                .script-held-machine-empty { padding:28px 14px;text-align:center;color:var(--hm-muted);font-size:11px; }
+                @media(max-width:700px) { .script-held-machine-backdrop { padding:8px; } .script-held-machine-panel { max-height:calc(100dvh - 16px);border-radius:16px; } .script-held-machine-head { min-height:60px;padding:11px 12px; } .script-held-machine-body { padding:12px; } .script-held-machine-offers { grid-template-columns:minmax(0,1fr); } }
+                @media(prefers-reduced-motion:reduce) { .script-held-machine-backdrop,.script-held-machine-panel * { animation:none!important;transition:none!important;scroll-behavior:auto!important; } }
+            `;
+            document.head.appendChild(heldMachineStyle);
+        }
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-held-machine-backdrop';
+        backdrop.innerHTML = `
+            <section class="script-held-machine-panel" role="dialog" aria-modal="true" aria-labelledby="script-held-machine-title">
+                <header class="script-held-machine-head">
+                    <div class="script-held-machine-heading"><span class="script-held-machine-heading-icon" aria-hidden="true">🎰</span><div><h2 id="script-held-machine-title">Held Machine — Trade tokens</h2><small>Intercambio de tokens por held items</small></div></div>
+                    <button class="script-held-machine-close" type="button" aria-label="Cerrar">×</button>
+                </header>
+                <div class="script-held-machine-body">
+                    <div class="script-held-machine-balance"><img data-held-machine-token-icon alt="" src="/assets/items/devoted_token.png"><span>Devoted Tokens</span><b data-held-machine-balance>—</b></div>
+                    <p class="script-held-machine-hint">Cada intercambio entrega 1 held aleatorio de las familias disponibles. Los repeats son posibles y cada Pokémon tiene sus propios held items.</p>
+                    <div class="script-held-machine-error" data-held-machine-error hidden></div>
+                    <div data-held-machine-content></div>
+                </div>
+            </section>`;
+        document.body.appendChild(backdrop);
+        const panel = backdrop.querySelector('.script-held-machine-panel');
+        const content = backdrop.querySelector('[data-held-machine-content]');
+        const balance = backdrop.querySelector('[data-held-machine-balance]');
+        const errorBox = backdrop.querySelector('[data-held-machine-error]');
+        let machine = null;
+        let selectedOffer = null;
+        let resultPrize = null;
+        let busy = false;
+        const locale = () => getGameLanguage() === 'pt' ? 'pt-BR' : getGameLanguage() === 'en' ? 'en-US' : 'es-VE';
+        const formatNumber = value => Number(value || 0).toLocaleString(locale());
+        const tiersLabel = offer => {
+            const tiers = Array.isArray(offer?.tiers) ? offer.tiers : [];
+            return tiers.length ? `Tier ${tiers[0]}–${tiers[tiers.length - 1]}` : 'Held items';
+        };
+        const poolPreview = offer => {
+            const seen = new Set();
+            return (Array.isArray(offer?.pool) ? offer.pool : []).filter(item => {
+                const key = `${item?.name || ''}|${item?.tierLabel || ''}`;
+                if (!item?.name || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            }).slice(0, 8);
+        };
+        const showError = message => {
+            errorBox.hidden = !message;
+            errorBox.textContent = message || '';
+        };
+        const updateBalance = () => {
+            balance.textContent = machine ? formatNumber(machine.tokenQty) : '—';
+            const tokenIcon = machine?.tokenIcon || '/assets/items/devoted_token.png';
+            backdrop.querySelector('[data-held-machine-token-icon]').src = tokenIcon;
+        };
+        const renderOffers = () => {
+            showError('');
+            updateBalance();
+            if (!machine) {
+                content.innerHTML = '<div class="script-held-machine-empty">Cargando ofertas de Held Machine…</div>';
+                return;
+            }
+            const offers = Array.isArray(machine.offers) ? machine.offers : [];
+            if (!offers.length) {
+                content.innerHTML = '<div class="script-held-machine-empty">No hay ofertas disponibles en este momento.</div>';
+                return;
+            }
+            content.innerHTML = `<div class="script-held-machine-offers">${offers.map(offer => {
+                const canTrade = !busy && Number(machine.tokenQty || 0) >= Number(offer.cost || 0);
+                const preview = poolPreview(offer);
+                return `<article class="script-held-machine-offer ${canTrade ? 'is-ready' : 'is-locked'}"><div class="script-held-machine-offer-head"><span class="script-held-machine-tier">${escapeHTML(tiersLabel(offer))}</span><span class="script-held-machine-cost"><img src="${escapeHTML(machine.tokenIcon || '/assets/items/devoted_token.png')}" alt=""><b>${escapeHTML(formatNumber(offer.cost))}</b></span></div><p class="script-held-machine-offer-copy">${canTrade ? 'Intercambio disponible con tu balance actual.' : `Te faltan ${escapeHTML(formatNumber(Number(offer.cost || 0) - Number(machine.tokenQty || 0)))} tokens.`}</p><span class="script-held-machine-pool-label">Held items posibles</span><div class="script-held-machine-pool">${preview.map(item => `<span class="script-held-machine-pool-item" title="${escapeHTML(`${item.name} ${item.tierLabel || ''}`)}"><img src="${escapeHTML(item.icon || machine.tokenIcon || '/assets/items/devoted_token.png')}" alt=""><span>${escapeHTML(item.name)} ${escapeHTML(item.tierLabel || '')}</span></span>`).join('')}</div><button class="script-held-machine-action" type="button" data-held-machine-trade="${escapeHTML(offer.key)}" ${canTrade ? '' : 'disabled'}>${canTrade ? 'Intercambiar' : 'Tokens insuficientes'}</button></article>`;
+            }).join('')}</div>`;
+        };
+        const renderConfirmation = () => {
+            if (!selectedOffer) return renderOffers();
+            showError('');
+            updateBalance();
+            const offer = selectedOffer;
+            content.innerHTML = `<div class="script-held-machine-confirm"><span class="script-held-machine-tier">${escapeHTML(tiersLabel(offer))}</span><h3>¿Confirmar intercambio?</h3><p>Se consumirán <b>${escapeHTML(formatNumber(offer.cost))} ${escapeHTML(machine?.tokenName || 'Devoted Tokens')}</b> y recibirás 1 held aleatorio.</p><div class="script-held-machine-confirm-pool"><b>Posibles resultados:</b> ${escapeHTML((Array.isArray(offer.pool) ? offer.pool : []).map(item => item.name).filter(Boolean).join(' · '))}</div><div class="script-held-machine-actions"><button class="script-held-machine-action secondary" type="button" data-held-machine-cancel ${busy ? 'disabled' : ''}>Cancelar</button><button class="script-held-machine-action" type="button" data-held-machine-confirm ${busy ? 'disabled' : ''}>${busy ? 'Intercambiando…' : 'Confirmar intercambio'}</button></div></div>`;
+        };
+        const renderResult = () => {
+            if (!resultPrize) return renderOffers();
+            showError('');
+            updateBalance();
+            content.innerHTML = `<div class="script-held-machine-result"><h3>Recibiste 1× ${escapeHTML(resultPrize.name || 'Held item')}</h3><img class="script-held-machine-result-icon" src="${escapeHTML(resultPrize.icon || machine?.tokenIcon || '/assets/items/devoted_token.png')}" alt=""><span class="script-held-machine-result-tier">Tier ${escapeHTML(resultPrize.tierLabel || resultPrize.tier || '—')}</span><p>El held item ya fue añadido a tu inventario.</p><div class="script-held-machine-actions"><button class="script-held-machine-action secondary" type="button" data-held-machine-close-result>Cerrar</button><button class="script-held-machine-action" type="button" data-held-machine-again>Intercambiar otra vez</button></div></div>`;
+        };
+        const render = () => {
+            if (resultPrize) return renderResult();
+            if (selectedOffer) return renderConfirmation();
+            renderOffers();
+        };
+        const close = () => {
+            document.removeEventListener('keydown', onKeyDown);
+            backdrop.remove();
+        };
+        const onKeyDown = event => {
+            if (event.key === 'Escape' && !busy) close();
+        };
+        const load = async () => {
+            busy = true;
+            renderOffers();
+            try {
+                machine = await gameApiRequest('/api/game/held-machine');
+                busy = false;
+                selectedOffer = null;
+                resultPrize = null;
+                render();
+            } catch (error) {
+                busy = false;
+                renderOffers();
+                showError(`No se pudo cargar Held Machine: ${error.message || error}`);
+            }
+        };
+        const exchange = async () => {
+            if (!selectedOffer || busy) return;
+            const offerKey = selectedOffer.key;
+            busy = true;
+            renderConfirmation();
+            try {
+                const response = await gameApiRequest('/api/game/held-machine/exchange', { method:'POST', body:JSON.stringify({ offer:offerKey }) });
+                sendGameMessage({ type:'inv-get' });
+                try { machine = await gameApiRequest('/api/game/held-machine'); } catch (_) {}
+                resultPrize = response?.prize || response?.item || response;
+                selectedOffer = null;
+                busy = false;
+                render();
+            } catch (error) {
+                busy = false;
+                renderConfirmation();
+                showError(`No se pudo completar el intercambio: ${error.message || error}`);
+            }
+        };
+        backdrop.addEventListener('click', event => {
+            if (event.target === backdrop && !busy) close();
+            const trade = event.target.closest('[data-held-machine-trade]');
+            if (trade && !trade.disabled) {
+                selectedOffer = machine?.offers?.find(offer => String(offer?.key) === trade.dataset.heldMachineTrade) || null;
+                resultPrize = null;
+                render();
+                return;
+            }
+            if (event.target.closest('[data-held-machine-cancel]')) {
+                selectedOffer = null;
+                render();
+                return;
+            }
+            if (event.target.closest('[data-held-machine-confirm]')) {
+                void exchange();
+                return;
+            }
+            if (event.target.closest('[data-held-machine-again]')) {
+                resultPrize = null;
+                selectedOffer = null;
+                render();
+                return;
+            }
+            if (event.target.closest('[data-held-machine-close-result]')) close();
+        });
+        backdrop.querySelector('.script-held-machine-close').addEventListener('click', () => { if (!busy) close(); });
+        document.addEventListener('keydown', onKeyDown);
+        void load();
+    }
+
+    function showDailyKillPanel() {
+        const existing = document.querySelector('.script-daily-kill-backdrop');
+        if (existing) {
+            existing.hidden = false;
+            return;
+        }
+        if (!document.getElementById('script-daily-kill-style')) {
+            const dailyKillStyle = document.createElement('style');
+            dailyKillStyle.id = 'script-daily-kill-style';
+            dailyKillStyle.textContent = `
+                .script-daily-kill-backdrop{position:fixed;inset:0;z-index:10080;display:grid;place-items:center;padding:16px;background:rgba(2,8,16,.82);backdrop-filter:blur(5px);font-family:var(--piw-game-font,Inter,"Segoe UI",Arial,sans-serif)}
+                .script-daily-kill-panel{--dk-navy-950:#050c16;--dk-navy-900:#081321;--dk-navy-850:#0b1828;--dk-navy-800:#0f1d2e;--dk-line:#263b54;--dk-line-strong:#334c68;--dk-copy:#f2f6fb;--dk-muted:#90a3b9;--dk-blue:#55bfff;--dk-gold:#f7c858;--dk-green:#66ee91;--dk-red:#f08089;box-sizing:border-box;width:min(1040px,100%);max-height:min(780px,calc(100dvh - 32px));display:flex;flex-direction:column;overflow:hidden;color:var(--dk-copy);background:radial-gradient(circle at 18% 0,rgba(49,82,119,.16),transparent 36%),linear-gradient(145deg,#0c1828,#08131f 70%);border:1px solid var(--dk-line-strong);border-radius:20px;box-shadow:0 26px 80px rgba(0,0,0,.62),inset 0 1px rgba(255,255,255,.035)}
+                .script-daily-kill-head{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:68px;padding:14px 18px;border-bottom:1px solid var(--dk-line);background:linear-gradient(100deg,rgba(24,42,65,.94),rgba(14,27,44,.9))}
+                .script-daily-kill-heading{display:flex;align-items:center;gap:11px}.script-daily-kill-heading-icon{display:grid;place-items:center;width:38px;height:38px;border:1px solid #3c5874;border-radius:10px;background:#0a1726;font-size:20px}.script-daily-kill-heading h2{margin:0;font:780 17px/1.15 Inter,"Segoe UI",sans-serif;letter-spacing:-.02em}.script-daily-kill-heading small{display:block;margin-top:3px;color:var(--dk-muted);font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+                .script-daily-kill-close{width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:#91a9b7;font-size:25px;cursor:pointer}.script-daily-kill-close:hover{color:#fff;background:#24364c}
+                .script-daily-kill-body{min-height:0;overflow:auto;padding:18px;scrollbar-width:thin;scrollbar-color:#3c5874 #091421}.script-daily-kill-body::-webkit-scrollbar{width:8px;height:8px}.script-daily-kill-body::-webkit-scrollbar-track{background:#091421;border-radius:8px}.script-daily-kill-body::-webkit-scrollbar-thumb{background:#3c5874;border:2px solid #091421;border-radius:8px}
+                .script-daily-kill-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}.script-daily-kill-stat{min-width:0;padding:10px 12px;border:1px solid var(--dk-line);border-radius:10px;background:rgba(9,22,37,.76)}.script-daily-kill-stat b{display:block;color:var(--dk-copy);font:800 15px/1 Inter,"Segoe UI",sans-serif}.script-daily-kill-stat small{display:block;margin-top:5px;color:var(--dk-muted);font-size:8px;letter-spacing:.08em;text-transform:uppercase}.script-daily-kill-stat.green b{color:var(--dk-green)}.script-daily-kill-stat.gold b{color:var(--dk-gold)}
+                .script-daily-kill-reward{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding:10px 12px;border:1px solid var(--dk-line);border-radius:10px;background:linear-gradient(145deg,#17283d,#122238)}.script-daily-kill-reward-label{color:var(--dk-muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.script-daily-kill-reward-item{display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid #29415a;border-radius:7px;background:#0a1727;color:#d9e7f1;font-size:10px}.script-daily-kill-reward-item img{width:20px;height:20px;object-fit:contain;image-rendering:pixelated}.script-daily-kill-reward-item b{color:var(--dk-gold)}
+                .script-daily-kill-error{margin:0 0 12px;padding:10px 12px;border:1px solid #734051;border-left:3px solid var(--dk-red);border-radius:9px;background:#21141d;color:#f7a7b2;font-size:11px}.script-daily-kill-error[data-kind="success"]{border-color:#3d684e;border-left-color:var(--dk-green);background:#0d2a1d;color:#a7f3c0}
+                .script-daily-kill-hint{margin:0 0 12px;color:var(--dk-muted);font-size:11px;line-height:1.5}.script-daily-kill-missions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.script-daily-kill-card{min-width:0;padding:13px;border:1px solid var(--dk-line);border-radius:13px;background:linear-gradient(145deg,#17283d,#122238);box-shadow:0 4px 12px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035)}.script-daily-kill-card.is-selected{border-color:var(--dk-gold);box-shadow:0 0 0 1px #f7c85844,0 4px 12px #0003}.script-daily-kill-card.is-claimable{border-color:var(--dk-green);box-shadow:0 0 0 2px #66ee9144,0 4px 12px #0003}.script-daily-kill-card.is-locked{opacity:.6}
+                .script-daily-kill-card-head{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:9px}.script-daily-kill-card-number{color:var(--dk-muted);font-size:9px}.script-daily-kill-card-type{padding:3px 6px;border:1px solid #4b6785;border-radius:5px;background:#14243a;color:#dbeafe;font-size:8px;font-weight:800;text-transform:uppercase}.script-daily-kill-card-main{display:flex;align-items:center;gap:9px;margin-bottom:9px}.script-daily-kill-card-sprite{display:grid;place-items:center;width:58px;height:58px;flex:0 0 58px;border:1px solid #29425d;border-radius:10px;background:#0a1727}.script-daily-kill-card-sprite{position:relative;overflow:hidden}.script-daily-kill-card-sprite img{width:50px;height:50px;object-fit:contain;image-rendering:pixelated}.script-daily-kill-native-sprite{position:absolute;left:50%;top:50%;pointer-events:none}.script-daily-kill-card-name{color:var(--dk-copy);font:800 14px/1.1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-xp{margin-top:5px;color:var(--dk-gold);font-size:10px}.script-daily-kill-card-goal{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 0;border-top:1px solid var(--dk-line);border-bottom:1px solid var(--dk-line);color:var(--dk-muted);font-size:10px}.script-daily-kill-card-goal b{color:var(--dk-copy);font:800 15px/1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-bar{height:5px;margin:9px 0;border-radius:5px;background:#0a1727;overflow:hidden}.script-daily-kill-card-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--dk-blue),var(--dk-green))}.script-daily-kill-card-actions{display:flex;gap:7px;margin-top:10px}.script-daily-kill-action{width:100%;min-height:38px;padding:0 10px;border:1px solid #ffe39a;border-radius:8px;background:linear-gradient(180deg,#ffd778,#efba4c);color:#17130a;font-size:10px;font-weight:850;cursor:pointer}.script-daily-kill-action:hover:not(:disabled){filter:brightness(1.06)}.script-daily-kill-action:disabled{cursor:not-allowed;opacity:.45}.script-daily-kill-action.secondary{border-color:#3d5875;background:#14243a;color:var(--dk-copy)}.script-daily-kill-action.green{border-color:#8de5ac;background:linear-gradient(180deg,#8de5ac,#4dbb77);color:#0b2115}.script-daily-kill-card-note{margin-top:9px;color:var(--dk-muted);font-size:9px;text-align:center}.script-daily-kill-locked{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}.script-daily-kill-empty{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}
+                @media(max-width:760px){.script-daily-kill-backdrop{padding:8px}.script-daily-kill-panel{max-height:calc(100dvh - 16px);border-radius:16px}.script-daily-kill-head{min-height:60px;padding:11px 12px}.script-daily-kill-body{padding:12px}.script-daily-kill-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.script-daily-kill-missions{grid-template-columns:minmax(0,1fr)}.script-daily-kill-card-actions{flex-direction:column}}
+                @media(prefers-reduced-motion:reduce){.script-daily-kill-backdrop,.script-daily-kill-panel *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+            `;
+            document.head.appendChild(dailyKillStyle);
+        }
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-daily-kill-backdrop';
+        backdrop.innerHTML = `
+            <section class="script-daily-kill-panel" role="dialog" aria-modal="true" aria-labelledby="script-daily-kill-title">
+                <header class="script-daily-kill-head"><div class="script-daily-kill-heading"><span class="script-daily-kill-heading-icon" aria-hidden="true">⚔️</span><div><h2 id="script-daily-kill-title">⚔️ Daily Kill</h2><small>Misiones diarias de abates</small></div></div><button class="script-daily-kill-close" type="button" aria-label="Cerrar">×</button></header>
+                <div class="script-daily-kill-body"><div class="script-daily-kill-summary" data-daily-kill-summary></div><div class="script-daily-kill-reward" data-daily-kill-reward></div><div class="script-daily-kill-error" data-daily-kill-error hidden></div><div data-daily-kill-missions></div></div>
+            </section>`;
+        document.body.appendChild(backdrop);
+        const content = backdrop.querySelector('[data-daily-kill-missions]');
+        const summary = backdrop.querySelector('[data-daily-kill-summary]');
+        const reward = backdrop.querySelector('[data-daily-kill-reward]');
+        const errorBox = backdrop.querySelector('[data-daily-kill-error]');
+        let state = latestDailyKillState;
+        let busy = false;
+        let clockTimer = null;
+        const locale = () => getGameLanguage() === 'pt' ? 'pt-BR' : getGameLanguage() === 'en' ? 'en-US' : 'es-VE';
+        const number = value => Number(value || 0).toLocaleString(locale());
+        const selectedMission = () => state?.pickedIdx >= 0 ? state.options?.[state.pickedIdx] || null : null;
+        const duration = milliseconds => { const total = Math.max(0, Number(milliseconds || 0)); const hours = Math.floor(total / 3600000); const minutes = Math.floor(total % 3600000 / 60000); const seconds = Math.floor(total % 60000 / 1000); return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`; };
+        const showMessage = (message, kind = 'error') => { errorBox.hidden = !message; errorBox.dataset.kind = kind; errorBox.textContent = message || ''; };
+        const clearMessage = () => showMessage('');
+        const renderSummary = () => {
+            summary.innerHTML = state ? `<div class="script-daily-kill-stat gold"><b>${escapeHTML(state.tierLabel || '—')}</b><small>Dificultad</small></div><div class="script-daily-kill-stat"><b>${state.claimed ? '1' : '0'}/1</b><small>Misión diaria</small></div><div class="script-daily-kill-stat green"><b>${escapeHTML(number(state.reward?.xp))}</b><small>XP recompensa</small></div><div class="script-daily-kill-stat"><b>${escapeHTML(duration(Number(state.resetAt || 0) - Date.now()))}</b><small>Reinicio</small></div>` : '';
+        };
+        const renderReward = () => {
+            const items = Array.isArray(state?.reward?.items) ? state.reward.items : [];
+            reward.innerHTML = state?.reward ? `<span class="script-daily-kill-reward-label">Recompensa</span><span class="script-daily-kill-reward-item"><img src="/assets/items/xp_medal.png" alt=""><b>${escapeHTML(number(state.reward.xp))} XP</b></span>${items.map(item => `<span class="script-daily-kill-reward-item"><img src="${escapeHTML(item.icon || '')}" alt=""><b>×${escapeHTML(item.qty)}</b> ${escapeHTML(item.name || 'Recompensa')}</span>`).join('')}` : '';
+        };
+        const render = () => {
+            renderSummary();
+            renderReward();
+            if (!state) { content.innerHTML = '<div class="script-daily-kill-empty">Cargando Daily Kill…</div>'; return; }
+            if (state.locked) { content.innerHTML = `<div class="script-daily-kill-locked">🔒 Daily Kill se desbloquea en el nivel ${escapeHTML(state.minLevel || '—')}.</div>`; return; }
+            const options = Array.isArray(state.options) ? state.options : [];
+            if (!options.length) { content.innerHTML = '<div class="script-daily-kill-empty">No hay misiones disponibles en este momento.</div>'; return; }
+            const selected = selectedMission();
+            content.innerHTML = `<p class="script-daily-kill-hint">${state.claimed ? '✓ Misión diaria reclamada. Vuelve después del reinicio para una nueva.' : selected ? 'Derrote la cantidad pedida y luego vuelve a este panel para reclamar la recompensa.' : 'Elige UNA de las tres misiones. La selección vale durante todo el día.'}</p><div class="script-daily-kill-missions">${options.map((option, index) => { const isSelected = state.pickedIdx === index; const progress = Number(option.qty || 0) > 0 ? Math.min(100, Number(option.have || 0) / Number(option.qty) * 100) : 0; const canClaim = isSelected && option.done && !state.claimed; const image = getDailyKillPokemonSprite(option.name, option.speciesId); return `<article class="script-daily-kill-card ${isSelected ? 'is-selected' : ''} ${canClaim ? 'is-claimable' : ''} ${state.pickedIdx >= 0 && !isSelected ? 'is-locked' : ''}"><div class="script-daily-kill-card-head"><span class="script-daily-kill-card-number">#${escapeHTML(option.speciesId)}</span><span class="script-daily-kill-card-type">${escapeHTML(option.type1 || '—')}</span></div><div class="script-daily-kill-card-main"><div class="script-daily-kill-card-sprite" data-daily-kill-name="${escapeHTML(option.name || '')}" data-daily-kill-species-id="${escapeHTML(option.speciesId || '')}">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(option.name || 'Pokémon')}">` : '<span>◉</span>'}</div><div><div class="script-daily-kill-card-name">${escapeHTML(option.name || 'Pokémon')}</div><div class="script-daily-kill-card-xp">${escapeHTML(number(option.xp))} XP</div></div></div><div class="script-daily-kill-card-goal"><span>Progreso</span><b>${escapeHTML(number(option.have))} / ${escapeHTML(number(option.qty))}</b></div><div class="script-daily-kill-card-bar"><i style="width:${progress}%"></i></div><div class="script-daily-kill-card-actions">${state.pickedIdx < 0 ? `<button class="script-daily-kill-action" type="button" data-daily-kill-pick="${index}" ${busy ? 'disabled' : ''}>Elegir misión</button>` : isSelected ? `<button class="script-daily-kill-action secondary" type="button" data-daily-kill-hunt ${busy ? 'disabled' : ''}>Ir al hunt</button>${canClaim ? `<button class="script-daily-kill-action green" type="button" data-daily-kill-claim ${busy ? 'disabled' : ''}>Reclamar recompensa</button>` : ''}` : '<span class="script-daily-kill-card-note">No elegida</span>'}</div></article>`; }).join('')}</div>`;
+        };
+        queueMicrotask(() => {
+            content.querySelectorAll('[data-daily-kill-name]').forEach(sprite => {
+                mountDailyKillPokemonSprite(sprite, sprite.dataset.dailyKillName, Number(sprite.dataset.dailyKillSpeciesId));
+            });
+        });
+        const close = () => { clearInterval(clockTimer); document.removeEventListener('keydown', onKeyDown); backdrop.remove(); };
+        const onKeyDown = event => { if (event.key === 'Escape' && !busy) close(); };
+        const load = async () => {
+            try {
+                if (!globalCreatureApiData.size) await loadExternalPokemonData();
+                await loadMapMarkersData(true);
+                state = await gameApiRequest('/api/game/daily-kill');
+                latestDailyKillState = state;
+                render();
+            } catch (error) {
+                render();
+                showMessage(`No se pudo cargar Daily Kill: ${error.message || error}`);
+            }
+        };
+        const pick = async index => {
+            if (busy || state?.pickedIdx >= 0) return;
+            busy = true;
+            clearMessage();
+            dailyKillStateRevision++;
+            render();
+            try {
+                state = await gameApiRequest('/api/game/daily-kill/pick', {
+                    method: 'POST',
+                    body: JSON.stringify({ idx: Number(index) })
+                });
+                latestDailyKillState = state;
+                busy = false;
+                render();
+                updateDailyKillMonitor();
+            } catch (error) {
+                busy = false;
+                render();
+                showMessage(`No se pudo elegir la misión: ${error.message || error}`);
+            }
+        };
+        const claim = async () => {
+            if (busy || !selectedMission()?.done || state?.claimed) return;
+            busy = true;
+            clearMessage();
+            dailyKillStateRevision++;
+            render();
+            let response;
+            try {
+                response = await gameApiRequest('/api/game/daily-kill/claim', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+            } catch (error) {
+                busy = false;
+                render();
+                showMessage(`No se pudo reclamar la recompensa: ${error.message || error}`);
+                return;
+            }
+            let refreshWarning = '';
+            try {
+                if (!sendGameMessage({ type: 'inv-get' })) refreshWarning = ' El inventario se actualizará al recuperar la conexión.';
+            } catch (_) {
+                refreshWarning = ' El inventario se actualizará al recuperar la conexión.';
+            }
+            try {
+                state = await gameApiRequest('/api/game/daily-kill');
+            } catch (_) {
+                state = { ...(state || {}), claimed: true };
+                refreshWarning = ' El estado se actualizará al recuperar la conexión.';
+            }
+            latestDailyKillState = state;
+            busy = false;
+            render();
+            updateDailyKillMonitor();
+            const payout = response?.payout;
+            const itemText = payout?.items?.length ? ` · ${payout.items.map(item => `×${item.qty} ${item.label || item.name || 'item'}`).join(' · ')}` : '';
+            showMessage(`Recompensa reclamada: ${number(payout?.xp)} XP${itemText}${refreshWarning}`, 'success');
+        };
+        backdrop.addEventListener('click', event => {
+            if (event.target === backdrop && !busy) { close(); return; }
+            const pickButton = event.target.closest('[data-daily-kill-pick]');
+            if (pickButton) { void pick(pickButton.dataset.dailyKillPick); return; }
+            if (event.target.closest('[data-daily-kill-hunt]')) {
+                if (busy) return;
+                const target = selectedMission()?.name;
+                if (target) {
+                    clearMessage();
+                    close();
+                    Promise.resolve(teleportToTarget(target)).catch(error => {
+                        showScriptNotice(`No se pudo viajar al hunt de ${target}.`, { isError: true });
+                        console.warn('[Daily Kill] No se pudo viajar al hunt:', error);
+                    });
+                }
+                return;
+            }
+            if (event.target.closest('[data-daily-kill-claim]')) { void claim(); }
+        });
+        backdrop.querySelector('.script-daily-kill-close').addEventListener('click', () => { if (!busy) close(); });
+        document.addEventListener('keydown', onKeyDown);
+        clockTimer = setInterval(() => { if (!busy && latestDailyKillState) { state = latestDailyKillState; render(); } }, 1000);
+        startDailyKillMonitor();
+        void load();
     }
 
     function marketItemAlertMatchesListing(alert, entry) {
@@ -1404,41 +2065,6 @@
         }
     }
 
-    async function buyMarketAlertPokemon(entry) {
-        const price = getMarketEntryPrice(entry);
-        if (!(price > 0)) throw new Error('El anuncio no tiene un precio de compra válido.');
-        const listingId = getMarketListingId(entry);
-        if (listingId == null || listingId === '') throw new Error('El anuncio del Pokémon no tiene un identificador válido.');
-        await executeImmediateMarketPurchase({ action:'buy', id:listingId, quantity:1 }, entry);
-        removeMarketAlertInboxEntry(entry);
-        setMarketFeaturedPokemon(entry, false);
-    }
-
-    async function buyMarketItemAlert(entry, quantity = 1) {
-        const listingId = getMarketListingId(entry);
-        if (listingId == null) throw new Error('El anuncio del objeto no tiene un identificador válido.');
-        // Este anuncio procede de la lectura sin caché del mismo ciclo. Comprar con
-        // ese snapshot evita una segunda petición GET que daba ventaja a otros usuarios.
-        const price = getMarketEntryPrice(entry);
-        const currency = getMarketEntryCurrency(entry);
-        if (!(price > 0)) throw new Error('El anuncio no tiene un precio de compra válido.');
-        const available = Math.max(1, Number(entry.quantity ?? entry.qty ?? entry.amount ?? 1) || 1);
-        const buyQuantity = Math.max(1, Math.min(available, Number(quantity) || 1));
-        // El servidor valida el saldo en la misma operación de compra. Evitamos una
-        // consulta previa de personaje para no añadir otra vuelta de red crítica.
-        const kind = entry?.kind ?? getMarketEntryKind(entry);
-        const refId = entry?.refId ?? getMarketEntryRefId(entry);
-        if (!kind || refId == null) throw new Error('El anuncio del objeto no contiene los datos necesarios para comprarlo.');
-        const purchaseIds = [listingId, ...getMarketListingIds(entry).filter(id => String(id) !== String(listingId))];
-        await executeImmediateMarketPurchase({
-            action:'buy-stack', kind, refId, price:entry?.price ?? price,
-            currency:entry?.currency ?? currency, quantity:buyQuantity,
-            ids:purchaseIds.slice(0, buyQuantity)
-        }, entry);
-        removeMarketItemAlertInboxEntry(entry);
-        return entry;
-    }
-
     function seedMarketAlertFromListings(alert, listings) {
         const seen = getMarketAlertSeenKeys();
         (Array.isArray(listings) ? listings : []).filter(entry => marketAlertMatchesListing(alert, entry)).forEach(entry => {
@@ -1461,273 +2087,8 @@
         saveMarketItemAlertSeenKeys(seen);
     }
 
-    async function pollUnifiedMarketAlerts(forceNetworkRead = false) {
-        if (MARKET_ALERTS_REMOVED) return;
-        if (Date.now() < marketAlertBackoffUntil) return;
-        if (marketUnifiedMonitorBusy) {
-            // Un anuncio puede llegar por socket mientras el GET anterior está
-            // en vuelo. Conservamos esa señal y repetimos al terminar.
-            if (forceNetworkRead) marketUnifiedPollPending = true;
-            return;
-        }
-        const hasPokemonAlerts = getMarketAlerts().length > 0;
-        const hasItemAlerts = getMarketItemAlerts().length > 0;
-        if (!hasPokemonAlerts && !hasItemAlerts) return;
-        marketUnifiedMonitorBusy = true;
-        try {
-            // Cada monitor consulta directamente la categoría oficial que le
-            // corresponde. Evitamos descargar y procesar el mercado completo
-            // antes de poder iniciar una compra urgente.
-            const scans = [];
-            if (hasPokemonAlerts && hasItemAlerts) {
-                if (marketAlertPollPokemonFirst) {
-                    scans.push(pollMarketAlerts(null, forceNetworkRead), pollMarketItemAlerts(null, forceNetworkRead));
-                } else {
-                    scans.push(pollMarketItemAlerts(null, forceNetworkRead), pollMarketAlerts(null, forceNetworkRead));
-                }
-                marketAlertPollPokemonFirst = !marketAlertPollPokemonFirst;
-            } else if (hasPokemonAlerts) scans.push(pollMarketAlerts(null, forceNetworkRead));
-            else if (hasItemAlerts) scans.push(pollMarketItemAlerts(null, forceNetworkRead));
-            // No esperamos aquí cada GET: el endpoint oficial puede tardar más
-            // de dos segundos. El ciclo de 250 ms mantiene una tubería rodante
-            // y el contador compartido limita la concurrencia total.
-            scans.forEach(scan => void scan.catch(error => console.debug('Lectura paralela del mercado aplazada.', error?.message || error)));
-        } catch (error) {
-            console.warn('Monitor unificado del mercado: lectura aplazada.', error?.message || error);
-            if (Number(error?.status) === 429) {
-                marketAlertBackoffUntil = Date.now() + 1500;
-            }
-        } finally {
-            marketUnifiedMonitorBusy = false;
-            if (marketUnifiedPollPending) {
-                marketUnifiedPollPending = false;
-                queueMicrotask(() => void pollUnifiedMarketAlerts(true));
-            }
-        }
-    }
-
-    async function pollMarketAlerts(listings, forceNetworkRead = false) {
-        if (MARKET_ALERTS_REMOVED) return;
-        const alerts = getMarketAlerts();
-        if (!alerts.length) return;
-        const hasDirectListings = Array.isArray(listings) && listings.some(isMarketPokemonListing);
-        if (!hasDirectListings && marketAlertHttpReadsInFlight >= MAX_MARKET_ALERT_HTTP_READS) return;
-        const ownsHttpSlot = !hasDirectListings;
-        if (ownsHttpSlot) marketAlertHttpReadsInFlight++;
-        try {
-            const marketReadStartedAt = performance.now();
-            const marketListings = hasDirectListings
-                ? listings
-                : getMarketListings(await gameApiRequest('/api/game/market?category=Pokemon', { priority:'high' }));
-            const httpDetectedAt = hasDirectListings ? null : performance.now();
-            const marketReadLatencyMs = hasDirectListings ? null : httpDetectedAt - marketReadStartedAt;
-            const marketReadCadenceMs = hasDirectListings || !lastPokemonMarketReadCompletedAt ? null : httpDetectedAt - lastPokemonMarketReadCompletedAt;
-            if (!hasDirectListings) lastPokemonMarketReadCompletedAt = httpDetectedAt;
-            const pokemonListings = marketListings.filter(isMarketPokemonListing);
-            const seen = getMarketAlertSeenKeys();
-            const autoBuyEnabled = isMarketAlertAutoBuyEnabled();
-            const purchaseTasks = [];
-            const launchAutoBuy = match => {
-                if (!autoBuyEnabled) return;
-                purchaseTasks.push((async () => {
-                    try {
-                        await buyMarketAlertPokemon(match.entry);
-                        void getCurrentMarketAlertAccount().then(account => {
-                            queueMarketAlertToast({ ...match, account, title:tr('alertAutoBought') });
-                            return sendMarketAlertToTelegramOnce(match.entry, 'auto-bought', { automatic:true, account });
-                        }).catch(error => console.debug('Telegram: aviso automático no enviado.', error?.message || error));
-                    } catch (error) {
-                        console.warn('Compra automática de Pokémon no completada; se conserva la alerta manual.', error?.message || error);
-                        const failureDetail = `${String(error?.message || error || 'Sin detalle')} · ${error?.marketSource || 'HTTP'}${Number.isFinite(error?.marketReadLatencyMs) ? ` GET ${error.marketReadLatencyMs} ms` : ''}${Number.isFinite(error?.marketReadCadenceMs) ? ` · ritmo ${error.marketReadCadenceMs} ms` : ''}${Number.isFinite(error?.purchaseDispatchDelayMs) ? ` · despacho ${error.purchaseDispatchDelayMs} ms` : ''}${Number.isFinite(error?.purchaseLatencyMs) ? ` · POST ${error.purchaseLatencyMs} ms` : ''}`.slice(0, 210);
-                        void getCurrentMarketAlertAccount().then(account => {
-                            addMarketAlertInboxEntry(match.alert, match.entry, account);
-                            queueMarketAlertToast({ ...match, account, title:'Compra automática de Pokémon fallida' });
-                            return sendMarketAlertToTelegramOnce(match.entry, 'auto-buy-failed', { account, title:'Compra automática no completada', detail:failureDetail });
-                        }).catch(telegramError => console.debug('Telegram: alerta de compra fallida no enviada.', telegramError?.message || telegramError));
-                    }
-                })());
-            };
-            const freshKeys = [];
-            const freshByListing = new Map();
-            for (const alert of alerts) {
-                for (const entry of pokemonListings) {
-                    if (!marketAlertMatchesListing(alert, entry)) continue;
-                    const key = marketAlertListingKey(alert, entry);
-                    if (!key || seen.has(key)) continue;
-                    freshKeys.push(key);
-                    const detectedEntry = httpDetectedAt == null ? entry : {
-                        ...entry, _scriptMarketSource:'HTTP', _scriptMarketDetectedAt:httpDetectedAt,
-                        _scriptMarketReadLatencyMs:marketReadLatencyMs,
-                        _scriptMarketReadCadenceMs:marketReadCadenceMs
-                    };
-                    const listingKey = marketAlertInboxKey(detectedEntry);
-                    if (listingKey && !freshByListing.has(listingKey)) {
-                        const match = { alert, entry:detectedEntry, key };
-                        freshByListing.set(listingKey, match);
-                        launchAutoBuy(match);
-                    }
-                }
-            }
-            // Las reglas ya se inicializan con seedMarketAlertFromListings al
-            // crearlas. No descartamos el primer resultado después de recargar:
-            // podría ser un anuncio nuevo publicado antes del primer tick.
-            marketAlertMonitorReady = true;
-            const freshListings = [...freshByListing.values()];
-            const persistSeenMatches = () => {
-                freshKeys.forEach(key => seen.add(key));
-                if (freshKeys.length) saveMarketAlertSeenKeys(seen);
-            };
-            if (autoBuyEnabled) {
-                // Los fetch de compra ya están iniciados cuando persistimos.
-                if (freshListings.length) console.info(`[Better Market] ${freshListings.length} Pokémon nuevo(s) detectado(s); compra automática activa.`);
-                persistSeenMatches();
-                syncMarketAlertInbox(pokemonListings);
-                await Promise.allSettled(purchaseTasks);
-            } else {
-                if (freshListings.length) console.info(`[Better Market] ${freshListings.length} Pokémon nuevo(s) detectado(s); compra automática desactivada.`);
-                persistSeenMatches();
-                syncMarketAlertInbox(pokemonListings);
-                const accountPromise = freshListings.length ? getCurrentMarketAlertAccount() : Promise.resolve(null);
-                freshListings.slice().reverse().forEach(match => {
-                    void accountPromise.then(account => {
-                        addMarketAlertInboxEntry(match.alert, match.entry, account);
-                        queueMarketAlertToast({ ...match, account });
-                        void sendMarketAlertToTelegramOnce(match.entry, 'published', { account }).catch(error => console.debug('Telegram: alerta no enviada.', error?.message || error));
-                    });
-                });
-            }
-        } catch (error) {
-            console.warn('Monitor de alertas de Pokémon: lectura aplazada.', error?.message || error);
-            if (Number(error?.status) === 429) marketAlertBackoffUntil = Date.now() + 1500;
-        } finally {
-            if (ownsHttpSlot) marketAlertHttpReadsInFlight = Math.max(0, marketAlertHttpReadsInFlight - 1);
-        }
-    }
-
-    async function pollMarketItemAlerts(listings, forceNetworkRead = false) {
-        if (MARKET_ALERTS_REMOVED) return;
-        const alerts = getMarketItemAlerts();
-        // En launchers con varias cuentas, las vistas no enfocadas pueden marcarse
-        // como ocultas aunque sigan activas. Las alertas de objetos deben vigilarse
-        // igualmente para que la compra automática no dependa del foco.
-        if (!alerts.length) return;
-        const hasDirectListings = Array.isArray(listings) && listings.some(entry => !isMarketPokemonListing(entry));
-        if (!hasDirectListings && marketAlertHttpReadsInFlight >= MAX_MARKET_ALERT_HTTP_READS) return;
-        const ownsHttpSlot = !hasDirectListings;
-        if (ownsHttpSlot) marketAlertHttpReadsInFlight++;
-        try {
-            const pollCategory = getMarketItemAlertPollCategory(alerts);
-            const marketReadStartedAt = performance.now();
-            const marketListings = hasDirectListings
-                ? listings
-                : getMarketListings(await gameApiRequest(`/api/game/market?category=${encodeURIComponent(pollCategory)}`, { priority:'high' }));
-            const httpDetectedAt = hasDirectListings ? null : performance.now();
-            const marketReadLatencyMs = hasDirectListings ? null : httpDetectedAt - marketReadStartedAt;
-            const marketReadCadenceMs = hasDirectListings || !lastItemMarketReadCompletedAt ? null : httpDetectedAt - lastItemMarketReadCompletedAt;
-            if (!hasDirectListings) lastItemMarketReadCompletedAt = httpDetectedAt;
-            const itemListings = marketListings
-                .filter(entry => !isMarketPokemonListing(entry));
-            const seen = getMarketItemAlertSeenKeys();
-            const autoBuyEnabled = isMarketItemAlertAutoBuyEnabled();
-            const purchaseTasks = [];
-            const launchAutoBuy = match => {
-                if (!autoBuyEnabled) return;
-                purchaseTasks.push((async () => {
-                    try {
-                        const itemName = match.entry?.name || match.entry?.itemName || match.entry?.item?.name || 'objeto';
-                        const purchaseRequest = buyMarketItemAlert(match.entry);
-                        setMarketItemAlertAutoBuyStatus('intentando compra', itemName);
-                        const purchasedEntry = await purchaseRequest;
-                        setMarketItemAlertAutoBuyStatus('compra confirmada', itemName);
-                        void getCurrentMarketAlertAccount().then(account => {
-                            queueMarketAlertToast({ ...match, entry:purchasedEntry, account, title:'Compra automática de objeto completada' });
-                            return sendMarketAlertToTelegramOnce(purchasedEntry, 'item-auto-bought', { automatic:true, account, kind:'item', title:'Objeto comprado' });
-                        }).catch(error => console.debug('Telegram: aviso automático de objeto no enviado.', error?.message || error));
-                    } catch (error) {
-                        console.warn('Compra automática de objeto no completada; se conserva la alerta manual.', error?.message || error);
-                        const failureDetail = `${String(error?.message || error || 'Sin detalle')} · ${error?.marketSource || 'HTTP'}${Number.isFinite(error?.marketReadLatencyMs) ? ` GET ${error.marketReadLatencyMs} ms` : ''}${Number.isFinite(error?.marketReadCadenceMs) ? ` · ritmo ${error.marketReadCadenceMs} ms` : ''}${Number.isFinite(error?.purchaseDispatchDelayMs) ? ` · despacho ${error.purchaseDispatchDelayMs} ms` : ''}${Number.isFinite(error?.purchaseLatencyMs) ? ` · POST ${error.purchaseLatencyMs} ms` : ''}`.slice(0, 210);
-                        setMarketItemAlertAutoBuyStatus('falló', failureDetail.slice(0, 120));
-                        if (!/saldo insuficiente|ya no está disponible|não está mais disponível|no longer available|not available/i.test(String(error?.message || ''))) {
-                            seen.delete(match.key);
-                            saveMarketItemAlertSeenKeys(seen);
-                        }
-                        void getCurrentMarketAlertAccount().then(account => {
-                            addMarketItemAlertInboxEntry(match.alert, match.entry, account);
-                            queueMarketAlertToast({ ...match, account, title:'Compra automática de objeto fallida' });
-                            return sendMarketAlertToTelegramOnce(match.entry, 'item-auto-buy-failed', {
-                                account, kind:'item', title:'Compra automática no completada', detail:failureDetail
-                            });
-                        }).catch(telegramError => console.debug('Telegram: alerta de objeto no enviada.', telegramError?.message || telegramError));
-                    }
-                })());
-            };
-            const freshKeys = [];
-            const freshByListing = new Map();
-            for (const alert of alerts) {
-                for (const entry of itemListings) {
-                    if (!marketItemAlertMatchesListing(alert, entry)) continue;
-                    for (const listingId of getMarketListingIds(entry)) {
-                        const key = `${alert.id}:${listingId}`;
-                        if (seen.has(key)) continue;
-                        freshKeys.push(key);
-                        const listingKey = `item:${listingId}`;
-                        if (!freshByListing.has(listingKey)) {
-                            const match = {
-                                alert,
-                                entry:{
-                                    ...entry,
-                                    _scriptMarketListingId:listingId,
-                                    _scriptMarketSource:entry?._scriptMarketSource || 'HTTP',
-                                    _scriptMarketDetectedAt:entry?._scriptMarketDetectedAt ?? httpDetectedAt,
-                                    _scriptMarketReadLatencyMs:entry?._scriptMarketReadLatencyMs ?? marketReadLatencyMs,
-                                    _scriptMarketReadCadenceMs:entry?._scriptMarketReadCadenceMs ?? marketReadCadenceMs
-                                },
-                                key
-                            };
-                            freshByListing.set(listingKey, match);
-                            // El POST comienza aquí, sin esperar a que termine el
-                            // recorrido del resto del snapshot del mercado.
-                            launchAutoBuy(match);
-                        }
-                    }
-                }
-            }
-            // Igual que en Pokémon: el alta/edición de la regla ya sembró los
-            // anuncios existentes. El primer escaneo real debe poder comprar.
-            marketItemAlertMonitorReady = true;
-            const freshListings = [...freshByListing.values()];
-            const persistSeenMatches = () => {
-                freshKeys.forEach(key => seen.add(key));
-                if (freshKeys.length) saveMarketItemAlertSeenKeys(seen);
-            };
-            if (autoBuyEnabled) {
-                if (freshListings.length) console.info(`[Better Market] ${freshListings.length} objeto(s) nuevo(s) detectado(s); compra automática activa.`);
-                persistSeenMatches();
-                syncMarketItemAlertInbox(itemListings);
-                await Promise.allSettled(purchaseTasks);
-            } else {
-                if (freshListings.length) console.info(`[Better Market] ${freshListings.length} objeto(s) nuevo(s) detectado(s); compra automática desactivada.`);
-                persistSeenMatches();
-                syncMarketItemAlertInbox(itemListings);
-                const accountPromise = freshListings.length ? getCurrentMarketAlertAccount() : Promise.resolve(null);
-                freshListings.slice().reverse().forEach(match => {
-                    void accountPromise.then(account => {
-                        addMarketItemAlertInboxEntry(match.alert, match.entry, account);
-                        queueMarketAlertToast({ ...match, account, title:'Nuevo objeto en alerta' });
-                        return sendMarketAlertToTelegramOnce(match.entry, 'item-published', { account, kind:'item', title:'Nuevo objeto en alerta' });
-                    }).catch(telegramError => console.debug('Telegram: alerta de objeto no enviada.', telegramError?.message || telegramError));
-                });
-            }
-        } catch (error) {
-            console.warn('Monitor de alertas de objetos: lectura aplazada.', error?.message || error);
-            if (Number(error?.status) === 429) marketAlertBackoffUntil = Date.now() + 1500;
-        } finally {
-            if (ownsHttpSlot) marketAlertHttpReadsInFlight = Math.max(0, marketAlertHttpReadsInFlight - 1);
-        }
-    }
-
     function updateMarketSaleDockBadge() {
-        const button = document.getElementById('dock-btn-shops');
+        const button = document.getElementById('script-shop-bar-market');
         if (!button) return;
         let badge = button.querySelector('.market-sale-dock-badge');
         const count = Math.max(0, Number(localStorage.getItem(STORAGE_MARKET_SALES_UNREAD)) || 0);
@@ -2044,6 +2405,1074 @@
             .some(value => value === true || value === 1 || /^(?:true|1|locked)$/i.test(String(value ?? '')));
     }
 
+    /* Los cuatro siguientes vivian dentro de showPortableCasino. Se suben aqui
+       porque la auto-venta del market los necesita tambien, y duplicarlos
+       haria que las dos copias tuvieran que coincidir para siempre, que es
+       una forma silenciosa de que se separen. Son funciones puras: subirlas no
+       cambia lo que hacen. El Casino sigue resolviendo estos mismos nombres. */
+
+    const getPokeId = poke => String(poke?.id ?? poke?.capturedId ?? poke?.pokeId ?? '');
+
+    const tierOrder = id => {
+        const index = MARKET_QUALITY_TIER_DEFINITIONS.findIndex(d => d.id === id);
+        return index < 0 ? -1 : index;
+    };
+
+    const getPokemonTierId = poke => getMarketPokemonQualityTheme(poke?.quality)?.id || '';
+
+    const isTeamPokemonProtected = poke => Boolean(
+        poke?.starter || isNativeLocked(poke) || poke?.shiny || poke?.market || poke?.listed
+    );
+
+    /* ================= SEPARACION DE DOMINIO CON EL CASSINO =================
+       Hay DOS auto-ventas distintas y las dos pueden estar encendidas a la vez:
+         1. Esta: la de CAPTURAS. Se dispara sola con cada 'pokes' que llega, y
+            decide sobre todo lo que no este en su registro de vistos.
+         2. La del Cassino: solo sobre lo que TU acaba de comprarle a Marlon, y
+            solo cuando la compra termina.
+
+       Sin separacion se pisan. La compra del Cassino hace que el servidor
+       empuje 'pokes' (L9678) en el mismo instante en que el Pokemon ya esta en
+       la cuenta pero todavia NO se ha identificado. Esta auto-venta lo ve
+       como nuevo, le aplica SU regla y lo vende; el Cassino llega despues,
+       no lo encuentra, y su venta falla. El Pokemon se vendio una vez, pero
+       fuera del lote que el usuario estaba mirando, y el Casino no lo sabe.
+
+       Y no es solo una carrera: las dos reglas NO son la misma. La del Cassino
+       (shouldAutoSell) exige ademas que el tier este en alertTiers, que actsua
+       como lista blanca. Por eso hay Pokemon que el Cassino CONSERVA a proposito
+       y esta, sin saber de donde vino, se lleva. Ese Pokemon se ha vendido
+       contra la voluntad de quien lo compro.
+
+       Asi que se registra de quien es cada Pokemon. El Cassino declara la
+       compra ANTES de llamar al servidor (marcando la especie) y en cuanto
+       conoce el id, y la auto-venta de capturas consulta ese registro antes de
+       decidir nada. Lo que es del Cassino no se toca aqui, se resuelve alli.
+
+       El registro es de ids, no de Pokemon, y persiste: si se recarga con
+       compras del Cassino sin resolver, siguen siendo suyas. Sin eso, al
+       recargar la siembra ya se consumio y estas las venderia esta. */
+    const casinoOwnedPokemonKey = 'script_casino_owned_pokemon_v1';
+    /* Tope alto a proposito. Un lote de compra son muchas, y lo que se guarda
+       son solo las que siguen sin resolver; las vendidas se olvidan al
+       confirmarse. Si se llega al tope se recorta por antiguedad, nunca por lo
+       reciente. */
+    const casinoOwnedPokemonCap = 400;
+    const casinoClaimTtlMs = 10 * 60 * 1000;
+    /* Espejo del registro de vistos de esta auto-venta, pero del otro lado:
+       { id: momento de la compra }. Se ordena por antiguedad al recortar. */
+    let casinoOwnedPokemon = new Map(
+        readStoredJSON(casinoOwnedPokemonKey, [])
+            .filter(entry => Array.isArray(entry) && entry.length >= 2)
+            .map(([id, at]) => [String(id), Number(at) || 0])
+            .filter(([id, at]) => id && id !== 'undefined' && at)
+    );
+    /* Compras en vuelo. Mientras haya una, esta auto-venta no vende nada: es la
+       ventana en la que todavia no se sabe de quien es cada Pokemon, y adivinar
+       es justo el error que se quiere evitar. No se pierde ninguna captura: los
+       'pokes' siguen llegando y la siguiente pasada la recoge. */
+    let casinoPurchasesInFlight = 0;
+    /* Especie que se esta comprando ahora mismo. Cubre la ventana entre el POST
+       y el momento en que se conoce el id, que es cuando el registro por id
+       todavia no puede decir nada. */
+    let casinoPendingSpecies = new Map();
+
+    const saveCasinoOwnedPokemon = () => {
+        const entradas = [...casinoOwnedPokemon.entries()].sort((a, b) => a[1] - b[1]);
+        const recorte = entradas.length > casinoOwnedPokemonCap
+            ? entradas.slice(entradas.length - casinoOwnedPokemonCap)
+            : entradas;
+        casinoOwnedPokemon = new Map(recorte);
+        try { localStorage.setItem(casinoOwnedPokemonKey, JSON.stringify(recorte)); } catch (_) {}
+    };
+
+    const pruneCasinoClaims = ahora => {
+        let sucio = false;
+        for (const [id, at] of casinoOwnedPokemon) {
+            if (ahora - at > casinoClaimTtlMs) { casinoOwnedPokemon.delete(id); sucio = true; }
+        }
+        for (const [speciesId, at] of casinoPendingSpecies) {
+            if (ahora - at > casinoClaimTtlMs) { casinoPendingSpecies.delete(speciesId); sucio = true; }
+        }
+        if (sucio) saveCasinoOwnedPokemon();
+    };
+
+    const markCasinoPurchaseStarted = speciesId => {
+        const ahora = Date.now();
+        pruneCasinoClaims(ahora);
+        casinoPurchasesInFlight += 1;
+        const id = Number(speciesId || 0);
+        if (id) casinoPendingSpecies.set(id, ahora);
+    };
+
+    const markCasinoPurchaseFinished = speciesId => {
+        casinoPurchasesInFlight = Math.max(0, casinoPurchasesInFlight - 1);
+        /* El marcador por especie se jubila aqui porque para cuando termina la
+           iteracion los ids ya estan registrados uno a uno, y es mas preciso.
+           Se retira y no se deja pudrir: si se quedara, cada Pokemon de esa
+           especie capturado durante los proximos minutos dejaria de venderse. */
+        const id = Number(speciesId || 0);
+        if (id) casinoPendingSpecies.delete(id);
+    };
+
+    const casinoHasPendingSpecies = poke => {
+        const speciesId = Number(poke?.speciesId || 0);
+        return speciesId > 0 && casinoPendingSpecies.has(speciesId);
+    };
+
+    /* El Pokemon ya es del Cassino. Se anota el id y, sobre todo, se mete en el
+       registro de vistos de ESTA auto-venta: asi queda ignorado de forma
+       permanente, no solo mientras la compra siga viva. Sin esto, un Pokemon
+       del Cassino que la regla de aqui no reachzaria volveria a salir como
+       nuevo en el siguiente 'pokes' y acabaria vendido igual. */
+    const claimCasinoPokemon = poke => {
+        const pokeId = getPokeId(poke);
+        if (!pokeId) return;
+        const ahora = Date.now();
+        pruneCasinoClaims(ahora);
+        casinoOwnedPokemon.set(pokeId, ahora);
+        saveCasinoOwnedPokemon();
+        if (!marketAutoSellSeenLoaded) loadMarketAutoSellSeen();
+        if (!marketAutoSellSeen.has(pokeId)) {
+            marketAutoSellSeen.add(pokeId);
+            saveMarketAutoSellSeen();
+        }
+    };
+
+    /* Solo se olvida lo que el Cassino confirmo que vendio. Un Pokemon que
+       sigue en la cuenta porque la venta fallo se queda registrado a proposito:
+       es el unico sitio donde se puede vender bien. */
+    const forgetCasinoPokemon = poke => {
+        const pokeId = getPokeId(poke);
+        if (!pokeId || !casinoOwnedPokemon.delete(pokeId)) return;
+        saveCasinoOwnedPokemon();
+    };
+
+    /* La pregunta que hace la auto-venta de capturas antes de decidir. Vale por
+       el id cuando ya se conoce y por la especie mientras la compra vuela, que
+       son los dos momentos en los que puede aparecer un Pokemon ajeno. */
+    const isCasinoOwnedPokemon = poke => {
+        if (!poke) return false;
+        if (casinoPurchasesInFlight > 0 && casinoHasPendingSpecies(poke)) return true;
+        const pokeId = getPokeId(poke);
+        return Boolean(pokeId && casinoOwnedPokemon.has(pokeId));
+    };
+    /* ================= FIN SEPARACION DE DOMINIO CON EL CASSINO ================= */
+
+    /* ================= AUTO-VENTA DEL DEPOSITO =================
+       La regla. Espejo de shouldAutoSell del Cassino, con los dos mismos cortes:
+       umbrales que se exigen A LA VEZ con un "y", de modo que un Pokemon que
+       conserve IVs buenos o un tier alto no se vende aunque el otro valor sea
+       malo.
+
+       Lo del equipo: el Pokemon recien cazado entra en el equipo, asi que para
+       venderlo hay que sacarlo de ahi. Por eso la regla NO lo veta. Lo que veta
+       es tocar un Pokemon del equipo que YA HABIAMOS VISTO: ese es el equipo de
+       caza que elegiste, y no se toca. Un Pokemon del equipo que no estaba en el
+       registro es, por definicion, uno que acaba de entrar, y ese si se vende.
+
+       esNuevo lo decide el llamante, y es true cuando el id no estaba en el
+       registro de vistos. Como el registro se siembra con todo lo que hay al
+       ENCENDER, el equipo que tienes ese dia ya cuenta como visto desde el
+       principio y no se toca nunca.
+
+       shiny, starter, bloqueado y ya anunciado quedan fuera por
+       isTeamPokemonProtected, igual que en el Cassino. */
+    /* Decide Y EXPLICA. Devuelve { sell, motivo }. Es UNA sola funcion a
+       proposito: si el texto del aviso saliera de otra copia de la regla, se
+       separarian y el aviso acabaria mintiendo sobre por que no se vendio, que
+       es peor que no avisar. shouldAutoSellPokemon es solo un envoltorio. */
+    const autoSellDecision = (poke, config, isProtected, esNuevo = false) => {
+        if (!config?.enabled) return { sell: false, motivo: 'la auto-venta esta apagada' };
+        if (!poke) return { sell: false, motivo: 'el Pokemon no tiene datos' };
+        /* Lo primero, antes que el equipo y antes que los cortes: un Pokemon
+           comprado en el Cassino no es de esta lista. Se resuelve alli, con sus
+           propios cortes y su propio historial, y meterlo aqui vendia contra la
+           decision de quien lo compro. */
+        if (isCasinoOwnedPokemon(poke)) return { sell: false, motivo: 'es del Cassino' };
+        if (poke.team && !esNuevo) return { sell: false, motivo: 'es del equipo de caza' };
+        if (isProtected(poke)) return { sell: false, motivo: 'esta protegido: shiny, inicial, bloqueado o ya anunciado' };
+        if (Number(poke.sellValue || 0) <= 0) return { sell: false, motivo: 'el juego no paga nada por el' };
+        if (Number(poke.ivTotal || 0) >= Number(config.minIv || 0)) {
+            return { sell: false, motivo: 'sus IV son ' + Number(poke.ivTotal || 0) + ' y el corte esta en ' + Number(config.minIv || 0) };
+        }
+        if (config.minTier) {
+            const actual = tierOrder(getPokemonTierId(poke));
+            const corte = tierOrder(config.minTier);
+            if (actual < 0 || actual >= corte) {
+                const etiqueta = (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === config.minTier)?.label) || config.minTier;
+                const suya = (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === getPokemonTierId(poke))?.label) || 'desconocida';
+                return { sell: false, motivo: 'es ' + suya + ' y el corte esta en ' + etiqueta };
+            }
+        }
+        return { sell: true, motivo: '' };
+    };
+
+    const shouldAutoSellPokemon = (poke, config, isProtected, esNuevo = false) =>
+        autoSellDecision(poke, config, isProtected, esNuevo).sell;
+
+    /* Que hacer con la lista que acaba de llegar por el socket. Devuelve dos
+       listas y no una, porque hay una diferencia que importa: lo que se vende se
+       marca como visto, y lo que se salta NO. Un Pokemon del equipo ya visto se
+       salta sin marcarse, asi que el dia que lo saques del equipo vuelve a ser
+       candidato y se vende. Uno de la caja que no cumple los cortes, igual: se
+       salta sin marcarse, para que un cambio en los cortes lo alcance. */
+    const reconcileAutoSellSeen = (entries, seenIds, config, isProtected) => {
+        const candidatos = [];
+        const saltados = [];
+        (Array.isArray(entries) ? entries : []).forEach(poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || seenIds.has(pokeId)) return;
+            if (shouldAutoSellPokemon(poke, config, isProtected, true)) candidatos.push(poke);
+            else saltados.push(poke);
+        });
+        /* Un id repetido en la misma pasada se vende una sola vez. */
+        const unicos = new Map(candidatos.map(poke => [getPokeId(poke), poke]));
+        return { sell: [...unicos.values()], skip: saltados };
+    };
+
+    /* ================= FIN AUTO-VENTA DEL DEPOSITO ================= */
+
+    /* ================= AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
+    const marketAutoSellConfigKey = 'script_market_auto_sell_v1';
+    const marketAutoSellSeenKey = 'script_market_auto_sell_seen_v1';
+    const marketAutoSellSeededKey = 'script_market_auto_sell_seeded_v1';
+
+    /* Por defecto INERTE: enabled apagado y los cortes a cero, que no venden
+       nada porque ivTotal < 0 no se cumple. Mejor esto que un interruptor que
+       al encender te venda la caja entera.
+
+       OJO, aqui NO se usa readStoredJSON: esa devuelve el valor por defecto para
+       todo lo que no sea un ARRAY, porque esta hecha para las listas de vistos.
+       La configuracion es un objeto, asi que con ella se leia siempre {} y los
+       cortes del menu no se guardarian nunca. Por eso lee el objeto directo. */
+    const readMarketAutoSellConfig = () => {
+        let guardado = {};
+        try {
+            const bruto = localStorage.getItem(marketAutoSellConfigKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (parseado && typeof parseado === 'object' && !Array.isArray(parseado)) guardado = parseado;
+            }
+        } catch (_) {}
+        const minIv = Number(guardado.minIv ?? 0);
+        return {
+            enabled: guardado.enabled === true,
+            minIv: Number.isFinite(minIv) ? Math.min(192, Math.max(0, Math.floor(minIv))) : 0,
+            minTier: typeof guardado.minTier === 'string' ? guardado.minTier : ''
+        };
+    };
+
+    const writeMarketAutoSellConfig = config => {
+        try { localStorage.setItem(marketAutoSellConfigKey, JSON.stringify(config)); } catch (_) {}
+        /* Al ENCENDER se borra la marca de siembra, para que la siguiente pasada
+           registre lo que hay sin venderlo. Ese es el comportamiento que aprobo
+           el usuario: nada de lo que ya esta en el deposito se vende. */
+        if (config && config.enabled) {
+            try { localStorage.removeItem(marketAutoSellSeededKey); } catch (_) {}
+        }
+        /* Al cambiar los cortes, el motivo de los avisos cambia, asi que los
+           avisados se olvidan y se vuelve a avisar una vez con el motivo nuevo. */
+        try { localStorage.removeItem(marketAutoSellNotifiedKey); } catch (_) {}
+        marketAutoSellSkipAvisados.clear();
+    };
+
+    /* El registro SOLO CRECE. Antes se recortaba con la lista de cada tick, y
+       eso era un fallo grave, comprobado en el navegador: basta que el servidor
+       mande UNA lista mas corta para que se caigan ids de Pokemon que siguen
+       existiendo, y en el siguiente mensaje completo esos Pokemon parecen nuevos
+       y se VENDEN otra vez. Al recargar se vendieron dos Geodude que ya estaban
+       decididos. Un Pokemon que parece nuevo y esta en el equipo es ademas lo
+       primero que se vende, asi que el fallo podia vaciar el equipo de caza.
+
+       Ahora se recorta solo por arriba, y solo si de verdad se pasa del tope:
+       ahi el riesgo es que un id muy viejo vuelva a aparecer, que con 4000
+       entradas es remoto, en vez de perder medio registro por una lista corta.
+
+       No se muta lo que le pasan: se construye uno nuevo. */
+    const marketAutoSellSeenCap = 4000;
+    const capMarketAutoSellSeen = seenIds => {
+        if (!seenIds || typeof seenIds.forEach !== 'function') return new Set();
+        /* Se recoge con forEach y NO con [...seenIds]: asi funciona tanto con un
+           Set de verdad como con cualquier cosa que se comporte como uno, que es
+           lo que usan los tests. */
+        const lista = [];
+        seenIds.forEach(id => lista.push(id));
+        return new Set(lista.length > marketAutoSellSeenCap
+            ? lista.slice(lista.length - marketAutoSellSeenCap)
+            : lista);
+    };
+
+    let marketAutoSellSeen = new Set();
+    let marketAutoSellSeenLoaded = false;
+
+    const loadMarketAutoSellSeen = () => {
+        const crudo = readStoredJSON(marketAutoSellSeenKey, []) || [];
+        marketAutoSellSeen = new Set(
+            (Array.isArray(crudo) ? crudo : []).map(v => String(v || '')).filter(Boolean)
+        );
+        marketAutoSellSeenLoaded = true;
+    };
+
+    const saveMarketAutoSellSeen = () => {
+        try { localStorage.setItem(marketAutoSellSeenKey, JSON.stringify([...marketAutoSellSeen])); } catch (_) {}
+    };
+
+    const replaceMarketAutoSellSeen = siguiente => {
+        marketAutoSellSeen = siguiente instanceof Set ? siguiente : new Set();
+        saveMarketAutoSellSeen();
+    };
+
+    /* Devuelve true SOLO la primera pasada despues de encender. El detector
+       siembra y devuelve false mientras siga siendo true, para que la siembra
+       no se repita en cada pokes. */
+    const consumeMarketAutoSellSeed = () => {
+        try {
+            if (localStorage.getItem(marketAutoSellSeededKey) === '1') return false;
+            localStorage.setItem(marketAutoSellSeededKey, '1');
+            return true;
+        } catch (_) { return false; }
+    };
+    /* ================= FIN AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
+
+    /* ================= AUTO-VENTA: VENDER Y EL DETECTOR ================= */
+    const marketAutoSellLogKey = 'script_market_auto_sell_log_v1';
+
+    /* Una venta por fila. El log SIEMPRE se guarda: es la unica forma de que el
+       jugador vea que algo fallo y por que, ya que un fallo no se reintenta. */
+    const marketAutoSellLogEntryFor = (poke, config, extra) => ({
+        at: Date.now(),
+        id: getPokeId(poke),
+        name: poke?.name || 'Pokemon ' + (poke?.speciesId ?? ''),
+        speciesId: Number(poke?.speciesId || 0),
+        level: Number(poke?.level || 0),
+        iv: Number(poke?.ivTotal || 0),
+        quality: Number(poke?.quality || 0),
+        catalogValue: Number(poke?.sellValue || 0),
+        minIv: Number(config?.minIv || 0),
+        minTier: config?.minTier || '',
+        ...extra
+    });
+
+    /* OJO: aqui NO se usa readStoredJSON, por lo mismo que en la configuracion.
+       Esa devuelve el valor por defecto para todo lo que no sea un ARRAY, y el
+       historial es un OBJETO. Con ella, el historial se leia vacio en cada
+       recarga y la primera venta nueva lo sobrescribia entero: se perdia todo
+       lo anterior. */
+    const readMarketAutoSellLog = () => {
+        try {
+            const bruto = localStorage.getItem(marketAutoSellLogKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (parseado && Array.isArray(parseado.entries)) return parseado;
+            }
+        } catch (_) {}
+        return { sessionId: '', entries: [] };
+    };
+    let marketAutoSellLog = readMarketAutoSellLog();
+    const saveMarketAutoSellLog = () => {
+        try { localStorage.setItem(marketAutoSellLogKey, JSON.stringify(marketAutoSellLog)); } catch (_) {}
+    };
+    const addMarketAutoSellLogEntry = entry => {
+        if (!Array.isArray(marketAutoSellLog.entries)) marketAutoSellLog.entries = [];
+        marketAutoSellLog.entries.push(entry);
+        /* Tope de 200 como el log del Casino. Aqui si es seguro: unlike el registro
+           de vistos, perder una fila vieja solo cuesta no verla en el historico. */
+        if (marketAutoSellLog.entries.length > 200) {
+            marketAutoSellLog.entries = marketAutoSellLog.entries.slice(-200);
+        }
+        saveMarketAutoSellLog();
+        /* Todo contador de la sesion pasa por aqui. Se engancha al log y no a
+           sellPokemonForGold a proposito: el log ya recibe una fila por venta,
+           con acierto o con fallo, y es el unico sitio por el que pasan todas.
+           Contar en un segundo sitio dejaria un camino sin contar. */
+        if (entry?.ok) {
+            marketAutoSellPanelSession.sold += 1;
+            marketAutoSellPanelSession.gold += Math.max(0, Number(entry.gold || 0));
+        } else if (entry && !entry.ok) {
+            marketAutoSellPanelSession.failed += 1;
+        }
+        saveMarketAutoSellPanelSession();
+        renderMarketAutoSellPanel(true);
+    };
+
+    /* ================= PANEL DE SESION DE LA AUTO-VENTA =================
+       Un contador de "cuanto ha dado esta hunt": cuantos Pokemon se han
+       vendido por la auto-venta y cuanto oro han traido. Se borra al empezar
+       una hunt nueva, que es lo que lo hace util: mientras cazando no hay forma
+       de saber el total de otra manera, y al terminar la hunt ya no interesa.
+
+       Solo se ve con la auto-venta ENCENDIDA y DENTRO de una hunt. Fuera de las
+       dos cosas no aporta nada y taparia la pantalla. */
+
+    const STORAGE_AUTOSELL_PANEL_SESSION = 'script_market_autosell_panel_session_v1';
+    const STORAGE_AUTOSELL_PANEL_POSITION = 'script_market_autosell_panel_position_v1';
+
+    /* La sesion vive en memoria y se guarda en localStorage. Se guarda porque
+       recargar a mitad de hunt no es empezar una hunt nueva, y perder el numero
+       al recargar seria el fallo mas molesto de todos. */
+    const readMarketAutoSellPanelSession = () => {
+        try {
+            const bruto = localStorage.getItem(STORAGE_AUTOSELL_PANEL_SESSION);
+            if (bruto) {
+                const p = JSON.parse(bruto);
+                if (p && typeof p === 'object' && !Array.isArray(p) && Number(p.startedAt) > 0) {
+                    return {
+                        loc: String(p.loc || ''),
+                        startedAt: Number(p.startedAt) || 0,
+                        sold: Math.max(0, Number(p.sold) || 0),
+                        gold: Math.max(0, Number(p.gold) || 0),
+                        failed: Math.max(0, Number(p.failed) || 0)
+                    };
+                }
+            }
+        } catch (_) {}
+        return { loc:'', startedAt:0, sold:0, gold:0, failed:0 };
+    };
+    let marketAutoSellPanelSession = readMarketAutoSellPanelSession();
+    const saveMarketAutoSellPanelSession = () => {
+        try { localStorage.setItem(STORAGE_AUTOSELL_PANEL_SESSION, JSON.stringify(marketAutoSellPanelSession)); } catch (_) {}
+    };
+
+    /* El estado de "estamos en una hunt" va aparte de la sesion guardada, y a
+       proposito NO se persiste. Si se guardara, recargar dentro de una hunt se
+       leeria como "ya estabamos dentro" y la sesion no se crearia; entonces el
+       panel aparecia con el total en cero hasta la siguiente venta. Al no
+       persistir, arrancar siempre empieza con la sesion cerrada y la primera
+       vez que se detecta una hunt se decide si se hereda la guardada o no. */
+    let marketAutoSellPanelInsideHunt = false;
+    let marketAutoSellPanelHuntLoc = '';
+    let marketAutoSellPanelTicker = null;
+    let marketAutoSellPanelFirma = '';
+
+    /* Una sesion guardada de mas de 3 horas se da por caduca. Es una red de
+       seguridad para el caso raro de que la deteccion de hunt falle y deje el
+       panel colgado dias con el total de una hunt vieja. */
+    const marketAutoSellPanelMaxAgeMs = 3 * 60 * 60 * 1000;
+
+    const formatAutoSellPanelDuration = ms => {
+        const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const dosDig = n => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${dosDig(m)}:${dosDig(s)}` : `${dosDig(m)}:${dosDig(s)}`;
+    };
+
+    const getMarketAutoSellPanelNode = () => document.getElementById('script-market-autosell-panel');
+
+    /* Solo se repinta si algo cambio de verdad. El ticker va a 1 Hz y repintar
+       sin motivo reconstruye el DOM y reinicia el arrastre en curso. */
+    const renderMarketAutoSellPanel = forzar => {
+        const nodo = getMarketAutoSellPanelNode();
+        if (!nodo) return;
+        const sesion = marketAutoSellPanelSession;
+        const tiempo = formatAutoSellPanelDuration(sesion.startedAt ? Date.now() - sesion.startedAt : 0);
+        const firma = `${sesion.sold}|${sesion.gold}|${sesion.failed}|${tiempo}|${sesion.loc}`;
+        if (!forzar && firma === marketAutoSellPanelFirma) return;
+        marketAutoSellPanelFirma = firma;
+        nodo.querySelector('[data-campo="tiempo"]').textContent = tiempo;
+        nodo.querySelector('[data-campo="vendidos"]').textContent = formatNumber(sesion.sold);
+        nodo.querySelector('[data-campo="oro"]').textContent = formatNumber(sesion.gold);
+        const fallos = nodo.querySelector('[data-campo="fallos"]');
+        fallos.textContent = sesion.failed > 0 ? `${sesion.failed} sin vender` : '';
+        fallos.hidden = sesion.failed <= 0;
+        const sitio = nodo.querySelector('[data-campo="sitio"]');
+        sitio.textContent = sesion.loc || 'Hunt';
+        sitio.hidden = !sesion.loc;
+    };
+
+    /* Posicion: se guarda en pixeles de viewport. Se recorta al ventana para
+       que un panel arrastrado a una pantalla grande no quede fuera cuando se
+       cambia de monitor o se redimensiona. */
+    const readMarketAutoSellPanelPosition = () => {
+        try {
+            const bruto = localStorage.getItem(STORAGE_AUTOSELL_PANEL_POSITION);
+            if (!bruto) return null;
+            const p = JSON.parse(bruto);
+            if (p && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))) {
+                return { x:Number(p.x), y:Number(p.y) };
+            }
+        } catch (_) {}
+        return null;
+    };
+    const clampMarketAutoSellPanel = () => {
+        const nodo = getMarketAutoSellPanelNode();
+        if (!nodo || nodo.hidden) return;
+        const caja = nodo.getBoundingClientRect();
+        const maxX = Math.max(0, window.innerWidth - caja.width);
+        const maxY = Math.max(0, window.innerHeight - caja.height);
+        const x = Math.min(Math.max(0, Number(nodo.dataset.posX) || 0), maxX);
+        const y = Math.min(Math.max(0, Number(nodo.dataset.posY) || 0), maxY);
+        nodo.dataset.posX = String(x);
+        nodo.dataset.posY = String(y);
+        nodo.style.left = `${x}px`;
+        nodo.style.top = `${y}px`;
+    };
+    const startMarketAutoSellPanelDrag = (nodo, asa) => {
+        /* pointerdown, no mousedown: asi un dedo en movil y un raton en PC
+           pasan por el mismo camino, y setPointerCapture sigue al puntero aunque
+           se salga del asa. Sin el, al arrastrar rapido el puntero se escapa del
+           elemento y el arrastre se queda pegado. */
+        asa.addEventListener('pointerdown', event => {
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            const caja = nodo.getBoundingClientRect();
+            const dx = event.clientX - caja.left;
+            const dy = event.clientY - caja.top;
+            /* setPointerCapture puede lanzar NotFoundError si el puntero ya no
+               esta activo (por ejemplo si el panel se reinserta entre el gesto y
+               este momento, o en algun WebView). Sin este try el arrastre
+               muriria aqui, sin mover nada y sin avisar, y como los listeners
+               de abajo se enganchan DESPUES, el arrastre se quedaria muerto para
+               siempre. Con el, se degrada a arrastre sin captura: funciona
+               mientras el puntero este encima del asa, que es el caso normal. */
+            try { asa.setPointerCapture(event.pointerId); } catch (_) { /* sin captura */ }
+            const mover = move => {
+                const x = Math.min(Math.max(0, move.clientX - dx), Math.max(0, window.innerWidth - caja.width));
+                const y = Math.min(Math.max(0, move.clientY - dy), Math.max(0, window.innerHeight - caja.height));
+                nodo.dataset.posX = String(x);
+                nodo.dataset.posY = String(y);
+                nodo.style.left = `${x}px`;
+                nodo.style.top = `${y}px`;
+            };
+            const soltar = () => {
+                asa.removeEventListener('pointermove', mover);
+                asa.removeEventListener('pointerup', soltar);
+                asa.removeEventListener('pointercancel', soltar);
+                if (asa.hasPointerCapture?.(event.pointerId)) {
+                    try { asa.releasePointerCapture(event.pointerId); } catch (_) { /* ya no estaba */ }
+                }
+                try {
+                    localStorage.setItem(STORAGE_AUTOSELL_PANEL_POSITION, JSON.stringify({
+                        x:Number(nodo.dataset.posX) || 0, y:Number(nodo.dataset.posY) || 0
+                    }));
+                } catch (_) {}
+            };
+            asa.addEventListener('pointermove', mover);
+            asa.addEventListener('pointerup', soltar);
+            asa.addEventListener('pointercancel', soltar);
+        });
+    };
+
+    const buildMarketAutoSellPanel = () => {
+        if (getMarketAutoSellPanelNode()) return getMarketAutoSellPanelNode();
+        const nodo = document.createElement('div');
+        nodo.id = 'script-market-autosell-panel';
+        nodo.className = 'script-market-autosell-panel';
+        nodo.setAttribute('role', 'status');
+        nodo.innerHTML = `
+            <div class="script-market-autosell-panel-grip" data-asa>
+              <svg class="script-market-autosell-panel-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+              <span class="script-market-autosell-panel-title">Auto venta</span>
+              <span class="script-market-autosell-panel-sitio" data-campo="sitio" hidden></span>
+              <span class="script-market-autosell-panel-tiempo" data-campo="tiempo">00:00</span>
+            </div>
+            <div class="script-market-autosell-panel-body">
+              <div class="script-market-autosell-panel-stat">
+                <b data-campo="vendidos">0</b>
+                <small>vendidos</small>
+              </div>
+              <div class="script-market-autosell-panel-stat">
+                <b class="es-oro" data-campo="oro">0</b>
+                <small>oro</small>
+              </div>
+            </div>
+            <div class="script-market-autosell-panel-fallos" data-campo="fallos" hidden></div>`;
+        document.body.appendChild(nodo);
+        startMarketAutoSellPanelDrag(nodo, nodo.querySelector('[data-asa]'));
+        const guardada = readMarketAutoSellPanelPosition();
+        if (guardada) {
+            nodo.dataset.posX = String(guardada.x);
+            nodo.dataset.posY = String(guardada.y);
+        } else {
+            /* Por defecto arriba a la derecha, debajo del dock. La izquierda
+               esta peor: el mapa y sus filtros van ahi y el panel los tapaba. */
+            nodo.dataset.posX = String(Math.max(8, window.innerWidth - 200));
+            nodo.dataset.posY = '72';
+        }
+        clampMarketAutoSellPanel();
+        window.addEventListener('resize', clampMarketAutoSellPanel, { passive:true });
+        return nodo;
+    };
+
+    /* El corazon: decide si lo que se ve es la misma hunt o una nueva. */
+    const syncMarketAutoSellPanel = () => {
+        const config = readMarketAutoSellConfig();
+        const enHunt = isInHuntContext();
+        const activa = Boolean(config.enabled && enHunt);
+        const nodo = buildMarketAutoSellPanel();
+        if (!activa) {
+            nodo.hidden = true;
+            /* Al salir de la hunt se cierra la sesion en memoria, pero NO se
+               borra el total: si el usuario abre un panel o el auto-reconnect
+               teletransporta y vuelve, la hunt sigue siendo la misma y perder el
+               numero seria falso. El borrado de verdad ocurre al entrar en OTRA
+               hunt, o al caducar. */
+            marketAutoSellPanelInsideHunt = false;
+            return;
+        }
+        const loc = (typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '')
+            || marketAutoSellPanelHuntLoc
+            || '';
+        /* Cambio de hunt: entrar cuando no estabamos dentro, o saltar de una
+           zona a otra. Salir sin volver NO borra nada (ver arriba). */
+        const cambioDeHunt = !marketAutoSellPanelInsideHunt
+            || (marketAutoSellPanelHuntLoc && loc && marketAutoSellPanelHuntLoc !== loc);
+        if (cambioDeHunt) {
+            const guardada = marketAutoSellPanelSession;
+            const hereda = Boolean(
+                guardada.startedAt
+                && guardada.loc === loc
+                && Date.now() - guardada.startedAt < marketAutoSellPanelMaxAgeMs
+            );
+            /* Se hereda solo si es LA MISMA hunt. Si el total guardado es de
+               otra zona, o de una hunt que ya caduco, empieza de cero: ese es
+               el "al iniciar una nueva sesion se borra la anterior". */
+            marketAutoSellPanelSession = hereda
+                ? { ...guardada, startedAt: Date.now() }
+                : { loc, startedAt:Date.now(), sold:0, gold:0, failed:0 };
+            saveMarketAutoSellPanelSession();
+            marketAutoSellPanelFirma = '';
+        }
+        marketAutoSellPanelInsideHunt = true;
+        marketAutoSellPanelHuntLoc = loc;
+        nodo.hidden = false;
+        clampMarketAutoSellPanel();
+        renderMarketAutoSellPanel(true);
+    };
+
+    const startMarketAutoSellPanel = () => {
+        if (marketAutoSellPanelTicker) return;
+        marketAutoSellPanelTicker = setInterval(() => {
+            /* Toda la deteccion va aqui y no en el observer del DOM: este va a
+               1 Hz, que es la frecuencia del reloj del panel, y no dispara
+               ninguna busquedaexpensive. El observer llega a 6,6 por segundo
+               durante una hunt y hacia el mismo trabajo siete veces. */
+            try { syncMarketAutoSellPanel(); } catch (_) { /* un fallo no para el reloj */ }
+        }, 1000);
+    };
+    /* ================= FIN PANEL DE SESION DE LA AUTO-VENTA ================= */
+
+    /* Mover del equipo a la caja. Protocolo copiado de storeTeamPokemon (8416),
+       sin lo especifico del Casino: sin recargar el catalogo de Marlon, sin
+       repintar el panel y sin tocar su estado. */
+    const storePokemonToDepot = async pokeId => {
+        if (!pokeId) throw new Error('Pokemon sin identificador.');
+        if (!await waitForGameSocket(2200)) throw new Error('La conexion del juego no esta disponible.');
+        /* Este SI usa el canal compartido, porque poke-store solo se puede pedir
+           por ahi. El riesgo es que otra espera de pokes se quede con la
+           respuesta; por eso el resultado se verifica unas lineas mas abajo y se
+           lanza si el Pokemon sigue en el equipo. Quien llama lo reintenta. */
+        let updated = await requestGameEvent('pokes', { type: 'poke-store', pokeId }, null, 3200);
+        if (!updated.length) updated = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs: 2200, attempts: 1 });
+        const guardado = updated.find(entry => getPokeId(entry) === pokeId);
+        if (!updated.length || guardado?.team) throw new Error('No se pudo guardar el Pokemon en el deposito.');
+        return true;
+    };
+
+    /* Vende por oro al juego. El precio lo pone el juego: aqui no hay ninguno, que
+       es justo lo que distingue esto de la auto-compra del market. El oro es
+       result.goldGained y NUNCA poke.sellValue, que es solo el valor teorico del
+       catalogo. El guardado va antes por si el Pokemon llegara en el equipo.
+
+       Un fallo se anota con su motivo y NO se reintenta solo. */
+    const sellPokemonForGold = async (poke, config) => {
+        const pokeId = getPokeId(poke);
+        try {
+            if (poke?.team) await storePokemonToDepot(pokeId);
+            const result = await gameApiRequest('/api/game/pokemon/sell', {
+                method: 'POST', body: JSON.stringify({ pokeIds: [pokeId] })
+            });
+            const goldGained = Number(result?.goldGained ?? 0);
+            addMarketAutoSellLogEntry(marketAutoSellLogEntryFor(poke, config, { ok: true, gold: goldGained, error: '' }));
+            return { ok: true, goldGained, error: '' };
+        } catch (error) {
+            const motivo = String(error?.message || error || 'error desconocido');
+            addMarketAutoSellLogEntry(marketAutoSellLogEntryFor(poke, config, { ok: false, gold: 0, error: motivo }));
+            return { ok: false, goldGained: 0, error: motivo };
+        }
+    };
+
+    /* Aviso emergente de la auto-venta. Cola de uno en uno, como el de ventas del
+       market: sin cola, dos Pokemon vendidos seguidos montan dos avisos encima.
+       Va a document.body con z-index altisimo, asi que se ve con cualquier otra
+       ventana abierta por encima. */
+    const marketAutoSellToastQueue = [];
+    let marketAutoSellToastBusy = false;
+    /* Los que no se venden NO se marcan en el registro de vistos, a proposito,
+       para que un cambio en los cortes los alcance despues. Pero eso significa
+       que siguen apareciendo como no vistos, asi que hay que acordarse de a
+       quien ya se aviso. En memoria no basta: se repetian TODOS en cada recarga. */
+    const marketAutoSellNotifiedKey = 'script_market_auto_sell_notified_v1';
+    const readMarketAutoSellNotified = () => {
+        try {
+            const bruto = localStorage.getItem(marketAutoSellNotifiedKey);
+            if (bruto) {
+                const parseado = JSON.parse(bruto);
+                if (Array.isArray(parseado)) return new Set(parseado.map(String));
+            }
+        } catch (_) {}
+        return new Set();
+    };
+    const saveMarketAutoSellNotified = () => {
+        try { localStorage.setItem(marketAutoSellNotifiedKey, JSON.stringify([...marketAutoSellSkipAvisados])); } catch (_) {}
+    };
+    const marketAutoSellSkipAvisados = readMarketAutoSellNotified();
+
+    const queueMarketAutoSellToast = aviso => {
+        marketAutoSellToastQueue.push(aviso);
+        if (marketAutoSellToastBusy) return;
+        const mostrarSiguiente = () => {
+            const siguiente = marketAutoSellToastQueue.shift();
+            if (!siguiente) { marketAutoSellToastBusy = false; return; }
+            marketAutoSellToastBusy = true;
+            const nodo = document.createElement('div');
+            nodo.className = 'script-market-autosell-toast is-' + (siguiente.tono || 'ok');
+            const icono = siguiente.tono === 'ok' ? '✓' : (siguiente.tono === 'error' ? '!' : '×');
+            nodo.innerHTML = '<span>' + icono + '</span><b>' + escapeHTML(siguiente.titulo || '') + '</b><small>' + escapeHTML(siguiente.detalle || '') + '</small>';
+            document.body.appendChild(nodo);
+            requestAnimationFrame(() => nodo.classList.add('show'));
+            setTimeout(() => {
+                nodo.classList.remove('show');
+                setTimeout(() => { nodo.remove(); mostrarSiguiente(); }, 180);
+            }, 2600);
+        };
+        mostrarSiguiente();
+    };
+
+    let marketAutoSellBusy = false;
+
+    /* Se engancha al evento pokes, que salta cada vez que cambia la lista de
+       Pokemon del juego, y una captura completada la cambia. No hay sondeo: el
+       servidor empuja el evento, y por eso no hay ventana en la que se escape
+       una captura. */
+    const handleMarketAutoSellTick = async list => {
+        if (marketAutoSellBusy) return;
+        const config = readMarketAutoSellConfig();
+        if (!config.enabled) return;
+        /* Hay una compra del Cassino en marcha. Esta pasada no vende nada, y
+           sobre todo NO consume la semilla: consumirla aqui registraria como
+           vistos los Pokemon que aún no son de nadie, que es exactamente el
+           fallo que hacia que el equipo de caza pareciera nuevo. Los 'pokes'
+           siguen llegando, asi que la captura se recoge en la siguiente. */
+        if (casinoPurchasesInFlight > 0) return;
+        if (!marketAutoSellSeenLoaded) loadMarketAutoSellSeen();
+
+        const presentes = (Array.isArray(list) ? list : []).map(poke => getPokeId(poke)).filter(Boolean);
+        /* NO se recorta con la lista que llega: una lista corta borraria el
+           registro y haria vender Pokemon ya decididos. Solo se aplica el tope
+           alto, que no depende de lo que traiga este mensaje. */
+        replaceMarketAutoSellSeen(capMarketAutoSellSeen(marketAutoSellSeen));
+
+        /* La siembra: solo la primera pasada despues de encender. Registra lo que
+           hay y NO vende nada. Es la regla de seguridad que aprobo el usuario:
+           nada de lo que ya esta en el deposito se vende. */
+        if (consumeMarketAutoSellSeed()) {
+            presentes.forEach(id => marketAutoSellSeen.add(id));
+            saveMarketAutoSellSeen();
+            return;
+        }
+
+        const { sell, skip } = reconcileAutoSellSeen(list, marketAutoSellSeen, config, isTeamPokemonProtected);
+
+        /* Los que no se venden se avisan UNA vez por id y sesion: como a los
+           saltados no se les marca como vistos, volverian a salir en cada pokes y
+           el aviso se repetiria sin parar. La marca vive en memoria, asi que al
+           recargar se vuelve a avisar de lo que siga ahi, que es lo que se quiere. */
+        skip.forEach(poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || marketAutoSellSkipAvisados.has(pokeId)) return;
+            marketAutoSellSkipAvisados.add(pokeId);
+            saveMarketAutoSellNotified();
+            const decision = autoSellDecision(poke, config, isTeamPokemonProtected, true);
+            queueMarketAutoSellToast({
+                tono: 'no',
+                titulo: 'No vendido: ' + (poke?.name || 'Pokemon'),
+                detalle: decision.motivo
+            });
+        });
+
+        if (!sell.length) return;
+
+        marketAutoSellBusy = true;
+        try {
+            for (const poke of sell) {
+                const pokeId = getPokeId(poke);
+                /* ANTES de la peticion, no despues: si la venta falla y se marcase
+                   al final, el mismo Pokemon se reintentaria en la siguiente
+                   pasada y se vendria dos veces. */
+                marketAutoSellSeen.add(pokeId);
+                saveMarketAutoSellSeen();
+                const resultado = await sellPokemonForGold(poke, config);
+                if (resultado && resultado.ok) {
+                    queueMarketAutoSellToast({
+                        tono: 'ok',
+                        titulo: 'Vendido: ' + (poke?.name || 'Pokemon'),
+                        detalle: 'IV ' + Number(poke?.ivTotal || 0) + ' · ' + Number(resultado.goldGained || 0).toLocaleString() + ' de oro'
+                    });
+                } else {
+                    queueMarketAutoSellToast({
+                        tono: 'error',
+                        titulo: 'No se pudo vender: ' + (poke?.name || 'Pokemon'),
+                        detalle: (resultado && resultado.error) || 'error desconocido'
+                    });
+                }
+                if (!resultado || !resultado.ok) {
+                    /* Se retira: el Pokemon sigue ahi y tiene que poder volver a
+                       intentarse cuando llegue otro pokes. */
+                    marketAutoSellSeen.delete(pokeId);
+                    saveMarketAutoSellSeen();
+                }
+            }
+        } catch (_) {
+            /* sellPokemonForGold ya captura sus errores y los anota. Si algo se
+               escapa hasta aqui, se traga: un fallo no puede romper el manejador
+               del socket, que comparte con todo el script. */
+        } finally {
+            marketAutoSellBusy = false;
+        }
+    };
+
+    /* ================= AUTO-VENTA: BOTON Y MENU =================
+
+    /* Las opciones del corte salen de la tabla real de rarezas, con el ID como
+       valor y la etiqueta como texto. Poner las etiquetas a mano seria una forma
+       de guardar algo que tierOrder no reconoce, y ahi no se venderia nunca sin
+       ningun error a la vista. */
+    const marketAutoSellTierOptions = () => [
+        ['', 'Cualquier rareza'],
+        ...MARKET_QUALITY_TIER_DEFINITIONS.map(d => [d.id, d.label])
+    ];
+
+    /* Se busca en document y NO con backdrop.querySelector: esta funcion vive a
+       nivel de modulo, y backdrop solo existe dentro de showGlobalMarketWindow.
+       Usar backdrop aqui lanzaba ReferenceError al abrir el market, y como se
+       llama durante el montaje de la ventana, la ventana no llegaba a aparecer.
+       El boton es unico en la pagina, asi que buscar en document es equivalente. */
+    const refrescarMarketAutoSellButton = (raiz = document) => {
+        const boton = raiz.querySelector('.script-market-autosell-btn');
+        if (!boton) return;
+        const config = readMarketAutoSellConfig();
+        boton.classList.toggle('is-on', config.enabled);
+        boton.title = config.enabled
+            ? `Auto-venta activa: por debajo de ${config.minIv} IV${config.minTier ? ' y de ' + (MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === config.minTier)?.label || config.minTier) : ''}`
+            : 'Auto-venta del deposito';
+    };
+
+    /* El dialogo se inyecta en document.body y NO en el backdrop: el Casino
+       tiene ese gotcha documentado y un dialogo dentro se queda tapado. */
+    const openMarketAutoSellConfig = () => {
+        document.querySelector('.script-market-autosell-config-backdrop')?.remove();
+        const config = readMarketAutoSellConfig();
+        const capa = document.createElement('div');
+        capa.className = 'script-market-autosell-config-backdrop';
+        const opciones = marketAutoSellTierOptions()
+            .map(([valor, texto]) => `<option value="${escapeHTML(valor)}"${valor === config.minTier ? ' selected' : ''}>${escapeHTML(texto)}</option>`)
+            .join('');
+        capa.innerHTML = `
+            <div class="script-market-autosell-config" role="dialog" aria-modal="true" aria-label="Auto-venta del deposito">
+              <div class="script-market-autosell-config-head">
+                <h3>
+                  <svg class="script-market-autosell-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+                  <span>Auto-venta</span>
+                </h3>
+                <button class="script-market-autosell-config-close" data-accion="cerrar" type="button" aria-label="Cerrar">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6"/></svg>
+                </button>
+              </div>
+              <div class="script-market-autosell-config-body">
+                <p class="script-market-autosell-config-note">Cada <b> Pokemon cazado</b> que entre en el deposito y se quede por debajo de <b>los dos cortes</b> se vende solo por oro. El <b>equipo de caza no se toca</b>, y los Pokemon del <b>Cassino</b> se resuelven con la regla de ahi.</p>
+                <div class="script-market-autosell-config-group">
+                  <h4>General</h4>
+                  <label class="script-market-autosell-config-check">
+                    <input type="checkbox" class="script-market-autosell-input-enabled"${config.enabled ? ' checked' : ''}>
+                    <span>Activar la auto-venta</span>
+                  </label>
+                </div>
+                <div class="script-market-autosell-config-group">
+                  <h4>Cortes</h4>
+                  <div class="script-market-autosell-config-row">
+                    <label class="script-market-autosell-config-field">
+                      <label>IV maximos</label>
+                      <input class="script-market-autosell-input-iv" type="number" min="0" max="192" inputmode="numeric" value="${config.minIv}">
+                    </label>
+                    <label class="script-market-autosell-config-field">
+                      <label>Rareza por debajo de</label>
+                      <select class="script-market-autosell-input-tier">${opciones}</select>
+                    </label>
+                  </div>
+                </div>
+                <div class="script-market-autosell-config-preview" data-preview></div>
+                <div class="script-market-autosell-config-actions">
+                  <button class="script-market-autosell-config-btn is-cancel" data-accion="cancelar" type="button">Cancelar</button>
+                  <button class="script-market-autosell-config-btn is-primary" data-accion="guardar" type="button">Guardar</button>
+                </div>
+              </div>
+            </div>`;
+        document.body.appendChild(capa);
+        return {
+            capa,
+            enabledInput: capa.querySelector('.script-market-autosell-input-enabled'),
+            ivInput: capa.querySelector('.script-market-autosell-input-iv'),
+            tierInput: capa.querySelector('.script-market-autosell-input-tier'),
+            preview: capa.querySelector('[data-preview]'),
+            botonGuardar: capa.querySelector('[data-accion="guardar"]')
+        };
+    };
+
+    const wireMarketAutoSellConfig = (manejadores, refrescarBoton) => {
+        const { capa, enabledInput, ivInput, tierInput, preview, botonGuardar } = manejadores;
+        const trial = () => ({
+            enabled: enabledInput.checked, minIv: Number(ivInput.value || 0), minTier: tierInput.value
+        });
+        const refrescarPreview = () => {
+            const actual = trial();
+            const enElDeposito = (latestPokemon || []).filter(poke => poke && !poke.team);
+            /* El preview llama a shouldAutoSellPokemon, la MISMA que vende. El del
+               Cassino la reimplementa a mano y por eso puede mentir en cuanto las
+               dos copias se separan. */
+            const candidatos = enElDeposito.filter(poke => shouldAutoSellPokemon(poke, actual, isTeamPokemonProtected, false));
+            if (!enElDeposito.length) {
+                preview.innerHTML = 'No hay Pokemon en el deposito todavia.';
+            } else if (!candidatos.length) {
+                preview.innerHTML = `Ninguno de los <b>${enElDeposito.length}</b> Pokemon del deposito entra por estos cortes.`;
+            } else {
+                /* El oro sale de sellValue, el mismo campo que usa autoSellDecision
+                   para decidir si el Pokemon vale algo. Se muestra porque un
+                   numero es lo que convierte un corte en una decision: sin el,
+                   "8 de 210" no dice si merece la pena. */
+                const oro = candidatos.reduce(
+                    (suma, poke) => suma + Math.max(0, Number(poke.sellValue || 0)), 0
+                );
+                const regla = [
+                    `IV < ${Number(actual.minIv || 0)}`,
+                    actual.minTier
+                        ? `rareza < ${(MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === actual.minTier)?.label || actual.minTier)}`
+                        : 'cualquier rareza'
+                ].join(' y ');
+                const apagada = actual.enabled
+                    ? ''
+                    : '<br><span class="script-market-autosell-preview-warn">La auto-venta esta apagada: no se vendra nada.</span>';
+                preview.innerHTML = `<b>${candidatos.length}</b> de ${enElDeposito.length} Pokemon del deposito cumplen ahora mismo.<br>`
+                    + `${regla} &rarr; unos <b>${oro.toLocaleString('es-VE')}</b> de oro.${apagada}`;
+            }
+            botonGuardar.disabled = false;
+        };
+        [enabledInput, ivInput, tierInput].forEach(controlo => {
+            controlo.addEventListener('input', refrescarPreview);
+            controlo.addEventListener('change', refrescarPreview);
+        });
+        refrescarPreview();
+        /* Escape cierra, como en el Casino. El listener se quita al cerrar: este
+           manejador vive en document y, sin limpiarlo, cada apertura dejaba uno
+           mas apuntando a una capa ya borrada. */
+        const cerrar = () => {
+            document.removeEventListener('keydown', onTecla);
+            capa.remove();
+        };
+        const onTecla = event => {
+            if (event.key === 'Escape') cerrar();
+        };
+        document.addEventListener('keydown', onTecla);
+        capa.addEventListener('click', event => {
+            const accion = event.target?.getAttribute?.('data-accion');
+            if (event.target === capa || accion === 'cerrar' || accion === 'cancelar') {
+                cerrar();
+                return;
+            }
+            if (accion === 'guardar') {
+                const siguiente = trial();
+                siguiente.minIv = Math.min(192, Math.max(0, Math.floor(Number(siguiente.minIv || 0))));
+                /* writeMarketAutoSellConfig borra la marca de siembra cuando
+                   enabled es true, asi que encender desde aqui siembra y no vende
+                   nada de lo que ya hay. */
+                writeMarketAutoSellConfig(siguiente);
+                cerrar();
+                refrescarBoton();
+            }
+        });
+    };
+    /* ================= FIN AUTO-VENTA: BOTON Y MENU ================= */
+
+
+    /* ================= AUTO-VENTA: EL DISPARADOR ES LA CAPTURA =================
+
+    /* El evento pokes NO se empuja al capturar: se pide. Las ventas salian en
+       rafagas que coincidian con abrir un panel, no con cazar. Por eso el
+       disparador de verdad es el registro de capturas del juego: si no hay
+       captura nueva, esto no llama a nada. Es justo lo contrario de un
+       temporizador que procesa lo que encuentre. */
+    const marketAutoSellCapturePollMs = 4000;
+    let marketAutoSellCaptureInterval = null;
+    let marketAutoSellCaptureBusy = false;
+    let marketAutoSellLastCaptureKey = null;
+
+    /* La primera fila del registro es la captura mas reciente. La API no da un
+       id, asi que se identifica por sus datos. Si cambian, hubo captura. */
+    const marketAutoSellCaptureKey = rows => {
+        const primera = Array.isArray(rows) && rows.length ? rows[0] : null;
+        if (!primera) return '';
+        return [
+            primera.name, primera.level, primera.quality,
+            primera.ivTotal ?? primera.totalIv ?? primera.iv ?? primera.growth,
+            primera.caughtAt ?? primera.at ?? primera.time ?? primera.date
+        ].join('|');
+    };
+
+    /* Con una captura nueva, se pide la lista fresca y se decide. No hace falta
+       saber CUAL se cazo: el diff de no vistos ya la encuentra sola. */
+    const handleMarketAutoSellCapture = async () => {
+        try {
+            /* Se pide por el CONTEXTO del juego y NO con requestFreshGameEvent.
+               Ese otro usa el mismo canal de espera que la auto-venta del Casino
+               y que la del propio market, y el mensaje pokes resuelve TODAS las
+               esperas de ese tipo a la vez, sin distinguir quien pidio que. Con
+               el, la respuesta de este sondeo le robaba la respuesta al Casino a
+               mitad de un guardado y le salia "No se pudo vender el Pokemon".
+               El contexto tiene su propia suscripcion y no toca esa cola. */
+            let fresca = [];
+            try { fresca = await requestPokemonTeamFromGameContext(2200); } catch (_) { fresca = []; }
+            await handleMarketAutoSellTick(fresca.length ? fresca : (latestPokemon || []));
+        } catch (_) {
+            /* Si el juego no responde, la captura se perdio para la auto-venta.
+               Es preferible perder una a vender algo que no se cazo. */
+        }
+    };
+
+    const pollMarketAutoSellCaptures = async () => {
+        if (marketAutoSellCaptureBusy) return;
+        if (!readMarketAutoSellConfig().enabled) return;
+        marketAutoSellCaptureBusy = true;
+        try {
+            const payload = await gameApiRequest('/api/game/capture-log?filter=all');
+            const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+            const clave = marketAutoSellCaptureKey(rows);
+            if (!clave) return;
+            /* La primera vuelta solo toma nota: si no, al arrancar venderia por
+               capturas viejas. */
+            if (marketAutoSellLastCaptureKey === null) { marketAutoSellLastCaptureKey = clave; return; }
+            if (clave === marketAutoSellLastCaptureKey) return;
+            marketAutoSellLastCaptureKey = clave;
+            await handleMarketAutoSellCapture();
+        } catch (_) {
+            /* 401 si aun no hay sesion, o un corte de red. Se reintenta solo. */
+        } finally {
+            marketAutoSellCaptureBusy = false;
+        }
+    };
+
+    /* Arranca siempre, y la propia funcion no hace nada si la auto-venta esta
+       apagada. Cuando se enciende, el reloj ya estaba andando. */
+    const startMarketAutoSellCaptureWatch = () => {
+        if (marketAutoSellCaptureInterval) return;
+        marketAutoSellCaptureInterval = setInterval(pollMarketAutoSellCaptures, marketAutoSellCapturePollMs);
+    };
+    /* ================= FIN AUTO-VENTA: EL DISPARADOR ES LA CAPTURA ================= */
+    /* ================= FIN AUTO-VENTA: VENDER Y EL DETECTOR ================= */
+
+
+
 
     function parseGameNumber(value) {
         const text = String(value ?? '').trim().toLowerCase();
@@ -2077,6 +3506,1047 @@
         if (id >= 152 && id <= 251 && id !== 201) return `/assets/pokeitems/gen2/${id}.png`;
         if ((id >= 252 && id <= 386) || id === 447 || id === 448) return `/assets/pokeitems/gen3/${id}.png`;
         return POKEMON_ITEM_ICONS[id] ? `/assets/pokeitems/${POKEMON_ITEM_ICONS[id]}.png` : '';
+    }
+
+    const DAILY_KILL_VARIANT_PREFIXES = new Set([
+        'ancient', 'nightmare', 'outland', 'kanto', 'johto', 'hoenn', 'sinnoh', 'unova', 'kalos', 'alola', 'galar', 'hisui', 'paldea',
+        'shadow', 'golden', 'silver', 'crystal', 'rose', 'crowned', 'eternal', 'origin', 'totem', 'mega', 'gmax', 'gigantamax'
+    ]);
+
+    const DAILY_KILL_NATIVE_LOOKTYPES = Object.freeze({
+        "abra": 262,
+        "absol": 1875,
+        "aerodactyl": 10,
+        "aggron": 1863,
+        "aipom": 348,
+        "alakazam": 218,
+        "altaria": 1885,
+        "ampharos": 361,
+        "ancient dragonair": 61,
+        "ancient granbull": 2883,
+        "ancient hypno": 119,
+        "ancient marowak": 197,
+        "ancient meganium": 320,
+        "ancient pinsir": 53,
+        "ancient pupitar": 401,
+        "ancient xatu": 347,
+        "arbok": 39,
+        "arcanine": 91,
+        "ariados": 337,
+        "aron": 1861,
+        "azumarill": 352,
+        "bagon": 1866,
+        "baltoy": 2047,
+        "banette": 1910,
+        "banshee misdreavus": 366,
+        "bayleef": 319,
+        "beedrill": 3563,
+        "beldum": 1896,
+        "bellossom": 355,
+        "bellsprout": 250,
+        "blastoise": 55,
+        "blaziken": 1858,
+        "brave alakazam": 218,
+        "brave arcanine": 91,
+        "brave blastoise": 55,
+        "brave charizard": 67,
+        "brave clefable": 68,
+        "brave mantine": 392,
+        "brave nidoking": 35,
+        "brave nidoqueen": 79,
+        "brave noctowl": 333,
+        "brave steelix": 369,
+        "brave venusaur": 22,
+        "brute rhydon": 200,
+        "bulbasaur": 25,
+        "butterfree": 40,
+        "cacturne": 5214,
+        "camerupt": 1943,
+        "caterpie": 32,
+        "cerulean": 1309,
+        "chansey": 4,
+        "charged raichu": 50,
+        "charizard": 67,
+        "charmander": 29,
+        "charmeleon": 23,
+        "chikorita": 318,
+        "chinchou": 339,
+        "claydol": 2036,
+        "clefable": 68,
+        "clefairy": 73,
+        "cleffa": 343,
+        "cloyster": 72,
+        "combusken": 1857,
+        "corphish": 1928,
+        "corsola": 388,
+        "crawdaunt": 1929,
+        "crobat": 338,
+        "croconaw": 328,
+        "cubone": 124,
+        "cyndaquil": 321,
+        "dark crobat": 338,
+        "delibird": 399,
+        "dewgong": 110,
+        "diglett": 82,
+        "dodrio": 120,
+        "doduo": 26,
+        "donphan": 405,
+        "dragonair": 61,
+        "dragonite": 211,
+        "dratini": 58,
+        "drowzee": 94,
+        "dugtrio": 83,
+        "dunsparce": 364,
+        "dusclops": 1906,
+        "duskull": 1905,
+        "ekans": 7,
+        "electabuzz": 281,
+        "electrike": 1870,
+        "electrode": 125,
+        "elekid": 3674,
+        "enigmatic girafarig": 362,
+        "enraged typhlosion": 323,
+        "evil cloyster": 72,
+        "exeggcute": 213,
+        "exeggutor": 46,
+        "exploud": 1924,
+        "farfetch'd": 57,
+        "fearow": 17,
+        "feraligatr": 329,
+        "flaaffy": 350,
+        "flygon": 1894,
+        "forretress": 368,
+        "freezing dewgong": 110,
+        "furious ampharos": 361,
+        "furious gyarados": 117,
+        "furious magmar": 76,
+        "furious pidgeot": 80,
+        "furious sandslash": 115,
+        "furious scyther": 15,
+        "furious skarmory": 398,
+        "furious wigglytuff": 64,
+        "furret": 415,
+        "gardevoir": 1849,
+        "gastly": 48,
+        "gengar": 244,
+        "geodude": 196,
+        "girafarig": 362,
+        "glalie": 1878,
+        "gligar": 383,
+        "gloom": 74,
+        "golbat": 122,
+        "goldeen": 274,
+        "golduck": 99,
+        "golem": 116,
+        "granbull": 2883,
+        "graveler": 247,
+        "grimer": 214,
+        "grovyle": 1851,
+        "growlithe": 109,
+        "grumpig": 3762,
+        "gyarados": 117,
+        "hard golem": 116,
+        "haunter": 65,
+        "heavy piloswine": 390,
+        "heracross": 373,
+        "hitmonchan": 38,
+        "hitmonlee": 20,
+        "hitmontop": 414,
+        "hoothoot": 332,
+        "hoppip": 356,
+        "horsea": 33,
+        "houndoom": 395,
+        "houndour": 394,
+        "hypno": 119,
+        "igglybuff": 342,
+        "ivysaur": 24,
+        "jigglypuff": 203,
+        "jumpluff": 358,
+        "jynx": 282,
+        "kabuto": 98,
+        "kabutops": 164,
+        "kadabra": 219,
+        "kakuna": 60,
+        "kangaskhan": 198,
+        "kingdra": 406,
+        "kingler": 245,
+        "kirlia": 1847,
+        "koffing": 228,
+        "krabby": 112,
+        "lairon": 1862,
+        "lanturn": 340,
+        "lapras": 193,
+        "larvitar": 400,
+        "lavender": 1309,
+        "ledian": 335,
+        "ledyba": 334,
+        "lickitung": 11,
+        "lombre": 1883,
+        "lotad": 1879,
+        "loudred": 1923,
+        "lucario": 1949,
+        "ludicolo": 1880,
+        "machamp": 121,
+        "machoke": 113,
+        "machop": 118,
+        "magby": 386,
+        "magcargo": 397,
+        "magmar": 76,
+        "magnemite": 217,
+        "magnetic electabuzz": 281,
+        "magneton": 223,
+        "makuhita": 1873,
+        "manectric": 1871,
+        "mankey": 106,
+        "mantine": 392,
+        "mareep": 349,
+        "marill": 351,
+        "marowak": 197,
+        "marshtomp": 1854,
+        "mawile": 1859,
+        "medicham": 1889,
+        "meditite": 1888,
+        "meganium": 320,
+        "meowth": 105,
+        "metang": 1897,
+        "metapod": 31,
+        "mightyena": 2872,
+        "milch-miltank": 408,
+        "miltank": 408,
+        "misdreavus": 366,
+        "mr. mime": 246,
+        "mudkip": 1853,
+        "muk": 47,
+        "natu": 346,
+        "nidoking": 35,
+        "nidoqueen": 79,
+        "nidoranfe": 70,
+        "nidoranma": 66,
+        "nidorina": 71,
+        "nidorino": 78,
+        "nightmare abomasnow": 2108,
+        "nightmare alakazam": 218,
+        "nightmare alolan diglett": 3851,
+        "nightmare alolan dugtrio": 7250,
+        "nightmare alolan meowth": 3718,
+        "nightmare alolan muk": 3669,
+        "nightmare alolan persian": 3572,
+        "nightmare alolan raichu": 3562,
+        "nightmare altaria": 1885,
+        "nightmare appletun": 7617,
+        "nightmare bagon e shelgon": 1866,
+        "nightmare banette": 1910,
+        "nightmare barboach": 3719,
+        "nightmare beedrill": 3563,
+        "nightmare braviary": 7252,
+        "nightmare carvanha": 3782,
+        "nightmare chandelure": 2792,
+        "nightmare cloyster": 72,
+        "nightmare cranidos": 3790,
+        "nightmare dragonite": 211,
+        "nightmare drampa": 10088,
+        "nightmare dratini e dragonair": 58,
+        "nightmare eelektrik": 3722,
+        "nightmare eelektross": 3564,
+        "nightmare elekid": 3674,
+        "nightmare espurr": 7763,
+        "nightmare farfetchd": 57,
+        "nightmare gabite": 3924,
+        "nightmare galarian darmanitan": 6218,
+        "nightmare galarian darumaka": 6217,
+        "nightmare galarian farfetchd": 6963,
+        "nightmare galarian meowth": 6271,
+        "nightmare gallade": 2958,
+        "nightmare garchomp": 3517,
+        "nightmare gardevoir": 1849,
+        "nightmare gible": 3923,
+        "nightmare glalie": 1878,
+        "nightmare gogoat": 3723,
+        "nightmare goodra": 7146,
+        "nightmare goomy": 7271,
+        "nightmare granbull": 2883,
+        "nightmare grimer": 214,
+        "nightmare houndoom": 395,
+        "nightmare infernape": 2960,
+        "nightmare kirlia": 1847,
+        "nightmare klang": 3788,
+        "nightmare klink": 3787,
+        "nightmare klinklang": 3789,
+        "nightmare lampent": 2793,
+        "nightmare lilligant": 6859,
+        "nightmare litleo": 3573,
+        "nightmare litwick": 2794,
+        "nightmare lunatone": 3859,
+        "nightmare luxray": 2959,
+        "nightmare machamp": 121,
+        "nightmare machoke": 113,
+        "nightmare magby": 386,
+        "nightmare magnezone": 3104,
+        "nightmare manectric": 1871,
+        "nightmare mantine": 392,
+        "nightmare mantyke": 5119,
+        "nightmare misdreavus": 366,
+        "nightmare muk": 47,
+        "nightmare ninetales": 114,
+        "nightmare nuzleaf": 2029,
+        "nightmare petilil": 6967,
+        "nightmare pidgeot": 80,
+        "nightmare piloswine": 390,
+        "nightmare pinsir": 53,
+        "nightmare porygon": 97,
+        "nightmare pyroar female": 4010,
+        "nightmare raichu": 50,
+        "nightmare ralts": 1848,
+        "nightmare rampardos": 3791,
+        "nightmare rockruff": 7535,
+        "nightmare rufflet": 7251,
+        "nightmare sandaconda": 8045,
+        "nightmare scizor": 370,
+        "nightmare scolipede": 10081,
+        "nightmare seviper": 1944,
+        "nightmare sharpedo": 3783,
+        "nightmare shiftry": 2030,
+        "nightmare shuppet": 1909,
+        "nightmare silicobra": 8044,
+        "nightmare simisear": 3570,
+        "nightmare sirfetch'd": 6016,
+        "nightmare skiddo": 3725,
+        "nightmare sliggoo": 7272,
+        "nightmare sneasel": 375,
+        "nightmare snorunt": 1877,
+        "nightmare snubbull": 410,
+        "nightmare solrock": 3860,
+        "nightmare spoink": 1919,
+        "nightmare starmie": 249,
+        "nightmare steelix": 369,
+        "nightmare sudowoodo": 360,
+        "nightmare tangela": 18,
+        "nightmare togekiss": 2109,
+        "nightmare togetic": 345,
+        "nightmare torkoal": 1939,
+        "nightmare turtonator": 9051,
+        "nightmare tynamo": 3726,
+        "nightmare tyranitar": 416,
+        "nightmare ursaring": 372,
+        "nightmare venipede": 10079,
+        "nightmare weavile": 3577,
+        "nightmare whiscash": 3571,
+        "nightmare wormadam": 3578,
+        "ninetales": 114,
+        "noctowl": 333,
+        "numel": 1942,
+        "nuzleaf": 2029,
+        "octillery": 393,
+        "oddish": 56,
+        "omanyte": 92,
+        "omastar": 192,
+        "onix": 248,
+        "paras": 81,
+        "parasect": 95,
+        "pelipper": 2884,
+        "persian": 3,
+        "phanpy": 479,
+        "pichu": 341,
+        "pidgeot": 80,
+        "pidgeotto": 5,
+        "pidgey": 30,
+        "pikachu": 59,
+        "piloswine": 390,
+        "pineco": 367,
+        "pinsir": 53,
+        "politoed": 359,
+        "poliwag": 111,
+        "poliwhirl": 212,
+        "poliwrath": 104,
+        "ponyta": 16,
+        "poochyena": 2866,
+        "primeape": 103,
+        "psy jynx": 282,
+        "psyduck": 100,
+        "pupitar": 401,
+        "quagsire": 381,
+        "quilava": 322,
+        "qwilfish": 979,
+        "raichu": 50,
+        "ralts": 1848,
+        "rapidash": 2116,
+        "raticate": 69,
+        "rattata": 36,
+        "remoraid": 391,
+        "rhydon": 200,
+        "rhyhorn": 77,
+        "riolu": 2033,
+        "roll donphan": 405,
+        "sableye": 2035,
+        "sandshrew": 43,
+        "sandslash": 115,
+        "sceptile": 1852,
+        "scizor": 370,
+        "scyther": 15,
+        "seadra": 276,
+        "seaking": 272,
+        "sealeo": 1932,
+        "seedot": 2028,
+        "seel": 101,
+        "sentret": 412,
+        "seviper": 1944,
+        "shelgon": 1867,
+        "shellder": 54,
+        "shiftry": 2030,
+        "shuckle": 411,
+        "skarmory": 398,
+        "skiploom": 357,
+        "slakoth": 1925,
+        "slowbro": 41,
+        "slowpoke": 75,
+        "slugma": 396,
+        "smoochum": 402,
+        "sneasel": 375,
+        "snorlax": 51,
+        "snorunt": 1877,
+        "snubbull": 410,
+        "spearow": 27,
+        "spheal": 1931,
+        "spinarak": 336,
+        "spoink": 1919,
+        "squirtle": 2,
+        "stantler": 409,
+        "starmie": 249,
+        "staryu": 42,
+        "steelix": 369,
+        "sunflora": 354,
+        "sunkern": 353,
+        "swablu": 1884,
+        "swampert": 1855,
+        "swellow": 2032,
+        "swinub": 389,
+        "taekwondo hitmonchan": 38,
+        "taekwondo hitmonlee": 20,
+        "taekwondo hitmontop": 414,
+        "taillow": 2031,
+        "tangela": 18,
+        "tauros": 93,
+        "teddiursa": 371,
+        "tentacool": 96,
+        "tentacruel": 108,
+        "togepi": 344,
+        "togetic": 345,
+        "torchic": 1856,
+        "torkoal": 1939,
+        "totodile": 327,
+        "trapinch": 1892,
+        "treecko": 1850,
+        "tribal feraligatr": 329,
+        "trickmaster gengar": 244,
+        "tropius": 1886,
+        "typhlosion": 323,
+        "tyranitar": 416,
+        "tyrogue": 384,
+        "ursaring": 372,
+        "venomoth": 49,
+        "venonat": 52,
+        "venusaur": 22,
+        "vibrava": 1893,
+        "victreebel": 240,
+        "vigoroth": 1948,
+        "vileplume": 89,
+        "viridian": 1309,
+        "voltorb": 123,
+        "vulpix": 62,
+        "walrein": 1934,
+        "war heracross": 373,
+        "wartortle": 6,
+        "weedle": 21,
+        "weepinbell": 37,
+        "weezing": 231,
+        "whismur": 1921,
+        "wigglytuff": 64,
+        "wingull": 3065,
+        "wobbuffet": 382,
+        "wooper": 380,
+        "xatu": 347,
+        "yanma": 379,
+        "zangoose": 2034,
+        "zubat": 44
+    });
+
+    const DAILY_KILL_BASE_SPECIES_IDS = Object.freeze({
+        "abra": 63,
+        "absol": 359,
+        "aerodactyl": 142,
+        "aggron": 306,
+        "aipom": 190,
+        "alakazam": 65,
+        "altaria": 334,
+        "ampharos": 181,
+        "ancient dragonair": 148,
+        "ancient granbull": 210,
+        "ancient hypno": 97,
+        "ancient marowak": 105,
+        "ancient meganium": 154,
+        "ancient pinsir": 127,
+        "ancient pupitar": 247,
+        "ancient xatu": 178,
+        "arbok": 24,
+        "arcanine": 59,
+        "ariados": 168,
+        "aron": 304,
+        "azumarill": 184,
+        "bagon": 371,
+        "baltoy": 343,
+        "banette": 354,
+        "banshee misdreavus": 200,
+        "bayleef": 153,
+        "beedrill": 15,
+        "beldum": 374,
+        "bellossom": 182,
+        "bellsprout": 69,
+        "blastoise": 9,
+        "blaziken": 257,
+        "brave alakazam": 65,
+        "brave arcanine": 59,
+        "brave blastoise": 9,
+        "brave charizard": 6,
+        "brave clefable": 36,
+        "brave mantine": 226,
+        "brave nidoking": 34,
+        "brave nidoqueen": 31,
+        "brave noctowl": 164,
+        "brave steelix": 208,
+        "brave venusaur": 3,
+        "brute rhydon": 112,
+        "bulbasaur": 1,
+        "butterfree": 12,
+        "cacturne": 332,
+        "camerupt": 323,
+        "caterpie": 10,
+        "chansey": 113,
+        "charged raichu": 26,
+        "charizard": 6,
+        "charmander": 4,
+        "charmeleon": 5,
+        "chikorita": 152,
+        "chinchou": 170,
+        "claydol": 344,
+        "clefable": 36,
+        "clefairy": 35,
+        "cleffa": 173,
+        "cloyster": 91,
+        "combusken": 256,
+        "corphish": 341,
+        "corsola": 222,
+        "crawdaunt": 342,
+        "crobat": 169,
+        "croconaw": 159,
+        "cubone": 104,
+        "cyndaquil": 155,
+        "dark crobat": 169,
+        "delibird": 225,
+        "dewgong": 87,
+        "diglett": 50,
+        "dodrio": 85,
+        "doduo": 84,
+        "donphan": 232,
+        "dragonair": 148,
+        "dragonite": 149,
+        "dratini": 147,
+        "drowzee": 96,
+        "dugtrio": 51,
+        "dunsparce": 206,
+        "dusclops": 356,
+        "duskull": 355,
+        "ekans": 23,
+        "electabuzz": 125,
+        "electrike": 309,
+        "electrode": 101,
+        "elekid": 239,
+        "enigmatic girafarig": 203,
+        "enraged typhlosion": 157,
+        "evil cloyster": 91,
+        "exeggcute": 102,
+        "exeggutor": 103,
+        "exploud": 295,
+        "farfetch'd": 83,
+        "fearow": 22,
+        "feraligatr": 160,
+        "flaaffy": 180,
+        "flygon": 330,
+        "forretress": 205,
+        "freezing dewgong": 87,
+        "furious ampharos": 181,
+        "furious gyarados": 130,
+        "furious magmar": 126,
+        "furious pidgeot": 18,
+        "furious sandslash": 28,
+        "furious scyther": 123,
+        "furious skarmory": 227,
+        "furious wigglytuff": 40,
+        "furret": 162,
+        "gardevoir": 282,
+        "gastly": 92,
+        "gengar": 94,
+        "geodude": 74,
+        "girafarig": 203,
+        "glalie": 362,
+        "gligar": 207,
+        "gloom": 44,
+        "golbat": 42,
+        "goldeen": 118,
+        "golduck": 55,
+        "golem": 76,
+        "granbull": 210,
+        "graveler": 75,
+        "grimer": 88,
+        "grovyle": 253,
+        "growlithe": 58,
+        "grumpig": 326,
+        "gyarados": 130,
+        "hard golem": 76,
+        "haunter": 93,
+        "heavy piloswine": 221,
+        "heracross": 214,
+        "hitmonchan": 107,
+        "hitmonlee": 106,
+        "hitmontop": 237,
+        "hoothoot": 163,
+        "hoppip": 187,
+        "horsea": 116,
+        "houndoom": 229,
+        "houndour": 228,
+        "hypno": 97,
+        "igglybuff": 174,
+        "ivysaur": 2,
+        "jigglypuff": 39,
+        "jumpluff": 189,
+        "jynx": 124,
+        "kabuto": 140,
+        "kabutops": 141,
+        "kadabra": 64,
+        "kakuna": 14,
+        "kangaskhan": 115,
+        "kingdra": 230,
+        "kingler": 99,
+        "kirlia": 281,
+        "koffing": 109,
+        "krabby": 98,
+        "lairon": 305,
+        "lanturn": 171,
+        "lapras": 131,
+        "larvitar": 246,
+        "ledian": 166,
+        "ledyba": 165,
+        "lickitung": 108,
+        "lombre": 271,
+        "lotad": 270,
+        "loudred": 294,
+        "lucario": 448,
+        "ludicolo": 272,
+        "machamp": 68,
+        "machoke": 67,
+        "machop": 66,
+        "magby": 240,
+        "magcargo": 219,
+        "magmar": 126,
+        "magnemite": 81,
+        "magnetic electabuzz": 125,
+        "magneton": 82,
+        "makuhita": 296,
+        "manectric": 310,
+        "mankey": 56,
+        "mantine": 226,
+        "mareep": 179,
+        "marill": 183,
+        "marowak": 105,
+        "marshtomp": 259,
+        "mawile": 303,
+        "medicham": 308,
+        "meditite": 307,
+        "meganium": 154,
+        "meowth": 52,
+        "metang": 375,
+        "metapod": 11,
+        "mightyena": 262,
+        "milch-miltank": 128,
+        "miltank": 241,
+        "misdreavus": 200,
+        "mr mime": 122,
+        "mudkip": 258,
+        "muk": 89,
+        "natu": 177,
+        "nidoking": 34,
+        "nidoqueen": 31,
+        "nidoran-f": 29,
+        "nidoran-m": 32,
+        "nidorina": 30,
+        "nidorino": 33,
+        "nightmare abomasnow": 460,
+        "nightmare alakazam": 65,
+        "nightmare alolan diglett": 50,
+        "nightmare alolan dugtrio": 51,
+        "nightmare alolan meowth": 52,
+        "nightmare alolan muk": 89,
+        "nightmare alolan persian": 53,
+        "nightmare alolan raichu": 26,
+        "nightmare altaria": 334,
+        "nightmare appletun": 842,
+        "nightmare bagon e shelgon": 372,
+        "nightmare banette": 354,
+        "nightmare barboach": 339,
+        "nightmare beedrill": 15,
+        "nightmare braviary": 628,
+        "nightmare carvanha": 318,
+        "nightmare chandelure": 609,
+        "nightmare cloyster": 91,
+        "nightmare cranidos": 408,
+        "nightmare dragonite": 149,
+        "nightmare drampa": 780,
+        "nightmare dratini e dragonair": 148,
+        "nightmare eelektrik": 603,
+        "nightmare eelektross": 604,
+        "nightmare elekid": 239,
+        "nightmare espurr": 677,
+        "nightmare farfetchd": 83,
+        "nightmare gabite": 444,
+        "nightmare galarian darmanitan": 554,
+        "nightmare galarian darumaka": 554,
+        "nightmare galarian farfetchd": 83,
+        "nightmare galarian meowth": 52,
+        "nightmare gallade": 475,
+        "nightmare garchomp": 445,
+        "nightmare gardevoir": 282,
+        "nightmare gible": 443,
+        "nightmare glalie": 362,
+        "nightmare gogoat": 673,
+        "nightmare goodra": 706,
+        "nightmare goomy": 704,
+        "nightmare granbull": 210,
+        "nightmare grimer": 88,
+        "nightmare houndoom": 229,
+        "nightmare infernape": 392,
+        "nightmare kirlia": 281,
+        "nightmare klang": 600,
+        "nightmare klink": 599,
+        "nightmare klinklang": 601,
+        "nightmare lampent": 608,
+        "nightmare lilligant": 549,
+        "nightmare litleo": 667,
+        "nightmare litwick": 607,
+        "nightmare lunatone": 337,
+        "nightmare luxray": 405,
+        "nightmare machamp": 68,
+        "nightmare machoke": 67,
+        "nightmare magby": 240,
+        "nightmare magnezone": 462,
+        "nightmare manectric": 310,
+        "nightmare mantine": 226,
+        "nightmare mantyke": 458,
+        "nightmare misdreavus": 200,
+        "nightmare muk": 89,
+        "nightmare ninetales": 38,
+        "nightmare nuzleaf": 274,
+        "nightmare petilil": 548,
+        "nightmare pidgeot": 18,
+        "nightmare piloswine": 221,
+        "nightmare pinsir": 127,
+        "nightmare porygon": 137,
+        "nightmare pyroar female": 571,
+        "nightmare raichu": 26,
+        "nightmare ralts": 280,
+        "nightmare rampardos": 409,
+        "nightmare rockruff": 744,
+        "nightmare rufflet": 627,
+        "nightmare sandaconda": 844,
+        "nightmare scizor": 212,
+        "nightmare scolipede": 545,
+        "nightmare seviper": 336,
+        "nightmare sharpedo": 319,
+        "nightmare shiftry": 275,
+        "nightmare shuppet": 353,
+        "nightmare silicobra": 843,
+        "nightmare simisear": 514,
+        "nightmare sirfetch'd": 865,
+        "nightmare skiddo": 672,
+        "nightmare sliggoo": 705,
+        "nightmare sneasel": 215,
+        "nightmare snorunt": 361,
+        "nightmare snubbull": 209,
+        "nightmare solrock": 338,
+        "nightmare spoink": 325,
+        "nightmare starmie": 121,
+        "nightmare steelix": 208,
+        "nightmare sudowoodo": 185,
+        "nightmare tangela": 114,
+        "nightmare togekiss": 468,
+        "nightmare togetic": 176,
+        "nightmare torkoal": 324,
+        "nightmare turtonator": 776,
+        "nightmare tynamo": 602,
+        "nightmare tyranitar": 248,
+        "nightmare ursaring": 217,
+        "nightmare venipede": 543,
+        "nightmare weavile": 461,
+        "nightmare whiscash": 340,
+        "nightmare wormadam": 413,
+        "ninetales": 38,
+        "noctowl": 164,
+        "numel": 322,
+        "nuzleaf": 274,
+        "octillery": 224,
+        "oddish": 43,
+        "omanyte": 138,
+        "omastar": 139,
+        "onix": 95,
+        "paras": 46,
+        "parasect": 47,
+        "pelipper": 279,
+        "persian": 53,
+        "phanpy": 231,
+        "pichu": 172,
+        "pidgeot": 18,
+        "pidgeotto": 17,
+        "pidgey": 16,
+        "pikachu": 25,
+        "piloswine": 221,
+        "pineco": 204,
+        "pinsir": 127,
+        "politoed": 186,
+        "poliwag": 60,
+        "poliwhirl": 61,
+        "poliwrath": 62,
+        "ponyta": 77,
+        "poochyena": 261,
+        "primeape": 57,
+        "psy jynx": 124,
+        "psyduck": 54,
+        "pupitar": 247,
+        "quagsire": 195,
+        "quilava": 156,
+        "qwilfish": 211,
+        "raichu": 26,
+        "ralts": 280,
+        "rapidash": 78,
+        "raticate": 20,
+        "rattata": 19,
+        "remoraid": 223,
+        "rhydon": 112,
+        "rhyhorn": 111,
+        "riolu": 447,
+        "roll donphan": 232,
+        "sableye": 302,
+        "sandshrew": 27,
+        "sandslash": 28,
+        "sceptile": 254,
+        "scizor": 212,
+        "scyther": 123,
+        "seadra": 117,
+        "seaking": 119,
+        "sealeo": 364,
+        "seedot": 273,
+        "seel": 86,
+        "sentret": 161,
+        "seviper": 336,
+        "shelgon": 372,
+        "shellder": 90,
+        "shiftry": 275,
+        "shuckle": 213,
+        "skarmory": 227,
+        "skiploom": 188,
+        "slakoth": 287,
+        "slowbro": 80,
+        "slowpoke": 79,
+        "slugma": 218,
+        "smoochum": 238,
+        "sneasel": 215,
+        "snorlax": 143,
+        "snorunt": 361,
+        "snubbull": 209,
+        "spearow": 21,
+        "spheal": 363,
+        "spinarak": 167,
+        "spoink": 325,
+        "squirtle": 7,
+        "stantler": 234,
+        "starmie": 121,
+        "staryu": 120,
+        "steelix": 208,
+        "sunflora": 192,
+        "sunkern": 191,
+        "swablu": 333,
+        "swampert": 260,
+        "swellow": 277,
+        "swinub": 220,
+        "taekwondo hitmonchan": 107,
+        "taekwondo hitmonlee": 106,
+        "taekwondo hitmontop": 237,
+        "taillow": 276,
+        "tangela": 114,
+        "tauros": 128,
+        "teddiursa": 216,
+        "tentacool": 72,
+        "tentacruel": 73,
+        "togepi": 175,
+        "togetic": 176,
+        "torchic": 255,
+        "torkoal": 324,
+        "totodile": 158,
+        "trapinch": 328,
+        "treecko": 252,
+        "tribal feraligatr": 160,
+        "trickmaster gengar": 94,
+        "tropius": 357,
+        "typhlosion": 157,
+        "tyranitar": 248,
+        "tyrogue": 236,
+        "ursaring": 217,
+        "venomoth": 49,
+        "venonat": 48,
+        "venusaur": 3,
+        "vibrava": 329,
+        "victreebel": 71,
+        "vigoroth": 288,
+        "vileplume": 45,
+        "voltorb": 100,
+        "vulpix": 37,
+        "walrein": 365,
+        "war heracross": 214,
+        "wartortle": 8,
+        "weedle": 13,
+        "weepinbell": 70,
+        "weezing": 110,
+        "whismur": 293,
+        "wigglytuff": 40,
+        "wingull": 278,
+        "wobbuffet": 202,
+        "wooper": 194,
+        "xatu": 178,
+        "yanma": 193,
+        "zangoose": 335,
+        "zubat": 41
+    });
+
+    function getDailyKillBaseSpeciesId(name) {
+        const normalized = normalizePokemonName(name);
+        return Number(
+            DAILY_KILL_BASE_SPECIES_IDS[normalized]
+            || DAILY_KILL_BASE_SPECIES_IDS[String(name || '').trim().toLowerCase()]
+            || 0
+        );
+    }
+
+    function getDailyKillBasePokemonName(name) {
+        const original = String(name || '').trim();
+        const baseSpeciesId = getDailyKillBaseSpeciesId(original);
+        if (baseSpeciesId) {
+            const mappedCreature = [...globalCreatureApiData.values()].find(creature => {
+                const id = Number(creature?.pokeId ?? creature?.speciesId ?? creature?.pokemonId ?? creature?.id);
+                return id === baseSpeciesId;
+            });
+            if (mappedCreature?.name) return String(mappedCreature.name);
+        }
+        const normalized = normalizePokemonName(original);
+        const words = normalized.split(/\s+/).filter(Boolean);
+        const knownCreatureNames = [...globalCreatureApiData.keys()]
+            .filter(Boolean)
+            .sort((left, right) => right.length - left.length);
+        for (let index = 0; index < words.length; index++) {
+            const candidate = words.slice(index).join(' ');
+            if (knownCreatureNames.includes(candidate)) return candidate;
+        }
+        for (let index = 0; index < words.length - 1; index++) {
+            if (!DAILY_KILL_VARIANT_PREFIXES.has(words[index])) continue;
+            const candidate = words.slice(index + 1).join(' ');
+            if (candidate) return candidate;
+        }
+        return original;
+    }
+
+    function getDailyKillNativeMarker(name) {
+        const cleanName = getCleanHuntName(name);
+        if (!cleanName) return null;
+        return globalHuntMarkerData.get(cleanName)
+            || globalHuntMarkerData.get(normalizePokemonName(name).replace(/\s+/g, '_'))
+            || null;
+    }
+
+    function getDailyKillNativeLooktype(name, speciesId) {
+        const baseSpeciesId = getDailyKillBaseSpeciesId(name);
+        if (baseSpeciesId) {
+            const baseCreature = [...globalCreatureApiData.values()].find(creature => {
+                const id = Number(creature?.pokeId ?? creature?.speciesId ?? creature?.pokemonId ?? creature?.id);
+                return id === baseSpeciesId;
+            });
+            const baseLooktype = Number(baseCreature?.looktype);
+            if (Number.isFinite(baseLooktype) && baseLooktype > 0) return baseLooktype;
+        }
+
+        const baseName = getDailyKillBasePokemonName(name);
+        const baseStaticLooktype = Number(
+            DAILY_KILL_NATIVE_LOOKTYPES[normalizePokemonName(baseName)]
+            || DAILY_KILL_NATIVE_LOOKTYPES[String(baseName || '').trim().toLowerCase()]
+        );
+        if (Number.isFinite(baseStaticLooktype) && baseStaticLooktype > 0) return baseStaticLooktype;
+
+        const marker = getDailyKillNativeMarker(name);
+        const markerLooktype = Number(marker?.looktype);
+        if (Number.isFinite(markerLooktype) && markerLooktype > 0) return markerLooktype;
+
+        const staticLooktype = Number(
+            DAILY_KILL_NATIVE_LOOKTYPES[normalizePokemonName(name)]
+            || DAILY_KILL_NATIVE_LOOKTYPES[String(name || '').trim().toLowerCase()]
+        );
+        if (Number.isFinite(staticLooktype) && staticLooktype > 0) return staticLooktype;
+
+        const numericSpeciesId = Number(speciesId);
+        if (!Number.isFinite(numericSpeciesId)) return null;
+        const directCreature = [...globalCreatureApiData.values()].find(creature => {
+            const id = Number(creature?.pokeId ?? creature?.speciesId ?? creature?.pokemonId ?? creature?.id);
+            return id === numericSpeciesId;
+        });
+        const directLooktype = Number(directCreature?.looktype);
+        return Number.isFinite(directLooktype) && directLooktype > 0 ? directLooktype : null;
+    }
+
+    function getDailyKillPokemonSprite(name, speciesId) {
+        const baseSpeciesId = getDailyKillBaseSpeciesId(name);
+        const baseSprite = getPokemonIconUrl(baseSpeciesId);
+        if (baseSprite) return baseSprite;
+        const directSprite = getPokemonIconUrl(speciesId);
+        const baseName = getDailyKillBasePokemonName(name);
+        const baseCreature = globalCreatureApiData.get(normalizePokemonName(baseName));
+        const fallbackBaseId = Number(baseCreature?.pokeId || baseCreature?.speciesId || 0);
+        return getPokemonIconUrl(fallbackBaseId) || directSprite;
+    }
+
+    function mountDailyKillPokemonSprite(container, name, speciesId) {
+        if (!container) return;
+        const fallbackUrl = getDailyKillPokemonSprite(name, speciesId);
+        const fallback = document.createElement(fallbackUrl ? 'img' : 'span');
+        if (fallbackUrl) {
+            fallback.src = fallbackUrl;
+            fallback.alt = String(name || 'Pokémon');
+        } else {
+            fallback.textContent = '◉';
+        }
+        container.replaceChildren(fallback);
+
+        const mountNativeSprite = () => {
+            const looktype = getDailyKillNativeLooktype(name, speciesId);
+            if (!looktype) return;
+            loadCityNpcSpriteData(looktype).then(sprite => {
+                if (!container.isConnected) return;
+                const nativeSprite = document.createElement('div');
+                nativeSprite.className = 'script-daily-kill-native-sprite';
+                nativeSprite.setAttribute('aria-hidden', 'true');
+                const width = Math.max(1, Number(sprite.width) || 1);
+                const height = Math.max(1, Number(sprite.height) || 1);
+                const scale = Math.min(1, 50 / Math.max(width, height));
+                nativeSprite.style.cssText = `width:${width}px;height:${height}px;background-image:url("${sprite.image}");background-position:-${sprite.x}px -${sprite.y}px;background-repeat:no-repeat;image-rendering:pixelated;transform:translate(-50%,-50%) scale(${scale});`;
+                container.replaceChildren(nativeSprite);
+            }).catch(error => console.warn('No se pudo cargar el sprite nativo de Daily Task.', error));
+        };
+
+        if (globalHuntMarkerData.size) mountNativeSprite();
+        else loadMapMarkersData().then(mountNativeSprite).catch(error => console.warn('No se pudieron cargar los marcadores nativos de Daily Task.', error));
     }
 
     function updateCachedLeaderPokemon(pokemonList) {
@@ -2484,7 +4954,7 @@
         }
         html.script-custom-scrollbars *::-webkit-scrollbar-thumb:hover { background: rgba(230, 205, 142, .58); background-clip: padding-box; }
         .promo-overlay { display: none !important; }
-        #dock-btn-quick-tp, #dock-btn-shops, #dock-btn-depot {
+        #dock-btn-quick-tp, #dock-btn-shops {
             background: transparent;
             border: 0;
             box-shadow: none;
@@ -2493,8 +4963,568 @@
         #dock-btn-quick-tp[hidden] { display: none !important; }
         #dock-btn-quick-tp { color: #ffcc00; font-size: 16px; font-weight: bold; }
         #dock-btn-shops { color: #9ae6b4; font-size: 15px; }
-        #dock-btn-depot { color: #90cdf4; font-size: 15px; }
+        #dock-btn-shops .script-dock-emoji { display:block;font-size:19px;line-height:1;filter:drop-shadow(0 2px 2px #0009);transition:transform .16s ease,filter .16s ease; }
+        #dock-btn-shops:hover .script-dock-emoji { transform:translateY(-1px) scale(1.08);filter:drop-shadow(0 3px 3px #000b) saturate(1.18); }
+        .script-shop-menu .poke-menu-item { display:flex !important;align-items:center;gap:7px; }
+        .script-shop-menu-icon { width:25px;height:25px;flex:none;display:grid;place-items:center;background:#ffffff08;border:1px solid #ffffff12;border-radius:6px;font-size:16px;line-height:1;filter:drop-shadow(0 2px 2px #0008);transition:transform .16s ease,background .16s ease,border-color .16s ease,filter .16s ease; }
+        .script-menu-sprite-rotator { width:22px;height:22px;display:grid;place-items:center;overflow:hidden; }
+        .script-menu-sprite-img { display:block;width:22px;height:22px;object-fit:contain;image-rendering:pixelated;opacity:1;transform:scale(1);transition:opacity .16s ease,transform .16s ease,filter .16s ease; }
+        .script-menu-sprite-img.is-switching { opacity:0;transform:scale(.72) rotate(-8deg);filter:brightness(1.35); }
+        .script-shop-menu .poke-menu-item:hover .script-shop-menu-icon { background:#ffffff12;border-color:#b6924660;filter:drop-shadow(0 3px 3px #000a) saturate(1.2);transform:translateY(-1px) scale(1.06); }
         .script-shop-wrap .poke-menu[hidden] { display: none !important; }
+        /* ================= CASSINO =================
+           Cristal, tipografia y escala.
+
+           Los tokens viven en :root y no en el backdrop porque el panel de
+           configuracion, el del historial y las alertas son hermanos del backdrop
+           dentro de document.body, no hijos suyos: puestos aqui los heredan los
+           cuatro. El prefijo --casino- evita chocar con el resto del script.
+
+           Sobre la transparencia: la superficie va a .46 y el velo del backdrop a
+           .34, de modo que el juego se ve difuminado detras. Ese margen no es
+           gratuito, asi que cada elemento con texto lleva su propio velo: la
+           tarjeta es una capa clara, y los inputs son un pozo MAS oscuro que la
+           tarjeta que los contiene. Con cristal claro detras, un texto de 9px se
+           pierde contra lo que haya del juego. */
+        :root {
+            --casino-glass: blur(16px) saturate(120%);
+            --casino-glass-edge: inset 0 1px rgba(255,255,255,.20), 0 6px 16px rgba(0,0,0,.24);
+            --casino-surface: rgba(14,30,44,.46);
+            --casino-surface-deep: rgba(8,18,28,.52);
+            --casino-surface-head: rgba(255,255,255,.06);
+            --casino-card: rgba(255,255,255,.075);
+            --casino-card-line: rgba(170,210,235,.20);
+            --casino-well: rgba(3,9,15,.62);
+            --casino-well-line: rgba(170,210,235,.24);
+            --casino-fg: #eef5fa;
+            --casino-fg-strong: #fbfdff;
+            --casino-muted: #b3c8d6;
+            --casino-dim: #9db2c1;
+            --casino-accent: #7fd8f7;
+            --casino-gold: #6ee79a;
+            --casino-danger: #ffa3a3;
+            --casino-warn: #ffdcab;
+
+            /* Pila propia del sistema. El Cassino deja de heredar la fuente del
+               juego, que es la que producia elasono de tipografia. */
+            --casino-font: 'Inter var', Inter, 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+            /* Escala de 7 pasos. Antes habia 27 tamanos distintos y el 57% estaba
+               por debajo de 9px, con algunos de 5.5 y 6px que eran ilegibles. */
+            --casino-fs-label: 8.5px;
+            --casino-fs-chip: 9.5px;
+            --casino-fs-body: 10.5px;
+            --casino-fs-value: 12px;
+            --casino-fs-name: 12.5px;
+            --casino-fs-section: 14px;
+            --casino-fs-title: 20px;
+            --casino-r: 9px;
+        }
+
+        /* --- ICONOS ---
+           Sprite unico con los simbolos. Todos los dibujos van con
+           stroke: currentColor, asi que heredan el color del elemento que los
+           contiene y no hay ningun color en el JS. */
+        .casino-sprite { position:absolute;width:0;height:0;overflow:hidden;pointer-events:none; }
+        .casino-ic {
+            width:1.05em;height:1.05em;display:inline-block;vertical-align:-.16em;
+            fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;
+            flex:0 0 auto;pointer-events:none;
+        }
+        .casino-ic-wrap { display:grid;place-items:center;color:var(--casino-dim);font-size:18px; }
+
+        .script-casino-backdrop {
+            position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;
+            box-sizing:border-box;padding:14px;
+            background:radial-gradient(circle at 50% 12%,rgba(30,64,100,.26),transparent 52%),rgba(2,8,16,.34);
+            backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);
+        }
+        .script-marlon-window {
+            width:min(1120px,96vw) !important;max-width:96vw !important;height:min(690px,90dvh) !important;max-height:90dvh !important;
+            display:flex;flex-direction:column;overflow:hidden;
+            font-family:var(--casino-font);
+            /* Cifras de ancho fijo: sin esto, cada actualizacion de saldo hace que
+               los numeros bailen de ancho y la fila da escalones. */
+            font-feature-settings:'tnum' 1,'cv05' 1,'ss01' 1;
+            font-variant-numeric:tabular-nums;
+            color:var(--casino-fg);
+            background:var(--casino-surface) !important;
+            border:1px solid var(--casino-card-line) !important;border-radius:14px !important;
+            box-shadow:var(--casino-glass-edge),0 22px 60px rgba(0,0,0,.42) !important;
+            backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);
+        }
+        .script-casino-backdrop *,.script-casino-config-backdrop *,.script-casino-goal-alert * {
+            font-family:var(--casino-font);
+            font-feature-settings:'tnum' 1,'cv05' 1,'ss01' 1;
+            font-variant-numeric:tabular-nums;
+        }
+        .script-casino-head { flex:none;display:flex;align-items:center;gap:10px;min-height:62px;padding:11px 14px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-casino-head-copy { min-width:0;display:flex;flex-direction:column;gap:3px; }
+        .script-casino-kicker { color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.16em;text-transform:uppercase; }
+        .script-casino-title { display:flex;align-items:center;gap:8px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-title);font-weight:800;letter-spacing:-.015em;line-height:1.1; }
+        .script-casino-title .casino-ic { color:var(--casino-accent);font-size:.82em; }
+        .script-casino-balance { margin-left:auto;flex:none;display:flex;align-items:center;gap:6px;padding:8px 12px;color:var(--casino-gold);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-value);font-weight:800;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-balance .casino-ic { font-size:.85em; }
+        .script-casino-refresh,.script-casino-close {
+            flex:none;min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+            color:var(--casino-fg);border-radius:8px;font-size:var(--casino-fs-value);font-weight:700;cursor:pointer;
+            background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.05));
+            border:1px solid var(--casino-card-line);box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);
+            backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+            transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease;
+        }
+        .script-casino-refresh { padding:0 12px; }
+        .script-casino-close { width:36px;font-size:13px; }
+        .script-casino-refresh:hover,.script-casino-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.2),rgba(255,255,255,.09));border-color:rgba(180,220,245,.36);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 9px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-refresh:disabled { opacity:.6;cursor:wait; }
+        .script-casino-layout { flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.85fr);overflow:hidden; }
+        .script-casino-catalog { min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--casino-card-line); }
+        .script-casino-team .casino-ic { color:#e3d293;font-size:.9em; }
+        .script-casino-status { flex:none;min-height:20px;padding:6px 12px;color:var(--casino-accent);background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line);font-size:var(--casino-fs-body); }
+        .script-casino-status.is-error { color:var(--casino-danger); }
+        .script-casino-status.is-success { color:var(--casino-gold); }
+
+        /* Tira de resultados de la tanda. El saldo va el primero, en grande y
+           con color, porque es el unico numero que explica el saldo de la cuenta. */
+        .script-casino-results { flex:none;display:flex;align-items:stretch;gap:1px;padding:9px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        /* Mismo motivo que la tira de proceso y que las cartas: el display:flex de
+           arriba le gana a la regla [hidden] del navegador, y sin esto la tira se
+           veria desde el principio con los guiones de relleno. */
+        .script-casino-results[hidden] { display:none !important; }
+        .script-casino-result { flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:6px 9px;background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:7px; }
+        /* Esta etiqueta es el texto mas pequeno del panel (8.5 px) y va sobre la
+           superficie mas clara: la tarjeta, la tira, la ventana y el velo del
+           backdrop, todo apilado. Con solo el velo del elemento se quedaba en
+           4.36:1 y con el radial del backdrop a la vista, 4.46:1. Asi que lleva
+           su propio velo, como el chip de tier: se oscurece el elemento, no se
+           baja la opacidad de la superficie. */
+        .script-casino-result-label { align-self:flex-start;padding:1px 6px;color:var(--casino-dim);background:rgba(0,0,0,.22);border-radius:5px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.06em;text-transform:uppercase; }
+        .script-casino-result-value { color:var(--casino-fg);font-size:var(--casino-fs-value);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-result.is-net { flex:1.5; }
+        .script-casino-result.is-net .script-casino-result-value { font-size:17px; }
+        .script-casino-result.is-net.is-positive { border-color:rgba(110,231,154,.4); }
+        .script-casino-result.is-net.is-positive .script-casino-result-value { color:var(--casino-gold); }
+        .script-casino-result.is-net.is-negative { border-color:rgba(255,163,163,.38); }
+        .script-casino-result.is-net.is-negative .script-casino-result-value { color:var(--casino-danger); }
+        .script-casino-result-chip { flex:none;align-self:center;padding:5px 10px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:999px;font-size:var(--casino-fs-chip);font-weight:800;white-space:nowrap; }
+
+        /* Pestanas del catalogo. */
+        .script-casino-tabs { flex:none;display:flex;gap:5px;padding:9px 10px 0; }
+        .script-casino-tab { display:inline-flex;align-items:center;gap:6px;min-height:31px;padding:0 11px;color:var(--casino-muted);background:rgba(255,255,255,.04);border:1px solid transparent;border-radius:8px;font-size:var(--casino-fs-body);font-weight:700;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.1);transition:color .16s ease,background .16s ease,border-color .16s ease; }
+        .script-casino-tab:hover { color:var(--casino-fg);background:rgba(255,255,255,.09); }
+        .script-casino-tab.is-active { color:var(--casino-fg-strong);background:var(--casino-card);border-color:var(--casino-card-line);box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-tab.is-active .casino-ic { color:var(--casino-accent); }
+        .script-casino-tab-count { min-width:19px;padding:1px 5px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:999px;font-size:var(--casino-fs-label);font-weight:800;text-align:center; }
+        .script-casino-tab.is-active .script-casino-tab-count { color:var(--casino-accent); }
+
+        /* La rejilla decide 2, 3 o 4 columnas segun el ancho en vez de fijar 3. */
+        .script-casino-list { min-height:150px;overflow:auto;padding:9px;display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:8px;align-content:start; }
+        .script-casino-empty { grid-column:1/-1;min-height:170px;display:grid;place-items:center;padding:22px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-value); }
+        .script-casino-card {
+            min-width:0;display:grid;grid-template-columns:52px minmax(0,1fr);gap:6px 8px;padding:9px;
+            background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:var(--casino-r);
+            box-shadow:inset 0 1px rgba(255,255,255,.14);
+        }
+        /* Sin hover a proposito: las cartas se leen como una ficha, no como algo
+           pulsable. El hover queda en botones, selects y filas del historial. */
+        .script-casino-card.is-disabled { opacity:.6; }
+        .script-casino-art { grid-row:1/3;width:50px;height:50px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-info { min-width:0; }
+        .script-casino-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-name { min-width:0;display:flex;align-items:baseline;gap:3px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-name>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-evolution { flex:none;display:inline-flex;align-items:center;gap:3px;padding:1px 5px;color:#e0cdff;background:rgba(60,40,90,.5);border:1px solid rgba(160,120,215,.5);border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.04em; }
+        .script-casino-evolution .casino-ic { font-size:.95em; }
+        .script-casino-evolution.is-item { color:#cfe6f5;background:rgba(28,60,84,.5);border-color:rgba(120,180,220,.45); }
+        .script-casino-price { display:flex;align-items:center;gap:4px;margin-top:3px;color:var(--casino-gold);font-size:var(--casino-fs-value);font-weight:800; }
+        .script-casino-price .casino-ic { font-size:.78em; }
+        .script-casino-item-have { margin-top:3px;color:var(--casino-muted);font-size:var(--casino-fs-chip);font-weight:700; }
+        .script-casino-item-qty { color:#f6d572;font-weight:800; }
+        .script-casino-item-have b { color:#f6d572; }
+        .script-casino-item-description { display:-webkit-box;margin-top:5px;overflow:hidden;color:var(--casino-dim);font-size:var(--casino-fs-body);line-height:1.4;-webkit-box-orient:vertical;-webkit-line-clamp:2; }
+        .script-casino-requirements { margin-top:4px;display:flex;flex-wrap:wrap;gap:4px; }
+        .script-casino-requirement { min-height:21px;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;color:#b6f0cf;background:rgba(14,54,38,.5);border:1px solid rgba(80,160,120,.5);border-radius:5px;font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-requirement.is-missing { color:#ffb8b2;background:rgba(60,30,34,.5);border-color:rgba(160,76,86,.55); }
+        .script-casino-requirement img { width:16px;height:16px;object-fit:contain;image-rendering:pixelated; }
+        /* La fila de accion envuelve: en una carta estrecha el motivo baja de fila
+           en vez de aplastar el campo de cantidad. */
+        .script-casino-action-row { grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px;min-width:0; }
+        .script-casino-reason { flex:1 1 100%;min-width:0;color:var(--casino-dim);font-size:var(--casino-fs-label);line-height:1.3; }
+        .script-casino-purchase-controls { flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px; }
+        .script-casino-quantity-label { min-width:0;display:flex;flex-direction:column;gap:3px;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-quantity-label>span { letter-spacing:.05em;text-transform:uppercase; }
+        /* El campo de cantidad usa exactamente el mismo tratamiento que los filtros
+           y que los campos de la configuracion: mismo pozo, mismo borde, misma
+           altura y mismo cuerpo. Antes era el unico control que se veia suelto. */
+        .script-casino-quantity,.script-casino-item-quantity { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 8px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;text-align:center;outline:none;transition:border-color .16s ease,box-shadow .16s ease; }
+        .script-casino-quantity:focus,.script-casino-item-quantity:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-quantity:disabled,.script-casino-item-quantity:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-buy { flex:none;min-width:76px;min-height:30px;padding:0 11px;color:#16200c;background:linear-gradient(145deg,#f4dc85,#d9b84d);border:1px solid rgba(255,226,144,.7);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.45),0 2px 5px rgba(0,0,0,.25);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-buy:hover:not(:disabled) { filter:brightness(1.08);box-shadow:inset 0 1px rgba(255,255,255,.5),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-buy:disabled { color:#a6b5bf;background:rgba(255,255,255,.06);border-color:var(--casino-card-line);cursor:not-allowed;box-shadow:none; }
+        .script-casino-team-panel { min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--casino-surface-deep); }
+        .script-casino-team-head { flex:none;padding:11px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-casino-team-head-line { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+        .script-casino-team-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-team-head h3 .casino-ic { color:var(--casino-accent);font-size:.82em; }
+        .script-casino-team-count { padding:3px 9px;color:#eee0a8;background:rgba(52,45,16,.55);border:1px solid rgba(150,132,62,.5);border-radius:999px;font-size:var(--casino-fs-chip);font-weight:800; }
+        .script-casino-team-head p { margin:5px 0 0;color:var(--casino-dim);font-size:var(--casino-fs-body);line-height:1.35; }
+        .script-casino-team-tools { margin-top:9px;display:grid;grid-template-columns:minmax(100px,.72fr) 1fr 1fr;gap:6px; }
+        .script-casino-iv-goal { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:6px;padding:5px 7px;color:#b2e6f8;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:7px;font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-iv-goal input { box-sizing:border-box;width:100%;min-width:0;height:27px;padding:2px 6px;color:var(--casino-fg-strong);background:rgba(0,0,0,.34);border:1px solid var(--casino-well-line);border-radius:5px;font:inherit;text-align:center;outline:none; }
+        .script-casino-iv-goal input:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-bulk-action { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:34px;padding:4px 8px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-bulk-action>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-bulk-action .casino-ic { font-size:.9em; }
+        .script-casino-bulk-sell { color:#ffe9e9;background:linear-gradient(145deg,rgba(132,58,74,.7),rgba(78,34,44,.6));border:1px solid rgba(200,105,125,.55); }
+        /* El boton de historial. Sin entradas se ve apagado; con entradas, el borde
+           coge color para que se note que hay algo que mirar. */
+        .script-casino-log-btn { color:var(--casino-muted);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line); }
+        .script-casino-log-btn.has-entries { color:var(--casino-fg);border-color:rgba(127,216,247,.42); }
+        .script-casino-log-btn.has-entries .casino-ic { color:var(--casino-accent); }
+        .script-casino-bulk-action:hover:not(:disabled) { filter:brightness(1.16);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-bulk-action:disabled { opacity:.6;cursor:not-allowed;box-shadow:none; }
+        .script-casino-team-list { min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:7px; }
+        .script-casino-team-empty { min-height:150px;display:grid;place-items:center;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body); }
+
+        /* --- FILTROS Y AUTO-VENTA --- */
+        .script-casino-filters { flex:none;display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;padding:8px 8px 0; }
+        .script-casino-filter { min-width:0;display:grid;gap:3px; }
+        .script-casino-filter>span { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-casino-filter select { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 7px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-filter select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-filter select option { color:#eef5fa;background:#0d1f2e; }
+        /* El filtro de IVs es un input numerico, con el mismo aspecto que los
+           selectores para que la fila se lea como un bloque. */
+        .script-casino-filter input { box-sizing:border-box;width:100%;min-width:0;height:30px;padding:2px 7px;color:var(--casino-fg);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-filter input:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-filter input::placeholder { color:var(--casino-dim); }
+        .script-casino-filter-clear { align-self:end;min-height:30px;padding:0 11px;color:var(--casino-muted);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.14); }
+        .script-casino-filter-clear:hover:not(:disabled) { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.16),rgba(255,255,255,.07)); }
+        /* Este boton necesita mas que los otros: su etiqueta es --casino-muted sobre
+           un degradado claro, y a 9.5 px ya estaba en 4.95:1 sin atenuar nada. Con
+           opacity .6 se queda en 3.39:1, y subir la opacidad hasta .8 lo pasaria
+           pero dejaria el boton apagado igual que uno habilitado, que es justo lo
+           que la opacidad tiene que decir. Asi que lleva su propio velo, como el
+           chip de tier y la etiqueta de resultados: se oscurece el elemento, no se
+           baja la opacidad de la superficie. */
+        .script-casino-filter-clear:disabled { opacity:.6;cursor:not-allowed;background:rgba(0,0,0,.7); }
+        .script-casino-filters-info { grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 2px 0;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-filters-info b { color:var(--casino-fg); }
+        .script-casino-filters-empty { padding:24px 14px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body);font-weight:800; }
+
+        /* Boton que abre la configuracion de auto-venta y alertas por tier.
+           Va en dos lineas: arriba el nombre con su pastilla, abajo los cortes y el
+           saldo. Antes era una sola linea con las tres cosas encajadas. */
+        .script-casino-autosell-btn { grid-column:1/-1;display:grid;gap:3px;margin:7px 0 0;padding:8px 10px;text-align:left;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.035));border:1px solid var(--casino-card-line);border-radius:9px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16),0 2px 5px rgba(0,0,0,.2);transition:background .16s ease,border-color .16s ease,transform .16s ease; }
+        .script-casino-autosell-top { display:flex;align-items:center;gap:7px; }
+        .script-casino-autosell-top>.casino-ic { color:var(--casino-dim);font-size:.95em; }
+        .script-casino-autosell-label { color:var(--casino-fg-strong);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-badge { margin-left:auto;padding:2px 8px;color:var(--casino-dim);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:999px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em;text-transform:uppercase; }
+        .script-casino-autosell-badge.is-on { color:#0c1c11;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border-color:rgba(166,243,198,.7); }
+        .script-casino-autosell-detail { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-autosell-btn:hover { background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.06));transform:translateY(-1px); }
+        .script-casino-autosell-btn.is-on { background:linear-gradient(145deg,rgba(88,190,132,.24),rgba(40,96,66,.16));border-color:rgba(110,231,154,.36); }
+        .script-casino-autosell-btn.is-on .script-casino-autosell-top>.casino-ic { color:var(--casino-gold); }
+        .script-casino-autosell-btn.is-on .script-casino-autosell-detail { color:var(--casino-muted); }
+        .script-casino-config-wide { width:min(520px,calc(100vw - 32px)); }
+        .script-casino-autosell-log-head { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+        .script-casino-autosell-log-total { color:var(--casino-fg);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-log-clear { padding:5px 10px;color:#ffe2e2;background:linear-gradient(145deg,rgba(124,52,68,.7),rgba(70,28,38,.6));border:1px solid rgba(180,90,110,.55);border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.14); }
+        .script-casino-autosell-log-clear:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-autosell-log-list { max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:6px; }
+        .script-casino-autosell-log-empty { padding:24px 14px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-autosell-log-row { --casino-tier:#64748b;display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px;background:color-mix(in srgb,var(--casino-tier) 9%,rgba(255,255,255,.05));border:1px solid color-mix(in srgb,var(--casino-tier) 44%,var(--casino-card-line));border-left:3px solid var(--casino-tier);border-radius:8px;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-autosell-log-art { width:38px;height:38px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;overflow:hidden; }
+        .script-casino-autosell-log-art img { width:34px;height:34px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-autosell-log-info { min-width:0; }
+        .script-casino-autosell-log-name { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-autosell-log-name b { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-autosell-log-name b .casino-ic { color:#ffe98a;font-size:.82em; }
+        .script-casino-autosell-log-name b>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-autosell-log-tier { flex:none;padding:1px 5px;color:color-mix(in srgb,var(--casino-tier) 65%,#e8f2f8);background:color-mix(in srgb,var(--casino-tier) 14%,rgba(0,0,0,.3));border:1px solid color-mix(in srgb,var(--casino-tier) 65%,rgba(255,255,255,.12));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-autosell-log-meta { display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:3px;color:var(--casino-muted);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-autosell-log-meta b { color:var(--casino-fg); }
+        .script-casino-autosell-log-reason { margin-top:3px;color:var(--casino-danger);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-autosell-log-net { margin-top:2px;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:700;font-variant-numeric:tabular-nums; }
+        .script-casino-autosell-log-side { display:flex;flex-direction:column;align-items:flex-end;gap:2px; }
+        .script-casino-autosell-log-gold { display:flex;align-items:center;gap:3px;color:var(--casino-gold);font-size:var(--casino-fs-value);font-weight:800;white-space:nowrap; }
+        .script-casino-autosell-log-gold .casino-ic { font-size:.74em; }
+        .script-casino-autosell-log-time { color:var(--casino-dim);font-size:var(--casino-fs-label);font-variant-numeric:tabular-nums; }
+
+        /* Panel emergente de configuracion */
+        .script-casino-config-backdrop { position:fixed;inset:0;z-index:2147483600;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:rgba(2,8,16,.42);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-casino-config { width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;color:var(--casino-fg);background:rgba(12,26,38,.72);border:1px solid var(--casino-card-line);border-radius:12px;box-shadow:var(--casino-glass-edge),0 18px 50px rgba(0,0,0,.46);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-casino-config-head { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-casino-config-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-casino-config-head h3 .casino-ic { color:var(--casino-accent);font-size:.8em; }
+        .script-casino-config-close { display:grid;place-items:center;width:29px;height:29px;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;font-size:11px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-config-close .casino-ic { width:13px;height:13px; }
+        .script-casino-config-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
+        .script-casino-config-body { display:grid;gap:12px;padding:12px; }
+        .script-casino-config-note { margin:0;padding:8px 9px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.45; }
+        .script-casino-config-note b { color:var(--casino-fg-strong);font-weight:800; }
+        .script-casino-config-group { display:grid;gap:7px; }
+        .script-casino-config-group>h4 { margin:0;color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.1em; }
+        .script-casino-config-row { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+        .script-casino-config-field { display:grid;gap:4px; }
+        .script-casino-config-field label { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-casino-config-field input,.script-casino-config-field select { box-sizing:border-box;width:100%;height:32px;padding:3px 7px;color:var(--casino-fg-strong);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-casino-config-field input:focus,.script-casino-config-field select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-casino-config-checks { display:grid;grid-template-columns:repeat(3,1fr);gap:6px; }
+        .script-casino-config-check { display:flex;align-items:center;gap:6px;padding:6px 7px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:6px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-config-check:hover { border-color:rgba(170,210,235,.32); }
+        .script-casino-config-check input { width:auto;height:auto;margin:0;accent-color:#4cc07e; }
+        .script-casino-config-actions { display:flex;gap:7px; }
+        .script-casino-config-btn { flex:1;min-height:34px;padding:5px 9px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.2),0 2px 5px rgba(0,0,0,.22); }
+        .script-casino-config-save { color:#08160e;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border:1px solid rgba(166,243,198,.7); }
+        .script-casino-config-cancel { color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line); }
+        .script-casino-config-btn:hover { filter:brightness(1.1); }
+        .script-casino-config-preview { padding:8px 9px;color:var(--casino-fg);background:var(--casino-well);border:1px dashed var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.5; }
+        .script-casino-config-preview b { color:var(--casino-danger); }
+        .script-casino-team-card { --casino-tier:#64748b;position:relative;display:grid;grid-template-columns:52px minmax(0,1fr);gap:6px 8px;padding:9px;background:color-mix(in srgb,var(--casino-tier) 9%,rgba(255,255,255,.05));border:1px solid color-mix(in srgb,var(--casino-tier) 46%,var(--casino-card-line));border-left:3px solid var(--casino-tier);border-radius:var(--casino-r);box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-casino-team-card.is-new { background:color-mix(in srgb,var(--casino-tier) 14%,rgba(255,255,255,.06)); }
+        .script-casino-team-card.is-iv-goal { border-color:rgba(255,224,113,.75);border-left-color:#ffe071;background:linear-gradient(135deg,rgba(74,64,26,.6) 0%,color-mix(in srgb,var(--casino-tier) 15%,rgba(255,255,255,.06)) 58%);box-shadow:0 0 0 1px rgba(255,219,93,.6),0 0 16px rgba(255,212,71,.32);animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite; }
+        .script-casino-team-card.is-iv-goal::after { content:'★ IV';position:absolute;right:7px;top:-1px;padding:2px 6px;color:#1b1605;background:#ffe071;border-radius:0 0 5px 5px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em; }
+        /* La carta lleva display:grid, y eso gana a la regla [hidden] del
+           navegador (el CSS de autor siempre le gana al del agente de usuario).
+           Sin esta regla, ocultar una carta por el filtro no la ocultaria: se
+           quedaria a la vista. Es el mismo apano que usan las demas listas. */
+        .script-casino-team-card[hidden] { display:none !important; }
+        @keyframes scriptCasinoGoalPulse { 0%,100%{box-shadow:0 0 0 1px rgba(255,219,93,.5),0 0 10px rgba(255,212,71,.22)} 50%{box-shadow:0 0 0 1px rgba(255,240,168,.8),0 0 20px rgba(255,212,71,.44)} }
+        .script-casino-team-art { grid-row:1/3;width:50px;height:50px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-team-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-team-info { min-width:0; }
+        .script-casino-team-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
+        .script-casino-team-name { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-team-name>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .script-casino-team-name .casino-ic { color:#ffe98a;font-size:.85em; }
+        .script-casino-team-tier { flex:none;padding:1px 5px;color:color-mix(in srgb,var(--casino-tier) 65%,#e8f2f8);background:color-mix(in srgb,var(--casino-tier) 14%,rgba(0,0,0,.3));border:1px solid color-mix(in srgb,var(--casino-tier) 65%,rgba(255,255,255,.12));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-new-tag { flex:none;padding:1px 5px;color:#0d1a0a;background:#6be394;border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;letter-spacing:.05em; }
+        .script-casino-team-meta { margin-top:3px;display:flex;flex-wrap:wrap;gap:3px 8px;color:var(--casino-muted);font-size:var(--casino-fs-label);font-weight:700; }
+        .script-casino-team-meta b { color:var(--casino-fg); }
+        .script-casino-team-types { display:flex;flex-wrap:wrap;gap:4px;margin-top:4px; }
+        .script-casino-team-type { --casino-type:#91a3b7;padding:1px 5px;color:#fff;background:color-mix(in srgb,var(--casino-type) 30%,rgba(0,0,0,.34));border:1px solid color-mix(in srgb,var(--casino-type) 72%,rgba(255,255,255,.1));border-radius:4px;font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase; }
+        .script-casino-team-stats { grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px; }
+        .script-casino-team-stat { min-width:0;padding:3px 2px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:4px;text-align:center;font-size:var(--casino-fs-label); }
+        .script-casino-team-stat b { display:block;margin-top:1px;color:var(--casino-fg);font-size:var(--casino-fs-chip); }
+        .script-casino-team-actions { grid-column:1/-1;display:grid;grid-template-columns:1fr;gap:6px;padding-top:3px; }
+        .script-casino-team-action { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:29px;border-radius:6px;font-size:var(--casino-fs-chip);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.18),0 2px 5px rgba(0,0,0,.22);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease; }
+        .script-casino-team-action .casino-ic { font-size:.85em; }
+        /* Este selector va DESPUES de .script-casino-team-action a proposito: los
+           dos estan a 0,1,0 y .script-casino-sell va justo detras, asi que si el
+           nuevo se pusiera antes perderia en silencio y el boton saldria con los
+           colores del de vender. */
+        /* Auto-venta del deposito: boton y menu. Prefijo propio; NO se reutilizan
+           las .script-casino-config-* porque viven junto a las reglas del Casino y
+           mezclarlas haria que un retoque del Casino moviera este dialogo. */
+        .script-market-autosell-btn { display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;height:27px;min-width:0;padding:0 9px 0 8px;border-radius:8px;cursor:pointer;color:var(--casino-muted, #b3c8d6);background:linear-gradient(145deg,rgba(255,255,255,.10),rgba(255,255,255,.035));border:1px solid var(--casino-card-line, rgba(170,210,235,.20));box-shadow:inset 0 1px rgba(255,255,255,.16);font:inherit;font-size:11px;font-weight:800;letter-spacing:.02em;line-height:1;transition:filter .15s ease,color .15s ease,background .15s ease,border-color .15s ease;backdrop-filter:var(--casino-glass, blur(16px) saturate(120%));-webkit-backdrop-filter:var(--casino-glass, blur(16px) saturate(120%)); }
+        .script-market-autosell-btn:hover { filter:brightness(1.14);color:var(--casino-fg-strong, #fbfdff); }
+        .script-market-autosell-btn .script-market-autosell-ic { width:15px;height:15px;display:block;flex:0 0 auto;color:var(--casino-accent, #7fd8f7); }
+        .script-market-autosell-label { min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        /* El punto dice el estado sin ocupar ancho con texto: apagado es un anillo
+           tenue, encendido un verde solido con halo. El color va con el del
+           Casino para que los dos interruptores se lean igual. */
+        .script-market-autosell-dot { width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:transparent;border:1.5px solid rgba(170,210,235,.45);box-sizing:border-box;transition:background .15s ease,border-color .15s ease,box-shadow .15s ease; }
+        .script-market-autosell-btn.is-on { color:var(--casino-fg-strong, #fbfdff);background:linear-gradient(145deg,rgba(76,192,126,.26),rgba(28,86,58,.22));border-color:rgba(166,243,198,.5); }
+        .script-market-autosell-btn.is-on .script-market-autosell-ic { color:#8bf0b6; }
+        .script-market-autosell-btn.is-on .script-market-autosell-dot { background:#4cc07e;border-color:#8bf0b6;box-shadow:0 0 7px rgba(76,192,126,.9); }
+        /* El aviso va arriba y por debajo del de ventas del market, que ocupa el
+           top:18px. z-index por encima de todo para que se vea con cualquier
+           ventana abierta. */
+        .script-market-autosell-toast { position:fixed;left:50%;top:74px;z-index:2147483646;display:grid;grid-template-columns:auto 1fr;grid-template-areas:"icon title" "icon meta";gap:0 9px;align-items:center;padding:9px 14px 9px 11px;border-radius:11px;background:linear-gradient(150deg,#12283e,#0a1826);border:1px solid rgba(120,180,230,.4);box-shadow:0 10px 30px rgba(0,0,0,.55);opacity:0;transform:translate(-50%,-10px);transition:opacity .18s ease,transform .18s ease;pointer-events:none; }
+        .script-market-autosell-toast.show { opacity:1;transform:translate(-50%,0); }
+        .script-market-autosell-toast > span { grid-area:icon;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:700; }
+        .script-market-autosell-toast > b { grid-area:title;font-size:12px; }
+        .script-market-autosell-toast > small { grid-area:meta;font-size:11px;color:#c4d8df; }
+        .script-market-autosell-toast.is-ok > span { background:rgba(53,208,91,.2);color:#7bf0a2; }
+        .script-market-autosell-toast.is-ok > b { color:#7bf0a2; }
+        .script-market-autosell-toast.is-no > span { background:rgba(250,204,21,.18);color:#f5dc7a; }
+        .script-market-autosell-toast.is-no > b { color:#f5dc7a; }
+        .script-market-autosell-toast.is-error > span { background:rgba(239,68,68,.2);color:#ff9d9d; }
+        .script-market-autosell-toast.is-error > b { color:#ff9d9d; }
+        /* Cristal, con los mismos tokens que el Casino. Las clases NO se
+           comparten con el Casino a proposito (ver el aviso de mas arriba): lo
+           que se comparte son las variables --casino-*, que estan en :root y son
+           el sistema de diseno del script. Un retoque del Casino no puede
+           mover este dialogo, y este dialogo no puede arrastrar al Casino. */
+        .script-market-autosell-config-backdrop { position:fixed;inset:0;z-index:2147483500;display:grid;place-items:center;box-sizing:border-box;padding:16px;background:radial-gradient(circle at 50% 12%,rgba(30,64,100,.26),transparent 52%),rgba(2,8,16,.34);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass); }
+        .script-market-autosell-config { width:min(460px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;color:var(--casino-fg);background:var(--casino-surface);border:1px solid var(--casino-card-line);border-radius:12px;box-shadow:var(--casino-glass-edge),0 18px 50px rgba(0,0,0,.46);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);font-family:var(--casino-font);font-feature-settings:'tnum' 1; }
+        .script-market-autosell-config-head { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        .script-market-autosell-config-head h3 { display:flex;align-items:center;gap:7px;margin:0;color:var(--casino-fg-strong);font-size:var(--casino-fs-section);font-weight:800;letter-spacing:-.01em; }
+        .script-market-autosell-config-head h3 .script-market-autosell-ic { width:16px;height:16px;color:var(--casino-accent); }
+        .script-market-autosell-config-close { display:grid;place-items:center;width:29px;height:29px;flex:0 0 auto;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-market-autosell-config-close svg { width:13px;height:13px; }
+        .script-market-autosell-config-close:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
+        .script-market-autosell-config-body { display:grid;gap:12px;padding:12px; }
+        .script-market-autosell-config-note { margin:0;padding:8px 9px;color:var(--casino-muted);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.45; }
+        .script-market-autosell-config-note b { color:var(--casino-fg-strong);font-weight:800; }
+        .script-market-autosell-config-group { display:grid;gap:7px; }
+        .script-market-autosell-config-group>h4 { margin:0;color:var(--casino-accent);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.1em; }
+        /* El interruptor es una tarjeta, no una fila de texto: es lo unico que
+           cambia de estado y tiene que verse de un vistazo. */
+        .script-market-autosell-config-check { display:flex;align-items:center;gap:7px;padding:8px 9px;color:var(--casino-muted);background:var(--casino-card);border:1px solid var(--casino-card-line);border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.12); }
+        .script-market-autosell-config-check:hover { border-color:rgba(170,210,235,.32); }
+        .script-market-autosell-config-check input { width:auto;height:auto;margin:0;flex:0 0 auto;accent-color:#4cc07e; }
+        .script-market-autosell-config-row { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+        .script-market-autosell-config-field { display:grid;gap:4px; }
+        .script-market-autosell-config-field>label { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
+        .script-market-autosell-config-field input,.script-market-autosell-config-field select { box-sizing:border-box;width:100%;height:32px;padding:3px 7px;color:var(--casino-fg-strong);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
+        .script-market-autosell-config-field input:focus,.script-market-autosell-config-field select:focus { border-color:var(--casino-accent);box-shadow:0 0 0 2px rgba(50,190,229,.2); }
+        .script-market-autosell-config-preview { padding:8px 9px;color:var(--casino-fg);background:var(--casino-well);border:1px dashed var(--casino-well-line);border-radius:8px;font-size:var(--casino-fs-body);line-height:1.5; }
+        .script-market-autosell-config-preview b { color:var(--casino-gold);font-weight:800; }
+        .script-market-autosell-config-preview .script-market-autosell-preview-warn { color:var(--casino-warn); }
+        .script-market-autosell-config-actions { display:flex;gap:7px; }
+        .script-market-autosell-config-btn { flex:1;min-height:34px;padding:5px 9px;border-radius:7px;font-size:var(--casino-fs-body);font-weight:800;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.2),0 2px 5px rgba(0,0,0,.22); }
+        .script-market-autosell-config-btn.is-primary { color:#08160e;background:linear-gradient(145deg,#8bf0b6,#4cc07e);border:1px solid rgba(166,243,198,.7); }
+        .script-market-autosell-config-btn.is-cancel { color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line); }
+        .script-market-autosell-config-btn:hover { filter:brightness(1.1); }
+        /* Los deshabilitados heredarian .45, que a 10.5 px deja el texto en 2.80:1.
+           Se sube a .6, que es lo que ya se hizo en el Casino. */
+        .script-market-autosell-config-btn:disabled { opacity:.6;cursor:not-allowed; }
+        /* Pantallas estrechas. Los dos cortes en dos columnas salen de 213 px
+           cada una a tamano normal; por debajo de eso cada campo se queda sin
+           sitio para su etiqueta y se apilan. */
+        @media (max-width:420px) {
+            .script-market-autosell-btn { padding:0 7px;gap:5px; }
+            .script-market-autosell-btn .script-market-autosell-label { font-size:10px; }
+            .script-market-autosell-config-row { grid-template-columns:1fr; }
+            .script-market-autosell-config-actions { flex-wrap:wrap; }
+        }
+        /* --- PANEL DE SESION ---
+           Cristal pequeno, en la misma familia que el dialogo pero sin capas
+           propias: es un aviso, no una ventana. Va por debajo de los avisos de
+           venta, que ocupan la franja superior. */
+        /* El atributo hidden no gana a un display:flex, asi que se dice
+           explicitamente. Sin esta regla el panel NUNCA se ocultaria. */
+        .script-market-autosell-panel[hidden] { display:none; }
+        .script-market-autosell-panel { position:fixed;left:0;top:72px;z-index:2147483440;width:186px;box-sizing:border-box;display:grid;gap:0;overflow:hidden;color:var(--casino-fg);background:var(--casino-surface);border:1px solid var(--casino-card-line);border-radius:11px;box-shadow:var(--casino-glass-edge),0 10px 28px rgba(0,0,0,.42);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);font-family:var(--casino-font);font-feature-settings:'tnum' 1;font-variant-numeric:tabular-nums; }
+        /* El asa es la cabecera: es lo unico que arrastra. */
+        .script-market-autosell-panel-grip { display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none; }
+        .script-market-autosell-panel-grip:active { cursor:grabbing; }
+        .script-market-autosell-panel-ic { width:14px;height:14px;flex:0 0 auto;color:var(--casino-accent); }
+        .script-market-autosell-panel-title { color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
+        .script-market-autosell-panel-sitio { min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-market-autosell-panel-tiempo { flex:0 0 auto;margin-left:auto;padding:1px 5px;color:var(--casino-accent);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:5px;font-size:var(--casino-fs-chip);font-weight:800; }
+        .script-market-autosell-panel-body { display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--casino-card-line); }
+        .script-market-autosell-panel-stat { display:grid;gap:1px;padding:8px 9px;background:rgba(14,30,44,.5); }
+        .script-market-autosell-panel-stat b { color:var(--casino-fg-strong);font-size:var(--casino-fs-title);font-weight:800;line-height:1.1; }
+        .script-market-autosell-panel-stat b.es-oro { color:var(--casino-gold); }
+        .script-market-autosell-panel-stat small { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.06em; }
+        .script-market-autosell-panel-fallos { padding:5px 9px;color:var(--casino-danger);background:rgba(74,26,32,.5);border-top:1px solid rgba(255,163,163,.3);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-market-autosell-panel-fallos[hidden] { display:none; }
+        @media (max-width:420px) { .script-market-autosell-panel { width:158px; } .script-market-autosell-panel-stat b { font-size:17px; } }
+        .script-casino-market { color:#d8ecff;background:linear-gradient(145deg,rgba(58,116,168,.72),rgba(32,66,98,.62));border:1px solid rgba(120,180,230,.55); }
+        .script-casino-sell { color:#ffe9e9;background:linear-gradient(145deg,rgba(142,64,80,.72),rgba(78,34,44,.62));border:1px solid rgba(200,105,125,.6); }
+        .script-casino-team-action:hover:not(:disabled) { filter:brightness(1.16);box-shadow:inset 0 1px rgba(255,255,255,.26),0 4px 8px rgba(0,0,0,.3);transform:translateY(-1px); }
+        .script-casino-team-action:disabled { opacity:.6;cursor:not-allowed; }
+        .script-casino-team-value { grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:4px;color:var(--casino-gold);font-size:var(--casino-fs-label);font-weight:800; }
+        .script-casino-team-value .casino-ic { font-size:.95em; }
+        .script-casino-goal-alert { position:fixed;z-index:2147483550;left:50%;top:18px;transform:translateX(-50%);width:min(420px,calc(100vw - 24px));box-sizing:border-box;display:grid;grid-template-columns:46px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;color:var(--casino-fg);background:rgba(22,34,46,.72);border:1px solid rgba(255,224,113,.7);border-radius:10px;box-shadow:inset 0 1px rgba(255,255,255,.2),0 12px 36px rgba(0,0,0,.48),0 0 18px rgba(255,212,71,.27);backdrop-filter:var(--casino-glass);-webkit-backdrop-filter:var(--casino-glass);animation:scriptCasinoGoalEnter .22s ease-out; }
+        .script-casino-goal-alert img { width:44px;height:44px;object-fit:contain;image-rendering:pixelated;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:7px; }
+        .script-casino-goal-alert b { display:flex;align-items:center;gap:6px;color:#ffe071;font-size:var(--casino-fs-name);font-weight:800; }
+        .script-casino-goal-alert b .casino-ic { font-size:.86em; }
+        .script-casino-goal-alert span { display:block;margin-top:3px;color:var(--casino-fg);font-size:var(--casino-fs-body); }
+        /* El nombre del tier va mezclado con el color de texto y no tal cual. El
+           color del tier lo pone el JS y va del gris pizarra al morado: a 12.5 px
+           en negrita, tres de los nueve (#64748b, #a855f7, #d946ef) se quedan por
+           debajo de 4.5:1 sobre este fondo. Mezclarlo al 70% con el color de
+           texto sube el mas flojo a 4.9:1 y deja el tono del tier reconocible. */
+        .script-casino-goal-alert.is-tier b { color:color-mix(in srgb,var(--casino-alert-tier,#a855f7) 70%,var(--casino-fg)); }
+        .script-casino-goal-alert.is-tier img { border-color:color-mix(in srgb,var(--casino-alert-tier,#a855f7) 55%,var(--casino-card-line)); }
+        .script-casino-goal-alert button { align-self:start;display:grid;place-items:center;width:27px;height:27px;color:var(--casino-fg);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.04));border:1px solid var(--casino-card-line);border-radius:6px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.16); }
+        .script-casino-goal-alert button .casino-ic { width:12px;height:12px; }
+        .script-casino-goal-alert button:hover { color:#fff;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08)); }
+        @keyframes scriptCasinoGoalEnter { from{opacity:0;transform:translate(-50%,-12px)} to{opacity:1;transform:translate(-50%,0)} }
+
+        /* --- MOVIMIENTO DE LA LISTA Y LA TIRA DE PROCESO ---
+           La entrada dura 240 ms con una curva que frena al final; la salida 180 ms,
+           mas corta, porque una carta que se va no debe retener la mirada. */
+        .script-casino-team-card.is-entering { animation:scriptCasinoCardIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .script-casino-team-card.is-leaving { animation:scriptCasinoCardOut .18s ease-in both; pointer-events:none; }
+        /* Una carta recien comprada puede llegar ademas a la meta de IV, y entonces
+           le tocarian a la vez el pulso y la entrada. Las dos reglas estan a la misma
+           especificidad y en la propiedad animation la cascada NO acumula: se queda con una sola
+           declaracion, asi que sin esto una de las dos se perderia por accidente de
+           orden. Aqui se declaran las dos juntas en el selector compuesto, que ya es
+           mas especifico, y no se pisan porque el pulso solo anima box-shadow y la
+           entrada opacity y transform. Al irse solo cuenta la salida. */
+        .script-casino-team-card.is-iv-goal.is-entering { animation:scriptCasinoGoalPulse 1.8s ease-in-out infinite,scriptCasinoCardIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .script-casino-team-card.is-iv-goal.is-leaving { animation:scriptCasinoCardOut .18s ease-in both; }
+        @keyframes scriptCasinoCardIn { from{opacity:0;transform:translateY(8px) scale(.97)} to{opacity:1;transform:none} }
+        @keyframes scriptCasinoCardOut { from{opacity:1;transform:none} to{opacity:0;transform:scale(.96)} }
+        /* prefers-reduced-motion no es un extra: sin animacion no salta transitionend
+           y la red de seguridad del setTimeout es la unica que queda. La que se va se
+           ancla en opacity:0 y no en animation:none, para que desaparezca de golpe y
+           no se quede clavada a la vista los 400 ms que tarda el setTimeout en
+           retirarla del DOM. El pulso infinito tambien se para: un bucle eterno es
+           justo lo que se pide parar, y el borde dorado y el "★ IV" siguen contando
+           que la meta esta conseguida. */
+        @media (prefers-reduced-motion: reduce) {
+            .script-casino-team-card.is-entering { animation:none !important; }
+            .script-casino-team-card.is-leaving { opacity:0 !important; }
+            .script-casino-team-card.is-iv-goal { animation:none !important; }
+            .script-casino-progress-name.is-in { animation:none !important; }
+            .script-casino-goal-alert { animation:none !important; }
+        }
+        /* La barra se actualiza por propiedad y sin transicion propia: las compras
+           van mas rapido que una transicion y la barra se quedaria siempre
+           retrasada. Solo el nombre lleva fundido, porque es lo unico que cambia en
+           cada paso. */
+        .script-casino-progress { flex:none;display:flex;align-items:center;gap:9px;padding:6px 12px;background:var(--casino-surface-head);border-bottom:1px solid var(--casino-card-line); }
+        /* La tira aparece y desaparece con el atributo hidden, y el display:flex de
+           arriba le gana a la regla [hidden] del navegador: sin esto se veria
+           siempre. Es el mismo apano que necesitan las cartas de comprados. */
+        .script-casino-progress[hidden] { display:none !important; }
+        .script-casino-progress-bar { flex:1;height:4px;border-radius:999px;background:var(--casino-well);overflow:hidden; }
+        .script-casino-progress-bar>i { display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--casino-accent),var(--casino-gold)); }
+        .script-casino-progress-count { flex:none;color:var(--casino-fg);font-size:var(--casino-fs-chip);font-weight:800;font-variant-numeric:tabular-nums; }
+        .script-casino-progress-name { flex:none;min-width:0;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--casino-muted);font-size:var(--casino-fs-body);font-weight:800; }
+        .script-casino-progress-name.is-in { animation:scriptCasinoNameIn .18s ease both; }
+        @keyframes scriptCasinoNameIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+        .script-flint-backdrop { position:fixed;inset:0;z-index:2147483200;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(2,7,12,.78);backdrop-filter:blur(4px); }
+        .script-flint-window { width:min(860px,95vw) !important;max-width:95vw !important;height:min(650px,88dvh) !important;max-height:88dvh !important;display:flex;flex-direction:column;overflow:hidden;color:#edf5fb;background:#0b1722 !important;border:1px solid #527b91 !important;border-radius:11px !important;box-shadow:0 22px 60px #000d !important; }
+        .script-flint-head { flex:none;display:flex;align-items:center;gap:9px;min-height:58px;padding:10px 13px;background:#11283a;border-bottom:1px solid #31586d; }
+        .script-flint-head-copy { min-width:0;display:flex;flex-direction:column;gap:2px; }
+        .script-flint-kicker { color:#74d2f2;font-size:9px;font-weight:950;letter-spacing:1.35px; }
+        .script-flint-title { margin:0;color:#f4f8fb;font-size:19px;font-weight:950;line-height:1.1; }
+        .script-flint-balance { margin-left:auto;flex:none;padding:7px 10px;color:#65e595;background:#081922;border:1px solid #31586d;border-radius:6px;font-size:12px;font-weight:950; }
+        .script-flint-refresh,.script-flint-close { flex:none;min-height:34px;color:#dce9f1;background:#172c3a;border:1px solid #3b5d70;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;box-shadow:0 2px 5px #0004;transition:transform .15s ease,background .15s ease,border-color .15s ease; }
+        .script-flint-refresh { padding:0 10px; }
+        .script-flint-close { width:34px;font-size:19px; }
+        .script-flint-refresh:hover:not(:disabled),.script-flint-close:hover { color:#fff;background:#203d4f;border-color:#5b8aa3;transform:translateY(-1px); }
+        .script-flint-refresh:disabled { opacity:.45;cursor:wait; }
+        .script-flint-summary { flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;color:#9ab1bf;background:#0c1b27;border-bottom:1px solid #203d4e;font-size:10px; }
+        .script-flint-status { flex:none;min-height:17px;padding:6px 12px;color:#8ebfd1;background:#091722;border-bottom:1px solid #1d3847;font-size:9px; }
+        .script-flint-status:empty { display:none; }
+        .script-flint-status.is-success { color:#64e39a; }
+        .script-flint-status.is-error { color:#ff9d9d; }
+        .script-flint-list { min-height:0;overflow:auto;padding:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-content:start; }
+        .script-flint-empty { grid-column:1/-1;min-height:180px;display:grid;place-items:center;padding:20px;color:#7891a1;text-align:center;font-size:12px; }
+        .script-flint-card { min-width:0;display:grid;grid-template-columns:60px minmax(0,1fr);gap:8px;padding:9px;background:#112538;border:1px solid #31546b;border-left:3px solid #56b7d8;border-radius:7px;box-shadow:inset 0 1px #ffffff08;transition:border-color .15s ease,background .15s ease,transform .15s ease; }
+        .script-flint-card:hover { background:#142b40;border-color:#5990aa;transform:translateY(-1px); }
+        .script-flint-art { grid-row:1/3;width:58px;height:58px;display:grid;place-items:center;background:#07141f;border:1px solid #2b4d60;border-radius:7px;overflow:hidden; }
+        .script-flint-art img { width:52px;height:52px;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 3px 4px #0009); }
+        .script-flint-info { min-width:0; }
+        .script-flint-name { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f4f8fa;font-size:13px;font-weight:950; }
+        .script-flint-meta { margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:4px; }
+        .script-flint-meta span { min-width:0;padding:4px 5px;color:#8fa8b8;background:#091824;border:1px solid #264556;border-radius:4px;font-size:8px; }
+        .script-flint-meta b { display:block;margin-top:1px;color:#e9f0f4;font-size:10px; }
+        .script-flint-controls { grid-column:1/-1;display:grid;gap:6px;padding-top:2px; }
+        .script-flint-presets { display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px; }
+        .script-flint-preset { min-width:0;min-height:25px;padding:2px;color:#c8d8e1;background:#142938;border:1px solid #34566a;border-radius:4px;font-size:8px;font-weight:900;cursor:pointer;transition:transform .14s ease,background .14s ease,border-color .14s ease; }
+        .script-flint-preset:hover:not(:disabled),.script-flint-preset.is-active { color:#10202a;background:#74d2f2;border-color:#b7edff;transform:translateY(-1px); }
+        .script-flint-preset:disabled { opacity:.3;cursor:not-allowed; }
+        .script-flint-sale-row { display:grid;grid-template-columns:minmax(92px,.65fr) minmax(120px,1fr) minmax(110px,.72fr);gap:5px;align-items:stretch; }
+        .script-flint-qty-wrap { min-width:0;display:grid;grid-template-columns:auto minmax(42px,1fr);align-items:center;gap:5px;padding:4px 6px;color:#9eb8c7;background:#081722;border:1px solid #2b4c5e;border-radius:5px;font-size:8px;font-weight:850; }
+        .script-flint-qty { box-sizing:border-box;width:100%;min-width:0;height:26px;padding:2px 5px;color:#fff;background:#10283a;border:1px solid #3d6a81;border-radius:4px;font-size:10px;font-weight:900;text-align:center;outline:none; }
+        .script-flint-qty:focus { border-color:#6ed9fc;box-shadow:0 0 0 2px #31bfe62b; }
+        .script-flint-estimate { min-width:0;display:flex;flex-direction:column;justify-content:center;padding:4px 7px;color:#8ea8b7;background:#081722;border:1px solid #2b4c5e;border-radius:5px;font-size:8px; }
+        .script-flint-estimate b { margin-top:1px;color:#68e498;font-size:11px; }
+        .script-flint-sell { min-width:0;color:#172009;background:linear-gradient(180deg,#f1d574,#d8b64b);border:1px solid #ffe396;border-radius:5px;font-size:10px;font-weight:950;cursor:pointer;box-shadow:0 2px 5px #0005;transition:transform .15s ease,filter .15s ease,box-shadow .15s ease; }
+        .script-flint-sell:hover:not(:disabled) { filter:brightness(1.08);box-shadow:0 4px 8px #0006;transform:translateY(-1px); }
+        .script-flint-sell:disabled { color:#73828c;background:#1b2a34;border-color:#344b59;box-shadow:none;cursor:not-allowed; }
+        @media (min-width:721px) and (max-width:980px) { .script-casino-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
         @media (max-width: 720px) {
             #custom-hunts-filter-bar { grid-template-columns: 1fr !important; }
             .script-shop-menu { box-sizing:border-box !important;z-index:2147483646 !important;width:min(260px,calc(100vw - 12px)) !important;max-width:calc(100vw - 12px) !important;max-height:min(360px,calc(100dvh - 16px)) !important;padding:6px !important;overflow-y:auto !important;background:#081017 !important;border:1px solid #8a682d !important;border-radius:9px !important;box-shadow:0 14px 36px #000f,inset 0 1px #ffffff0b !important; }
@@ -2502,6 +5532,38 @@
             .script-shop-menu .poke-menu-item { box-sizing:border-box;width:100%;min-height:42px;padding:9px 11px !important;color:#e9dfca !important;background:#101b22 !important;border:1px solid #29404d !important;border-radius:6px !important;text-align:left;font-size:11px !important;touch-action:manipulation; }
             .script-shop-menu .poke-menu-item + .poke-menu-item { margin-top:5px; }
             .script-shop-menu .poke-menu-item:active { color:#171006 !important;background:linear-gradient(#e2c77f,#b58b39) !important;border-color:#806126 !important; }
+            .script-casino-backdrop { padding:6px;align-items:stretch; }
+            .script-marlon-window { width:100% !important;max-width:100% !important;height:calc(100dvh - 12px) !important;max-height:calc(100dvh - 12px) !important;margin:auto; }
+            .script-casino-head { min-height:52px;padding:8px;gap:6px;flex-wrap:wrap; }
+            .script-casino-head-copy { flex:1 1 calc(100% - 48px); }
+            .script-casino-balance { order:3;margin-left:0; }
+            .script-casino-refresh { order:3;flex:1; }
+            .script-casino-layout { grid-template-columns:1fr;grid-template-rows:minmax(250px,1fr) minmax(220px,.85fr);overflow:auto; }
+            .script-casino-catalog { border-right:0;border-bottom:1px solid var(--casino-card-line); }
+            .script-casino-list { grid-template-columns:1fr;padding:8px;gap:7px; }
+            .script-casino-results { flex-wrap:wrap; }
+            .script-casino-result { flex:1 1 calc(50% - 2px); }
+            .script-casino-result.is-net { flex:1 1 100%; }
+            .script-casino-card { grid-template-columns:50px minmax(0,1fr);padding:7px; }
+            .script-casino-art { width:48px;height:48px; }
+            .script-casino-art img { width:45px;height:45px; }
+            .script-casino-action-row { grid-column:1/-1; }
+            .script-casino-purchase-controls { grid-template-columns:minmax(0,1fr) auto; }
+            .script-casino-team-list { max-height:42dvh; }
+            .script-casino-team-tools { grid-template-columns:1fr 1fr; }
+            .script-casino-iv-goal { grid-column:1/-1; }
+            .script-casino-progress-name { max-width:30%; }
+            .script-flint-backdrop { padding:6px;align-items:stretch; }
+            .script-flint-window { width:100% !important;max-width:100% !important;height:calc(100dvh - 12px) !important;max-height:calc(100dvh - 12px) !important;margin:auto; }
+            .script-flint-head { min-height:52px;padding:8px;gap:6px;flex-wrap:wrap; }
+            .script-flint-head-copy { flex:1 1 calc(100% - 48px); }
+            .script-flint-balance { order:3;margin-left:0; }
+            .script-flint-refresh { order:3;flex:1; }
+            .script-flint-summary { align-items:flex-start;flex-direction:column; }
+            .script-flint-list { grid-template-columns:1fr;padding:8px; }
+            .script-flint-presets { grid-template-columns:repeat(4,minmax(0,1fr)); }
+            .script-flint-sale-row { grid-template-columns:1fr 1fr; }
+            .script-flint-sell { grid-column:1/-1;min-height:34px; }
         }
 
         .win-window, .cfg-window, .mk-window, .ball-window, .ha-window, .inv-window, .dex-window,
@@ -2824,6 +5886,29 @@
         .hunt-sell-row[hidden] { display: none !important; }
         .hunt-sell-row input[type="number"] { width: 100%; box-sizing: border-box; background: #0c161f; color: #e2e8f0; border: 1px solid #273f52; border-radius: 4px; padding: 5px; }
         .hunt-sell-row.protected { opacity: 0.45; }
+        .hunt-sell-tools { display:flex;align-items:center;gap:8px;flex:none;margin-bottom:9px;padding:8px 10px;border:1px solid #294450;border-radius:8px;background:linear-gradient(145deg,#0e2028,#09161d);box-shadow:inset 0 1px #ffffff07; }
+        .hunt-sell-tools-copy { min-width:120px;margin-right:auto; }.hunt-sell-tools-copy b{display:block;color:#e9ddc3;font-size:10px}.hunt-sell-tools-copy small{display:block;margin-top:2px;color:#708c9b;font-size:8px}
+        .hunt-sell-botany-toggle { position:relative;display:inline-flex;align-items:center;gap:7px;min-height:31px;padding:4px 9px 4px 7px;border:1px solid #47624f;border-radius:6px;background:#10261f;color:#bfe8cd;font-size:9px;font-weight:850;cursor:pointer;user-select:none;white-space:nowrap;transition:background .15s,border-color .15s,color .15s; }
+        .hunt-sell-botany-toggle:hover { border-color:#73bd89;background:#173429;color:#e6fff0; }
+        .hunt-sell-botany-toggle input { position:absolute;opacity:0;pointer-events:none; }
+        .hunt-sell-switch { position:relative;width:28px;height:15px;flex:none;border:1px solid #40535c;border-radius:999px;background:#071117;box-shadow:inset 0 1px 3px #000;transition:.16s; }
+        .hunt-sell-switch:after { content:"";position:absolute;left:2px;top:2px;width:9px;height:9px;border-radius:50%;background:#71828b;transition:.16s; }
+        .hunt-sell-botany-toggle input:checked + .hunt-sell-switch { border-color:#5dcc80;background:#164b2c; }.hunt-sell-botany-toggle input:checked + .hunt-sell-switch:after{left:15px;background:#75e49a;box-shadow:0 0 7px #58d78288}
+        .hunt-sell-botany-toggle input:indeterminate + .hunt-sell-switch { border-color:#c69842;background:#49391b; }.hunt-sell-botany-toggle input:indeterminate + .hunt-sell-switch:after{left:8px;background:#efc768}
+        .hunt-sell-botany-toggle:has(input:disabled) { opacity:.48;cursor:wait; }
+        .hunt-sell-botany-count { min-width:17px;padding:2px 4px;border-radius:8px;background:#07151b;color:#74d596;font-size:7px;text-align:center; }
+        .hunt-botany-tags { display:none;min-width:0;margin-top:6px;padding-top:5px;border-top:1px solid #274039; }
+        .script-npc-item-sell.botany-labels-on .hunt-botany-tags { display:block; }
+        .hunt-botany-caption { display:block;margin-bottom:4px;color:#57946b;font-size:6px;font-weight:950;letter-spacing:.1em; }
+        .hunt-botany-tag-list { display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden; }
+        .hunt-botany-tag { display:inline-flex;align-items:center;min-width:0;max-width:118px;padding:3px 5px;border:1px solid #47704d;border-radius:4px;background:#102b20;color:#91e5a8;font-size:7px;font-weight:850;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .hunt-botany-tag[style] { border-color:color-mix(in srgb,var(--berry-tag) 68%,#243d48);background:color-mix(in srgb,var(--berry-tag) 13%,#0c1d25);color:color-mix(in srgb,var(--berry-tag) 78%,#fff); }
+        .hunt-botany-tag.wild { border-color:#527846;background:#1b2d1b;color:#b6e68a; }.hunt-botany-tag.wild[style]{border-color:color-mix(in srgb,var(--berry-tag) 62%,#4c7941);background:color-mix(in srgb,var(--berry-tag) 11%,#14251a);color:color-mix(in srgb,var(--berry-tag) 72%,#dfffc9)}.hunt-botany-tag.more{border-color:#526878;background:#172631;color:#b7c9d5}
+        .script-npc-item-sell.botany-labels-on .hunt-sell-row.has-botany-material { min-height:106px !important; }
+        .script-npc-item-sell .hunt-sell-row.protected { opacity:1;filter:none; }
+        .script-npc-item-sell .hunt-sell-row.protected:after { content:"PROTEGIDO";position:absolute;right:7px;top:6px;padding:2px 4px;border:1px solid #70622e;border-radius:3px;background:#282315;color:#d9bd64;font-size:6px;font-weight:950;letter-spacing:.08em;pointer-events:none; }
+        .script-npc-item-sell .hunt-sell-row.protected .hunt-sell-info,.script-npc-item-sell .hunt-sell-row.protected .hunt-sell-art { opacity:.72; }
+        .hunt-item-lock { display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #354550;border-radius:6px;background:#090f13;color:#e0c97c;font-size:15px;cursor:pointer;transition:border-color .15s,background .15s,transform .15s; }.hunt-item-lock:hover{border-color:#b38c3d;background:#172129;transform:translateY(-1px)}
         .hunt-sell-backdrop { background:rgba(0,0,0,.72) !important;backdrop-filter:blur(2px); }
         .hunt-sell-backdrop .script-npc-sell-window { display:flex;flex-direction:column;max-height:90vh;background:linear-gradient(145deg,#0d141a,#070b0f) !important;border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden; }
         .hunt-sell-backdrop .script-npc-sell-window .sell-confirm-title { flex:none;min-height:52px;padding:10px 14px !important;background:linear-gradient(180deg,#151c22,#0b1116) !important;border-bottom:1px solid #745725 !important;box-shadow:0 3px 12px #0008; }
@@ -2974,6 +6059,14 @@
         .market-sale-toast > span { grid-area:icon;align-self:center;display:grid;place-items:center;width:22px;height:22px;color:#06150c;background:#53e18a;border-radius:50%;font-weight:1000; }
         .market-sale-toast > b { grid-area:title;color:#75efa3;font-size:11px; }
         .market-sale-toast > small { grid-area:meta;color:#c4d8df;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .script-toast-stack { position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;max-width:min(320px,86vw); }
+        .script-toast { display:grid;grid-template-columns:20px 1fr;column-gap:8px;align-items:center;padding:8px 11px;color:#e4f8ff;background:#0a1c26f2;border:1px solid #3a7f9c;border-left:3px solid #46c4e8;border-radius:8px;box-shadow:0 6px 18px #0009;font-size:12px;line-height:1.3;opacity:0;transform:translateX(14px);transition:opacity .18s ease,transform .18s ease; }
+        .script-toast.is-in { opacity:1;transform:translateX(0); }
+        .script-toast.is-out { opacity:0;transform:translateX(14px); }
+        .script-toast-ico { font-size:15px;line-height:1; }
+        .script-toast-msg { overflow:hidden;text-overflow:ellipsis; }
+        .script-toast.is-error { color:#ffe6e6;background:#2a0f12f2;border-color:#8a3b42;border-left-color:#e2564f; }
+        .script-toast.is-ok { color:#e2ffea;background:#0a2617f2;border-color:#3a8a5c;border-left-color:#4ade80; }
         .market-alert-toast { position:fixed;left:50%;top:72px;z-index:2147483647;max-width:min(520px,92vw);display:grid;grid-template-columns:23px auto;grid-template-areas:"icon title" "icon meta";column-gap:8px;padding:8px 14px;color:#e4f8ff;background:linear-gradient(90deg,#082532f2,#0b171df2);border:1px solid #46c4e8;border-radius:7px;box-shadow:0 8px 24px #000b,0 0 14px #32c8f040;opacity:0;transform:translate(-50%,-16px);transition:opacity .18s,transform .18s;pointer-events:none; }
         .market-alert-toast.show { opacity:1;transform:translate(-50%,0); }
         .market-alert-toast > span { grid-area:icon;align-self:center;display:grid;place-items:center;width:22px;height:22px;color:#06202a;background:#63d9fa;border-radius:50%;font-weight:1000; }
@@ -2986,8 +6079,8 @@
         .market-alert-paste { padding:5px 7px;color:#d7f8ff;background:#12313c;border:1px solid #4ba7ba;border-radius:5px;cursor:pointer;font-size:9px;font-weight:900;text-transform:uppercase; }
         .market-telegram-toggle { padding:5px 7px;color:#bdefff;background:#163a61;border:1px solid #3d8fd0;border-radius:5px;cursor:pointer;font-size:9px;font-weight:900;text-transform:uppercase; }
         .market-alert-rules-count { min-width:16px;padding:1px 4px;color:#09202a;background:#69dffb;border-radius:999px;text-align:center;font-size:9px; }
-        .market-alert-auto-buy { display:flex;align-items:center;gap:5px;padding:4px 7px;color:#9ceaff;background:#0a2029;border:1px solid #36798e;border-radius:5px;font-size:9px;font-weight:900;text-transform:uppercase;cursor:pointer; }
-        .market-alert-auto-buy input { accent-color:#4ed6fb; }
+
+
         .market-alert-form { display:flex;gap:6px;flex-wrap:wrap;align-items:center; }
         .market-alert-kind-tabs,.market-alert-rules-tabs { display:flex;align-items:center;gap:4px; }
         .market-alert-kind-tab,.market-alert-rules-tab { padding:4px 7px;color:#8fa9b7;background:#0b1820;border:1px solid #2b5061;border-radius:5px;cursor:pointer;font-size:9px;font-weight:900;text-transform:uppercase; }
@@ -3070,6 +6163,13 @@
         .market-sell-tier-buttons { min-width:0;display:flex;align-items:center;gap:5px;flex-wrap:wrap; }
         .market-sell-tier-btn { --sell-tier:#64748b;padding:3px 8px;color:#657884;background:#070d12;border:1px solid #2b3d47;border-radius:999px;cursor:pointer;font-size:8px;font-weight:900;opacity:.4;transition:opacity .15s,border-color .15s,box-shadow .15s,background .15s; }
         .market-sell-tier-btn.on { color:var(--sell-tier);background:color-mix(in srgb,var(--sell-tier) 12%,#070d12);border-color:var(--sell-tier);box-shadow:0 0 7px color-mix(in srgb,var(--sell-tier) 28%,transparent);opacity:1; }
+        /* El destello que marca la ficha que se acaba de mandar desde el
+           Cassino. Va aqui y no en la zona del Cassino porque este elemento es
+           del market. El propio editor ya tiene un box-shadow, asi que el
+           destello lo sustituye y vuelve al final sin dejar rastro. */
+        .market-sell-editor.is-flash { animation:marketSellFlash .9s ease-out; }
+        @keyframes marketSellFlash { from{box-shadow:0 0 0 2px rgba(127,216,247,.9),0 0 22px rgba(127,216,247,.5)} to{box-shadow:0 0 0 0 rgba(127,216,247,0),0 0 0 rgba(127,216,247,0)} }
+        @media (prefers-reduced-motion: reduce) { .market-sell-editor.is-flash { animation:none !important; } }
         .market-sell-editor { position:relative;margin:9px 12px 0;padding:12px;display:grid;grid-template-columns:82px minmax(260px,1fr) minmax(470px,1.45fr);grid-template-areas:"art info form";gap:15px;align-items:center;background:linear-gradient(145deg,#111c24,#080f14);border:1px solid #294150;border-radius:10px;box-shadow:0 8px 22px #0008,inset 0 0 22px #ffffff05; }
         .market-sell-editor[hidden] { display:none !important; }
         .market-sell-editor.market-pokemon-quality { border-color:var(--market-tier-color) !important;background:linear-gradient(145deg,color-mix(in srgb,var(--market-tier-color) 15%,#101a21),#080f14 72%) !important; }
@@ -3271,7 +6371,7 @@
         }
         /* Global Market aligned with the Poké Ball Shop / Sell Items windows. */
         .script-market-backdrop { background:rgba(0,0,0,.72) !important;backdrop-filter:blur(2px); }
-        .script-market-window { border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden; }
+        .script-market-window { border:2px solid #785a28 !important;border-radius:11px !important;box-shadow:0 18px 55px #000d,inset 0 0 0 1px #d5b36612 !important;overflow:hidden;will-change:transform; }
         .script-market-window .mk-head { min-height:50px;padding:10px 14px !important;background:linear-gradient(180deg,#151c22,#0b1116) !important;border-bottom:1px solid #745725 !important;box-shadow:0 3px 12px #0008; }
         .script-market-window .mk-head > b { color:#f0e6ce !important;font-size:16px;letter-spacing:.015em;text-shadow:0 1px 2px #000; }
         .script-market-window .market-head-primary { flex:1;min-width:0;display:flex;align-items:center;gap:14px; }
@@ -3467,6 +6567,15 @@
         .portable-depot-content.depot-view-list .depot-entry-lock { width:25px;height:25px;font-size:12px !important; }
         .portable-depot-poke-filters { grid-column:1/-1;display:grid;grid-template-columns:minmax(190px,2fr) repeat(4,minmax(82px,1fr)) auto;gap:7px;padding:9px !important;background:linear-gradient(145deg,#101a21,#090f14) !important;border:1px solid #354334 !important;border-left:3px solid #ba9140 !important;border-radius:8px !important;box-shadow:0 3px 10px #0006; }
         .portable-depot-poke-filters input { box-sizing:border-box;width:100%;min-height:32px;padding:6px 8px;background:#071017;border:1px solid #304854;border-radius:6px;color:#dce6eb;font:600 10px var(--piw-game-font);outline:none; }.portable-depot-poke-filters input:focus{border-color:#aa8235;box-shadow:0 0 0 2px #aa823523;}
+        .portable-depot-item-filters { grid-column:1/-1;display:grid;grid-template-columns:minmax(220px,1fr) auto;align-items:center;gap:8px;padding:8px 9px;background:linear-gradient(145deg,#101a21,#090f14);border:1px solid #354334;border-left:3px solid #ba9140;border-radius:8px;box-shadow:0 3px 10px #0006; }
+        .portable-depot-item-search-wrap { min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:7px;height:34px;box-sizing:border-box;padding:0 9px;color:#76cdef;background:#071017;border:1px solid #304854;border-radius:6px; }
+        .portable-depot-item-search-wrap:focus-within { border-color:#aa8235;box-shadow:0 0 0 2px #aa823523; }
+        .portable-depot-item-search { min-width:0;width:100%;height:30px;padding:0;color:#e4edf2;background:transparent;border:0;outline:0;font:650 10px var(--piw-game-font); }
+        .portable-depot-item-search::-webkit-search-cancel-button { filter:invert(1);opacity:.55;cursor:pointer; }
+        .portable-depot-item-categories { display:flex;align-items:center;gap:4px;padding:3px;background:#070d11;border:1px solid #2c414c;border-radius:7px; }
+        .portable-depot-item-category { min-width:68px;min-height:28px;padding:4px 9px;color:#96acb8;background:#111b21;border:1px solid transparent;border-radius:5px;font:850 8.5px var(--piw-game-font);cursor:pointer;transition:color .15s,background .15s,border-color .15s,transform .15s; }
+        .portable-depot-item-category:hover { color:#e9dfc9;border-color:#66532f;transform:translateY(-1px); }
+        .portable-depot-item-category.on { color:#171006;background:linear-gradient(#e1c477,#b58a38);border-color:#d3ad55;box-shadow:0 2px 6px #0007; }
         .portable-depot-clear-filters { min-height:32px !important;padding:5px 10px !important;background:#151e23 !important;border-color:#5e5135 !important;color:#e4d9c3 !important;font:800 9px var(--piw-game-font); }
         .portable-depot-tier-filters { grid-column:1/-1;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding-top:7px;border-top:1px solid #263a43; }
         .portable-depot-tier-label { margin-right:3px;color:#7892a1;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase; }
@@ -3475,7 +6584,7 @@
         .portable-depot-tier-shortcut { padding:3px 7px;background:#10181d;border:1px solid #3b4d56;border-radius:5px;color:#9cafb9;font:800 8px var(--piw-game-font);cursor:pointer; }
         .portable-depot-family-header { grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px !important;background:linear-gradient(90deg,#18232a,#0b1216) !important;border:1px solid #594725 !important;border-left:3px solid #c49a42 !important;border-radius:8px !important;color:#b7c9d2 !important;font-size:10px !important;box-shadow:0 3px 9px #0006; }
         .portable-depot-family-header strong{color:#f0e0bd;font-size:12px}.portable-depot-family-header span{color:#7fa1b1}
-        @media (max-width:800px) { .portable-depot-backdrop .script-portable-depot-window{height:min(840px,95vh)}.portable-depot-backdrop .depot-head{align-items:stretch;flex-wrap:wrap}.portable-depot-brand{flex:1}.portable-depot-tabs{order:3;flex-basis:100%;justify-content:flex-start;overflow-x:auto}.portable-depot-content{grid-template-columns:1fr;grid-template-rows:auto;overflow-y:auto}.portable-depot-content>.portable-depot-column{min-height:270px;height:auto}.portable-depot-poke-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.portable-depot-poke-filters input:first-child{grid-column:1/-1}.portable-depot-clear-filters{grid-column:1/-1}.depot-column-head{align-items:flex-start;flex-wrap:wrap}.depot-column-actions{width:100%}.portable-depot-side-action{flex:1} }
+        @media (max-width:800px) { .portable-depot-backdrop .script-portable-depot-window{height:min(840px,95vh)}.portable-depot-backdrop .depot-head{align-items:stretch;flex-wrap:wrap}.portable-depot-brand{flex:1}.portable-depot-tabs{order:3;flex-basis:100%;justify-content:flex-start;overflow-x:auto}.portable-depot-content{grid-template-columns:1fr;grid-template-rows:auto;overflow-y:auto}.portable-depot-content>.portable-depot-column{min-height:270px;height:auto}.portable-depot-poke-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.portable-depot-poke-filters input:first-child{grid-column:1/-1}.portable-depot-clear-filters{grid-column:1/-1}.portable-depot-item-filters{grid-template-columns:1fr}.portable-depot-item-categories{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.portable-depot-item-category{min-width:0}.depot-column-head{align-items:flex-start;flex-wrap:wrap}.depot-column-actions{width:100%}.portable-depot-side-action{flex:1} }
         .portable-shop-heading {
             margin: 8px 0 0;
             padding: 7px 3px 5px;
@@ -3711,6 +6820,13 @@
                 width:calc(100vw - 8px) !important;max-width:calc(100vw - 8px) !important;
                 height:calc(100dvh - 8px) !important;max-height:calc(100dvh - 8px) !important;border-radius:8px !important;
             }
+            .hunt-sell-tools { flex-wrap:wrap;padding:7px;gap:6px; }
+            .hunt-sell-tools-copy { flex:1 0 100%; }
+            .hunt-sell-botany-toggle { flex:1 1 calc(50% - 4px);justify-content:center;min-width:0;padding-inline:5px;font-size:8px; }
+            .hunt-sell-botany-lock-toggle { flex-basis:calc(58% - 4px); }
+            .hunt-sell-botany-toggle > span:not(.hunt-sell-switch) { overflow:hidden;text-overflow:ellipsis; }
+            .hunt-botany-tag-list { flex-wrap:wrap;overflow:visible; }
+            .hunt-botany-tag { max-width:100%; }
             .script-market-window .mk-head { min-height:auto;padding:8px !important;flex-wrap:wrap;gap:6px !important; }
             .script-market-window .market-head-primary { flex-basis:calc(100% - 34px);flex-wrap:wrap;gap:6px; }
             .script-market-window .market-head-primary > b { font-size:14px; }
@@ -4295,6 +7411,57 @@
         }
         .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-buy { min-height:46px; }
 
+        /* Cards Pokémon compactas: conservan stats, precio, conversión, acciones, tier y tipos sin escalado borroso. */
+        .script-market-window .market-pokemon-listing { font-size:9px; }
+        .script-market-window .market-pokemon-listing .market-main { padding-right:76px; }
+        .script-market-window .market-pokemon-listing .market-kind-label { margin-bottom:3px;font-size:7px;line-height:1.1;letter-spacing:.13em; }
+        .script-market-window .market-pokemon-listing .market-item-name { font-size:13px;line-height:1.14; }
+        .script-market-window .market-pokemon-listing .market-meta { margin-top:2px;font-size:8px;line-height:1.2; }
+        .script-market-window .market-pokemon-listing .market-quality-tier { right:38px;min-height:17px;padding:2px 5px;font-size:6.5px;line-height:1.1; }
+        .script-market-window .market-pokemon-types { display:flex;flex-wrap:wrap;gap:3px;margin-top:4px; }
+        .script-market-window .market-pokemon-type {
+            --market-type-color:#91a3b7;display:inline-flex;align-items:center;min-height:15px;box-sizing:border-box;padding:1px 5px;color:#f4f7fb;background:color-mix(in srgb,var(--market-type-color) 24%,#0a1727);border:1px solid color-mix(in srgb,var(--market-type-color) 72%,#29415a);border-radius:4px;font-size:6.5px;font-weight:900;line-height:1;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;
+        }
+        .script-market-window .market-pokemon-type[data-pokemon-type="normal"] { --market-type-color:#a8a77a; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fire"] { --market-type-color:#ee8130; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="water"] { --market-type-color:#6390f0; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="electric"] { --market-type-color:#f7d02c; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="grass"] { --market-type-color:#7ac74c; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ice"] { --market-type-color:#96d9d6; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fighting"] { --market-type-color:#c22e28; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="poison"] { --market-type-color:#a33ea1; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ground"] { --market-type-color:#e2bf65; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="flying"] { --market-type-color:#a98ff3; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="psychic"] { --market-type-color:#f95587; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="bug"] { --market-type-color:#a6b91a; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="rock"] { --market-type-color:#b6a136; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="ghost"] { --market-type-color:#735797; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="dragon"] { --market-type-color:#6f35fc; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="dark"] { --market-type-color:#705746; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="steel"] { --market-type-color:#b7b7ce; }
+        .script-market-window .market-pokemon-type[data-pokemon-type="fairy"] { --market-type-color:#d685ad; }
+        .script-market-window .market-pokemon-listing > .market-card-stats { gap:3px 5px;padding:5px 6px; }
+        .script-market-window .market-pokemon-listing > .market-card-stats .market-stat { min-height:15px;padding:2px 4px;font-size:7px;line-height:1; }
+        .script-market-window .market-pokemon-listing > .market-card-stats .market-stat b { font-size:7.5px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer { gap:5px;padding-top:7px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-data-box { min-height:45px;padding:5px 7px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-data-label { margin-bottom:2px;font-size:6px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-price b { font-size:10px; }
+        .script-market-window .market-pokemon-listing .market-buy-footer .market-conversion b { font-size:8.5px; }
+        .script-market-window .market-view-cards .market-buy-row.market-pokemon-listing {
+            min-height:270px !important;padding:9px !important;gap:7px 8px;grid-template-columns:56px minmax(0,1fr);grid-template-rows:minmax(66px,auto) minmax(53px,auto) minmax(101px,auto) !important;
+        }
+        .script-market-window .market-view-cards .market-buy-row.market-pokemon-listing .market-art { width:54px;height:54px; }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer { min-height:101px;grid-template-rows:minmax(45px,auto) minmax(39px,auto); }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-actions { margin-top:1px;padding-top:5px !important; }
+        .script-market-window .market-view-cards .market-pokemon-listing .market-buy-footer .market-buy { min-height:38px;font-size:10px; }
+        .script-market-window .market-view-cards .market-sell-row.market-pokemon-listing {
+            min-height:150px !important;padding:9px !important;gap:7px 8px;grid-template-columns:56px minmax(0,1fr);grid-template-rows:minmax(64px,auto) auto;
+        }
+        .script-market-window .market-view-cards .market-sell-row.market-pokemon-listing .market-art { width:54px;height:54px; }
+        .script-market-window .market-view-list .market-buy-row.market-pokemon-listing { min-height:108px !important; }
+        .script-market-window .market-view-list .market-sell-row.market-pokemon-listing { min-height:98px !important; }
+
         /* Cards de objetos: identidad, banda de datos y compra en tres niveles claros. */
         .script-market-window .market-view-cards .market-buy-row.market-listing-row:not(.market-pokemon-listing) {
             min-height:224px !important;padding:12px !important;grid-template-columns:62px minmax(0,1fr) !important;grid-template-rows:minmax(78px,auto) minmax(112px,auto) !important;grid-template-areas:"art main" "footer footer" !important;gap:9px 11px !important;align-items:center !important;
@@ -4472,12 +7639,14 @@
 
         .script-market-backdrop:not(.market-filters-open) .market-buy-controls,
         .script-market-backdrop:not(.market-filters-open) .market-pokemon-filters,
+        .script-market-backdrop:not(.market-filters-open) .market-held-filters,
         .script-market-backdrop:not(.market-filters-open) .market-sell-controls,
         .script-market-backdrop:not(.market-filters-open) .market-sell-quality-tiers,
         .script-market-backdrop:not(.market-filters-open) .market-request-list-filters { display:none !important; }
         .script-market-backdrop.market-filters-open .market-buy-controls,
         .script-market-backdrop.market-filters-open .market-sell-controls,
-        .script-market-backdrop.market-filters-open .market-pokemon-filters { margin:7px 14px 0;padding:7px !important;gap:6px !important;border-radius:10px !important; }
+        .script-market-backdrop.market-filters-open .market-pokemon-filters,
+        .script-market-backdrop.market-filters-open .market-held-filters { margin:7px 14px 0;padding:7px !important;gap:6px !important;border-radius:10px !important; }
         .script-market-backdrop.market-filters-open .market-sell-quality-tiers { margin:6px 14px 0;padding:6px 9px;border-radius:9px; }
         .script-market-backdrop.market-filters-open .market-buy-controls input,
         .script-market-backdrop.market-filters-open .market-buy-controls select,
@@ -4488,6 +7657,19 @@
         .script-market-window .market-request-controls { margin:7px 14px 0;padding:10px;border-radius:10px !important; }
         .script-market-window .market-request-list-filters { margin-top:7px;padding-top:7px; }
         .script-market-window .market-status { min-height:28px;margin:3px 14px 0;padding:6px 1px !important;font-size:10px !important; }
+        .script-market-window .market-held-filters { display:none;align-items:center;gap:6px;margin:7px 14px 0;padding:7px;background:linear-gradient(145deg,#14283b,#0d1c2c);border:1px solid #34506c;border-radius:9px;box-shadow:inset 0 1px rgba(255,255,255,.035); }
+        .script-market-window .market-held-filters select,.script-market-window .market-held-filters input { min-height:32px;box-sizing:border-box;padding:5px 8px;background:#07131f;color:#dce8f2;border:1px solid #35516b;border-radius:6px;font-size:9px; }
+        .script-market-window .market-held-item-filter { min-width:145px; }
+        .script-market-window .market-held-tier-filter { min-width:105px; }
+        .script-market-window .market-held-quantity-min { width:92px; }
+        .script-market-window .market-held-tier-badge { display:inline-flex;align-items:center;padding:3px 6px;border:1px solid #55bfff66;border-radius:5px;background:#10283a;color:#8fe2ff;font-size:8px;font-weight:900;letter-spacing:.06em; }
+        .script-market-window .market-held-tier-badge.tier-1 { border-color:#94a3b866;color:#cbd5e1;background:#182536; }
+        .script-market-window .market-held-tier-badge.tier-2 { border-color:#a855f777;color:#e9c7ff;background:#2a1c3a; }
+        .script-market-window .market-held-tier-badge.tier-3 { border-color:#f7c85888;color:#fff0a6;background:#3a2b12; }
+        .script-market-window .market-sell-botany-filter { display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:4px 9px;border:1px solid #477453;border-radius:7px;background:#10261e;color:#c0eacb;font-size:9px;font-weight:800;cursor:pointer;user-select:none;white-space:nowrap; }
+        .script-market-window .market-sell-botany-filter input { accent-color:#66ee91; }
+        .script-market-window .market-sell-botany-filter:hover { border-color:#74bd88;background:#173429;color:#e6fff0; }
+        .script-market-window .market-sell-botany-filter[hidden] { display:none !important; }
         .script-market-window .market-list { padding:0 14px 14px !important;gap:10px !important; }
         .script-market-window .market-list.market-view-cards { grid-template-columns:repeat(3,minmax(0,1fr));gap:10px !important; }
         .script-market-window .market-sell-editor { margin:7px 14px 0;padding:10px;border-radius:10px !important; }
@@ -4715,6 +7897,11 @@
         .inv-window.script-window-layout-compact .inv-slots { grid-template-columns:repeat(auto-fill,minmax(42px,1fr)) !important; }
         .dex-window.script-window-layout-compact .dex-script-controls { align-items:stretch; }
         .dex-window.script-window-layout-compact .dex-script-controls .dex-fbtn { flex:1 1 calc(33.333% - 6px); }
+        .script-npc-item-sell.script-window-layout-compact .hunt-sell-tools { flex-wrap:wrap; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-tools { flex-wrap:wrap;padding:7px;gap:6px; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-tools-copy { flex:1 0 100%; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-sell-botany-toggle { flex:1 1 calc(50% - 4px);justify-content:center;min-width:0;padding-inline:5px;font-size:8px; }
+        .script-npc-item-sell.script-window-layout-mobile .hunt-botany-tag-list { flex-wrap:wrap;overflow:visible; }
 
         .market-iv-stage.script-window-layout-mobile > .script-market-window { border-radius:8px !important; }
         .market-iv-stage.script-window-layout-mobile .script-market-window .mk-head { min-height:auto;padding:8px !important;flex-wrap:wrap;gap:6px !important; }
@@ -4836,6 +8023,140 @@
         else document.addEventListener('DOMContentLoaded', () => document.head.appendChild(styleElement), { once: true });
     }
     appendStyleWhenReady(style);
+
+    /* ===== APLANADO VISUAL DEL PANEL DE CONFIGURACION =====
+       Quita hover, glow, blur, sombras, degradados y animaciones de la ventana
+       de Configuracion. Se conserva a proposito el dorado de los estados
+       activos (informa, no decora), la rejilla de 2 columnas, las cabeceras de
+       seccion y el scrollbar. No toca las pestanas Video / Contrasena ni
+       ningun otro panel del juego. Se inyecta aparte para poder desactivarlo
+       quitando este bloque sin reescribir las 160 reglas originales. */
+    const styleCfgFlat = document.createElement('style');
+    styleCfgFlat.id = 'script-cfg-flat-style';
+    styleCfgFlat.textContent = `
+        .cfg-window.script-mods-open,
+        .cfg-window.script-mods-open .cfg-body,
+        .cfg-window.script-mods-open .cfg-mods-content,
+        .cfg-window.script-mods-open .cfg-tabs,
+        .cfg-window.script-mods-open .script-mod-category,
+        .cfg-window.script-mods-open .script-mod-category h3,
+        .cfg-window.script-mods-open .cfg-row,
+        .cfg-window.script-mods-open .script-window-scale-row,
+        .cfg-window.script-mods-open .script-window-scale-head,
+        .cfg-window.script-mods-open .cfg-seg,
+        .cfg-window.script-mods-open .cfg-tab,
+        .cfg-window.script-mods-open button {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            transition: none !important;
+            animation: none !important;
+        }
+        .cfg-window.script-mods-open *,
+        .cfg-window.script-mods-open *::before,
+        .cfg-window.script-mods-open *::after {
+            transition: none !important;
+            animation: none !important;
+        }
+        .cfg-window.script-mods-open button:not(:disabled):hover,
+        .cfg-window.script-mods-open .cfg-row:hover,
+        .cfg-window.script-mods-open .script-window-scale-row:hover,
+        .cfg-window.script-mods-open .cfg-tab:not(.on):hover,
+        .cfg-window.script-mods-open .cfg-seg-btn:not(.on):hover {
+            transform: none !important;
+            box-shadow: none !important;
+            filter: none !important;
+        }
+        .cfg-window.script-mods-open { background: #0f1721 !important; border: 1px solid #2b3f54 !important; border-radius: 12px !important; }
+        .cfg-window.script-mods-open .cfg-tabs { background: #16202c !important; border-bottom: 1px solid #2b3f54 !important; }
+        .cfg-window.script-mods-open .cfg-body,
+        .cfg-window.script-mods-open .cfg-mods-content { background: #0f1721 !important; }
+        .cfg-window.script-mods-open .cfg-tab { background: #1a2635 !important; background-image: none !important; color: #d7e2ee !important; }
+        .cfg-window.script-mods-open .script-mod-category { background: #101a26 !important; background-image: none !important; }
+        .cfg-window.script-mods-open .cfg-tab.on,
+        .cfg-window.script-mods-open .cfg-tab-mods.on {
+            background: #e0b757 !important; background-image: none !important;
+            color: #17130a !important; border-color: #e0b757 !important; box-shadow: none !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category-grid > .cfg-row {
+            background: #16212e !important; background-image: none !important;
+            border: 1px solid #2a3d52 !important; border-radius: 10px !important; padding: 12px !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category-grid > .cfg-row:hover {
+            background: #16212e !important; border-color: #2a3d52 !important;
+        }
+        .cfg-window.script-mods-open .script-window-scale-row {
+            background: #16212e !important; background-image: none !important;
+            border: 1px solid #2a3d52 !important; border-radius: 10px !important;
+        }
+        .cfg-window.script-mods-open .script-mod-category h3 { color: #cfdae6 !important; border-bottom: 1px solid #26374a !important; }
+        .cfg-window.script-mods-open .script-mod-category-grid,
+        .cfg-window.script-mods-open .script-mods-grid,
+        .cfg-window.script-mods-open .script-window-scale-grid { gap: 10px !important; }
+        .cfg-window.script-mods-open .cfg-mods-content::-webkit-scrollbar-thumb,
+        .cfg-window.script-mods-open .cfg-mods-content::-webkit-scrollbar-thumb:hover { background: #4a637c !important; }
+        .cfg-window .cfg-sell-result-count { padding: 4px 10px; color: #8fa3b6; font-size: 10px; border-bottom: 1px solid #1f2d3c; }
+        .cfg-window .cfg-sell-result-row { background: transparent !important; }
+
+        /* ---- "Confirmacion para objetos": dos columnas y nombres sin partir ---- */
+        .cfg-window .script-sell-confirm { display: block !important; }
+        .cfg-window .script-sell-head { margin-bottom: 10px; }
+        .cfg-window .script-sell-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+        .cfg-window .script-sell-col { min-width: 0; }
+        .cfg-window .script-sell-col-title {
+            display: block; margin-bottom: 6px; color: #93a7ba; font-size: 10px;
+            font-weight: 900; letter-spacing: .08em; text-transform: uppercase;
+        }
+        .cfg-window .script-sell-picker { position: relative; display: flex; gap: 8px; flex-wrap: wrap; }
+        .cfg-window .script-sell-search {
+            flex: 1 1 220px; min-width: 0; height: 34px; box-sizing: border-box;
+            background: #0d1620 !important; color: #e6eef6 !important;
+            border: 1px solid #2c4358 !important; border-radius: 6px !important;
+            padding: 0 10px !important; font-size: 12px !important; outline: none !important;
+        }
+        .cfg-window .script-sell-btn {
+            flex: 0 0 auto; height: 34px; padding: 0 12px; box-sizing: border-box;
+            background: #1b2b3c !important; color: #dbe6f0 !important;
+            border: 1px solid #2c4358 !important; border-radius: 6px !important;
+            font-size: 11px !important; font-weight: 800 !important; cursor: pointer !important;
+        }
+        .cfg-window .script-sell-menu {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: #16212e !important; border: 1px solid #2c4358 !important;
+            border-radius: 8px !important; z-index: 40; margin-top: 4px;
+            box-sizing: border-box; overflow: hidden;
+        }
+        .cfg-window .script-sell-results { max-height: 240px; overflow-y: auto; overflow-x: hidden; }
+        /* Filas comodos: una sola linea, sin partir el nombre, alto uniforme. */
+        .cfg-window .cfg-sell-result-row {
+            display: flex !important; align-items: center; gap: 9px;
+            min-height: 30px; padding: 5px 10px !important;
+            font-size: 12px !important; white-space: nowrap; overflow: hidden;
+            border-bottom: 1px solid #1c2937 !important; cursor: pointer;
+        }
+        .cfg-window .cfg-sell-result-row > span { overflow: hidden; text-overflow: ellipsis; }
+        .cfg-window .cfg-sell-result-row img { width: 18px; height: 18px; object-fit: contain; flex: 0 0 18px; }
+        .cfg-window .cfg-sell-result-row input[type="checkbox"] { width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }
+        /* Ya elegido: se marca con fondo, no con brillo. */
+        .cfg-window .cfg-sell-result-row:has(input:checked) { background: #1d3047 !important; }
+        .cfg-window .script-sell-selected {
+            display: flex; flex-direction: column; gap: 5px;
+            max-height: 190px; overflow-y: auto; padding-right: 4px;
+        }
+        .cfg-window .script-sell-selected > div {
+            display: flex; justify-content: space-between; align-items: center; gap: 8px;
+            background: #1a2b3b; border: 1px solid #2c4358; border-radius: 6px;
+            padding: 6px 9px; font-size: 12px; min-height: 30px;
+        }
+        .cfg-window .script-sell-selected > div > div { display: flex; align-items: center; gap: 7px; color: #e6eef6; min-width: 0; }
+        .cfg-window .script-sell-selected > div > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cfg-window .script-sell-selected img { width: 18px; height: 18px; object-fit: contain; flex: 0 0 18px; }
+        .cfg-window .script-sell-selected > div > span { cursor: pointer; color: #e8836f; font-weight: 900; font-size: 15px; line-height: 1; padding: 0 2px; }
+        .cfg-window.script-window-layout-compact .script-sell-columns,
+        .cfg-window.script-window-layout-mobile .script-sell-columns { grid-template-columns: minmax(0, 1fr) !important; }
+    `;
+    appendStyleWhenReady(styleCfgFlat);
 
     applyGameFont();
     applyVisualPreferences();
@@ -5176,9 +8497,97 @@
     }
     function getLastHunt() { return localStorage.getItem(STORAGE_LAST_HUNT) || null; }
 
+    /* El servidor no permite el deposito familiar dentro de una hunt. Para no
+       depender de eso, al abrir una pestana familiar se sale a la ciudad y al
+       cerrar el Depot se vuelve a la hunt de la que se salio. Se persiste el
+       nombre para que el regreso siga siendo posible aunque el usuario cierre
+       la ventana del Depot. */
+    function getPendingFamilyHunt() {
+        try { return localStorage.getItem(STORAGE_FAMILY_HUNT_PENDING) || null; } catch (_) { return null; }
+    }
+    function setPendingFamilyHunt(name) {
+        try {
+            if (name) localStorage.setItem(STORAGE_FAMILY_HUNT_PENDING, name);
+            else localStorage.removeItem(STORAGE_FAMILY_HUNT_PENDING);
+        } catch (_) {}
+    }
+
+    /* Deteccion mas estricta para decidir si hay que viajar. isInHuntContext() da
+       falso positivo porque a barra de captura continua no DOM depois de sair da
+       hunt. O HUD (.phud-tloc) e a fonte do proprio jogo, entao ele manda: se
+       dissermos uma cidade nao ha hunt. So sem informacao no HUD usamos os
+       indicadores de interface. */
+    function isPlayerReallyInHunt() {
+        const location = typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '';
+        if (location && !isCityName(location)) return true;
+        if (isCityName(location)) return false;
+        return isInHuntContext();
+    }
+
+    async function leaveHuntForFamilyDepot() {
+        if (familyHuntTravelBusy) return true;
+        /* Ja estamos fora de uma hunt: nao ha viagem a fazer. Devolve true para
+           que a aba familiar abra normalmente e NAO apaga a hunt pendente, para
+           que o regresso automatico continue a funcionar quando fechar o Depot. */
+        if (!isPlayerReallyInHunt()) return true;
+        const huntName = getCurrentHuntNameForReconnect();
+        if (!huntName) {
+            showScriptToast('No se pudo identificar la hunt actual. Sal de la hunt manualmente.', { isError: true });
+            return false;
+        }
+        familyHuntTravelBusy = true;
+        setPendingFamilyHunt(huntName);
+        showScriptToast(`Saliendo de ${huntName}…`);
+        try {
+            const left = await teleportToCeruleanForReconnect();
+            if (!left) {
+                setPendingFamilyHunt(null);
+                showScriptToast('No se pudo salir de la hunt automáticamente. Sal manualmente.', { isError: true });
+                return false;
+            }
+            return true;
+        } catch (error) {
+            console.warn('[Depot] Falha ao sair da hunt para o deposito familiar:', error);
+            return false;
+        } finally {
+            familyHuntTravelBusy = false;
+        }
+    }
+
+    async function returnToPendingFamilyHunt() {
+        if (familyHuntTravelBusy) return;
+        const huntName = getPendingFamilyHunt();
+        if (!huntName) return;
+        familyHuntTravelBusy = true;
+        try {
+            showScriptToast(`Volviendo a ${huntName}…`, { isOk: true });
+            await teleportToTarget(huntName);
+            setPendingFamilyHunt(null);
+        } catch (error) {
+            console.warn('[Depot] Falha ao voltar para a hunt:', error);
+            showScriptToast(`No se pudo volver a ${huntName}. Usa el mapa para ir allí.`, { isError: true, durationMs: 4200 });
+        } finally {
+            familyHuntTravelBusy = false;
+        }
+    }
+
     function getCurrentHuntNameForReconnect() {
-        const currentMarkerName = document.querySelector('.hunt-marker.here .hunt-name')?.textContent?.trim();
-        return currentMarkerName || getLastHunt();
+        /* O HUD (.phud-tloc) e onde o proprio jogo mostra onde o personagem esta:
+           e a fonte confiavel e sempre visivel. O marcador do mapa (.hunt-marker.here)
+           so existe quando o mapa esta montado e pode estar desatualizado, por isso
+           passa a ser apenas o segundo recurso. getLastHunt() so entra no fim: e a
+           ultima hunt visitada e nao necessariamente a atual. */
+        const candidates = [
+            typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '',
+            document.querySelector('.hunt-marker.here .hunt-name')?.textContent?.trim(),
+            getLastHunt()
+        ];
+        for (const candidate of candidates) {
+            const name = String(candidate || '').replace(/\\s+/g, ' ').trim();
+            if (!name || name === 'Sem Nome' || isCityName(name)) continue;
+            return name;
+        }
+        return null;
     }
 
     async function teleportToCeruleanForReconnect() {
@@ -5229,7 +8638,65 @@
     }
 
     function findMappedHunt(huntName) {
-        return globalHuntMarkerData.get(getCleanHuntName(huntName)) || null;
+        const key = getCleanHuntName(huntName);
+        if (!key) return null;
+        const exact = globalHuntMarkerData.get(key);
+        if (exact) return exact;
+        /* Respaldo: o nome informado pelo HUD pode diferir do marcador (acento,
+           prefixo, singular/plural). Sem uma correspondencia exata o mapa nao era
+           selecionado e o marcador da hunt nao aparecia no mapa certo. */
+        for (const [markerKey, marker] of globalHuntMarkerData.entries()) {
+            if (getCleanHuntName(markerKey) === key) return marker;
+        }
+        for (const [markerKey, marker] of globalHuntMarkerData.entries()) {
+            const cleanMarker = getCleanHuntName(markerKey);
+            if (cleanMarker && (cleanMarker.includes(key) || key.includes(cleanMarker))) return marker;
+        }
+        return null;
+    }
+
+    function getHuntMarkerArea(marker) {
+        return String(
+            marker?.area || marker?.region || marker?.map?.area || marker?.map?.name ||
+            marker?.hunt?.area || marker?.hunt?.region || ''
+        ).trim().toLowerCase();
+    }
+
+    function waitForMapArea(mapWindow, plate, timeoutMs = 1200) {
+        if (plate?.classList.contains('on')) return Promise.resolve(true);
+        return new Promise(resolve => {
+            let settled = false;
+            const finish = value => {
+                if (settled) return;
+                settled = true;
+                observer.disconnect();
+                clearTimeout(timeout);
+                resolve(value);
+            };
+            const observer = new MutationObserver(() => {
+                if (plate?.classList.contains('on')) finish(true);
+            });
+            const timeout = setTimeout(() => finish(false), timeoutMs);
+            observer.observe(mapWindow, { subtree: true, attributes: true, attributeFilter: ['class'] });
+        });
+    }
+
+    async function scriptSelectMapArea(mapWindow, area) {
+        const normalizedArea = String(area || '').trim().toLowerCase().replace(/\s+/g, '');
+        if (!mapWindow || !normalizedArea) return { found: false, locked: false };
+        const plate = [...mapWindow.querySelectorAll('.map-plate')].find(element => {
+            const imageAlt = element.querySelector('img')?.alt || '';
+            const title = element.title || '';
+            return [imageAlt, title].some(value => String(value).trim().toLowerCase().replace(/\s+/g, '') === normalizedArea);
+        });
+        if (!plate) return { found: false, locked: false };
+        if (plate.classList.contains('locked')) return { found: true, locked: true, plate };
+        if (!plate.classList.contains('on')) {
+            plate.click();
+            await waitForMapArea(mapWindow, plate);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return { found: true, locked: false, plate };
     }
 
     function clickMappedHunt(huntName) {
@@ -5270,6 +8737,16 @@
             return;
         }
 
+        const mappedHunt = findMappedHunt(huntName);
+        const markerArea = getHuntMarkerArea(mappedHunt);
+        if (markerArea) {
+            const areaResult = await scriptSelectMapArea(mapWindow, markerArea);
+            if (areaResult.locked) {
+                showScriptNotice(`O mapa ${markerArea} está bloqueado para esta conta.`, { isError: true });
+                return;
+            }
+        }
+
         // Caminho direto confirmado pelo mapa da API: [data-guide="hunt-<slug>"].
         if (clickMappedHunt(huntName)) return;
 
@@ -5298,6 +8775,16 @@
 
         showScriptNotice(`Hunt "${huntName}" não foi localizada em nenhuma área.`, { isError: true });
     }
+
+    document.addEventListener('pokegrid:travel-to-pokemon', event => {
+        const pokemonName = String(event.detail?.pokemonName || '').trim();
+        if (!pokemonName) return;
+        event.detail.handled = true;
+        Promise.resolve(teleportToTarget(pokemonName)).catch(error => {
+            console.error('Falha ao viajar para o melhor drop de Botânica:', error);
+            showScriptNotice(`Não foi possível viajar até ${pokemonName}.`, { isError: true });
+        });
+    });
 
     function waitForElement(selector, timeoutMs) {
         const existing = document.querySelector(selector);
@@ -5382,9 +8869,2572 @@
         tpBtn.title = 'Teleportar para Última Hunt';
     }
 
+    function formatCasinoText(template, values = {}) {
+        return Object.entries(values).reduce(
+            (text, [key, value]) => text.replaceAll(`{${key}}`, String(value ?? '')),
+            String(template || '')
+        );
+    }
+
+    /* --- ICONOS DEL CASSINO ---
+       Un solo sprite SVG con los simbolos, inyectado una vez. Todos los
+       dibujos van con stroke: currentColor, asi que heredan el color del
+       elemento que los contiene y no hay ningun color en el JS. Sustituye a
+       los emojis, que se veian distintos segun el sistema y no tenian
+       relacion con el tema. */
+    const CASINO_ICON_SYMBOLS = {
+        dice: '<rect x="3.2" y="3.2" width="17.6" height="17.6" rx="3.4"/><circle cx="8.2" cy="8.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="8.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="8.2" cy="15.8" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="15.8" r="1.1" fill="currentColor" stroke="none"/>',
+        coin: '<circle cx="12" cy="12" r="8.4"/><path d="M12 6.9v10.2M9.5 9.4h3.8a1.8 1.8 0 0 1 0 3.6H9.5"/>',
+        swords: '<path d="M6.2 3.4 17.8 15M17.8 3.4 6.2 15"/><path d="M3.6 20.4h4.8M15.6 20.4h4.8"/>',
+        box: '<path d="M20.4 7.6v8.8L12 20.8 3.6 16.4V7.6L12 3.2z"/><path d="m3.6 7.6 8.4 4.4 8.4-4.4M12 12v8.8"/>',
+        gear: '<circle cx="12" cy="12" r="3.1"/><path d="M12 2.8v2.7M12 18.5v2.7M4.6 7.3l2.3 1.3M17.1 15.4l2.3 1.3M4.6 16.7l2.3-1.3M17.1 8.6l2.3-1.3"/>',
+        scroll: '<path d="M6.4 3.4h11.2v14.2a3 3 0 0 1-3 3H6.4a3 3 0 0 1-3-3V6.4a3 3 0 0 1 3-3z"/><path d="M6.8 8.6h10.4M6.8 12.3h10.4M6.8 16h6.4"/>',
+        sparkle: '<path d="M11 2.8c.7 4.2 1.4 4.9 5.6 5.6-4.2.7-4.9 1.4-5.6 5.6-.7-4.2-1.4-4.9-5.6-5.6 4.2-.7 4.9-1.4 5.6-5.6z"/><path d="M17.6 14.2c.4 2.3.8 2.7 3.1 3.1-2.3.4-2.7.8-3.1 3.1-.4-2.3-.8-2.7-3.1-3.1 2.3-.4 2.7-.8 3.1-3.1z"/>',
+        star: '<path d="m12 3.2 2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 17.1l-5.4 2.9 1.1-6.1L3.2 9.6l6.1-.8z"/>',
+        refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.5 4.1v4.7h-4.7"/>',
+        close: '<path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6"/>',
+        evolve: '<path d="M4.4 19.6h5.2M9.6 19.6a5.6 5.6 0 0 1 5.6-5.6 5.6 5.6 0 0 1 5.6 5.6"/><path d="m17.2 16.4 3.2 3.2 3.2-3.2" transform="translate(-3.2 0)"/>',
+        market: '<path d="M3.6 10.2v3.6L12 19.8l8.4-6v-3.6"/><path d="M3.6 10.2 12 4.2l8.4 6L12 16.2z"/><path d="M8.4 13.2h7.2"/>'
+    };
+    function casinoIcon(name, className = '') {
+        const symbol = CASINO_ICON_SYMBOLS[name];
+        if (!symbol) return '';
+        /* href y xlink:href a la vez. href es lo correcto en SVG2, pero algunos
+           WebView siguen exigiendo el atributo con prefijo xlink. Poner los dos
+           cuesta nada y evita que el icono desaparezca segun el navegador. */
+        return `<svg class="casino-ic${className ? ' ' + className : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#casino-ic-${name}" xlink:href="#casino-ic-${name}"></use></svg>`;
+    }
+    function ensureCasinoIcons() {
+        if (document.getElementById('casino-icon-sprite')) return;
+        /* OJO: el sprite se construye con innerHTML sobre un div y no con
+           createElement('svg'). createElement crea el elemento en el namespace
+           HTML, de modo que el navegador no lo reconoce como raiz SVG y ni los
+           <symbol> ni los <use> entran en el arbol grafico: los iconos salian
+           invisibles. El parser de innerHTML si asigna el namespace SVG. */
+        const markup = '<svg id="casino-icon-sprite" class="casino-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">'
+            + Object.entries(CASINO_ICON_SYMBOLS)
+                .map(([name, body]) => `<symbol id="casino-ic-${name}" viewBox="0 0 24 24">${body}</symbol>`)
+                .join('')
+            + '</svg>';
+        const holder = document.createElement('div');
+        holder.innerHTML = markup;
+        const sprite = holder.firstElementChild;
+        if (sprite) document.body.appendChild(sprite);
+    }
+
+    /* --- ARMADO DE LA VISTA DE COMPRADOS ---
+       Decide QUE se ve, no lo dibuja: es pura a proposito, para poder probar
+       en Node que una carta que el filtro aparta sale en la vista como oculta
+       en vez de desaparecer de ella. Si desapareciera, la reconciliacion la
+       retiraria del DOM con animacion, y al quitar el filtro reapareceria
+       animandose otra vez. Dependencias por parametro, no del ambito: asi el
+       test la monta con dobles y mide esta funcion, no una copia.
+
+       Recibe las dos listas y deduce la visibilidad por pertenencia: un id
+       visible si y solo si esta en visibleTeam. Asi el filtro no se recorre dos
+       veces (una para el Set y otra por Pokemon) y no hace falta ningun Set
+       llamado hidden. */
+    function buildTeamView(purchasedTeam, visibleTeam, getPokeId, teamCardSignature) {
+        const visibles = new Set(visibleTeam.map(poke => getPokeId(poke)));
+        return purchasedTeam.map(poke => {
+            const id = getPokeId(poke);
+            return { id, signature: teamCardSignature(poke), visible: visibles.has(id) };
+        });
+    }
+
+    /* --- RECONCILIACION DE LA LISTA DE COMPRADOS ---
+       Devuelve que hay que crear, repintar o retirar para que la lista
+       coincida con la vista. Es una funcion PURA a proposito: decide, no
+       dibuja. Asi se puede probar en Node sin un DOM, y los tests fijan el
+       comportamiento raro (compras repetidas, filtros, vista vacia) sin
+       depender del navegador.
+
+       La lista de comprados se construye con unshift, asi que lo mas nuevo va
+       primero: create() inserta por delante y las cartas que ya existen no se
+       reordenan nunca, para no provocar movimientos en cada compra.
+
+       No hay paso de commit ni transaccion a medias: la cache la mantienen los
+       propios callbacks (create y update escriben, leave y drop la vacian), y
+       si algo falla a mitad la siguiente pasada vuelve a mirar la cache real. */
+    function reconcileTeamCards(view, { existing, existingAllIds, create, update, enter, leave, drop }) {
+        const created = [];
+        const updated = [];
+        const unchanged = [];
+        const left = [];
+        const seen = new Set();
+        for (const item of view) {
+            if (!item || !item.id) continue;
+            const id = String(item.id);
+            const entry = existing(id);
+            if (!item.visible) {
+                /* Oculta por un filtro. Si ya existe se marca hidden y se anota
+                   como vista, para que el filtro la pueda volver a mostrar sin
+                   crearla de nuevo ni animarla otra vez. Si no existe, no se
+                   crea: una carta que nace oculta no aporta nada. */
+                if (entry) { entry.node.hidden = true; seen.add(id); }
+                continue;
+            }
+            seen.add(id);
+            if (entry) entry.node.hidden = false;
+            if (!entry) {
+                const fresh = create(item);
+                created.push(id);
+                if (enter) enter(fresh.node);
+            } else if (String(entry.signature) !== String(item.signature)) {
+                update(entry.node, item);
+                updated.push(id);
+            } else {
+                unchanged.push(id);
+            }
+        }
+        /* Los ids que devuelve la cache se normalizan IGUAL que los de la
+           vista. No es cosmetico: con un Map de claves numericas, '1' y 1 no
+           son la misma clave, y si un lado se normaliza y el otro no, cada
+           pasada daria por retiradas todas las cartas y las volveria a
+           crear. Los ids que se devuelven son siempre texto. */
+        for (const crudo of (existingAllIds ? existingAllIds() : [])) {
+            const id = String(crudo);
+            if (seen.has(id)) continue;
+            const entry = existing(id);
+            if (leave && entry) leave(entry.node, id);
+            if (drop) drop(id);
+            left.push(id);
+        }
+        return { created, updated, left, unchanged };
+    }
+
+    function getMarlonOfferReason(offer, payload) {
+        if (offer?.canBuy) return '';
+        const gold = Number(payload?.gold || 0);
+        const price = Number(offer?.price || 0);
+        if (gold < price) return tr('casinoNeedGold');
+        if (offer?.isTrade && !offer?.hasEevee) return tr('casinoNeedEevee');
+        if (offer?.stoneItemId != null && Number(offer?.stoneHave || 0) < Number(offer?.stoneQty || 0)) return tr('casinoNeedStone');
+        if (payload && payload.hasRoom === false) return tr('casinoNoRoom');
+        return tr('casinoUnavailable');
+    }
+
+    function getMarlonPokemonSprite(offer) {
+        return getPokemonIconUrl(offer?.speciesId)
+            || getPokeApiSpriteUrl({ speciesId: offer?.speciesId })
+            || '/assets/pokeitems/36699.png';
+    }
+
+    async function showPortableCasino() {
+        document.querySelector('.script-casino-backdrop')?.remove();
+
+        ensureCasinoIcons();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-casino-backdrop';
+        backdrop.innerHTML = `
+            <section class="win-window script-marlon-window" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoTitle'))}">
+                <header class="script-casino-head">
+                    <div class="script-casino-head-copy">
+                        <span class="script-casino-kicker">CASINO SERVICE</span>
+                        <h2 class="script-casino-title">${casinoIcon('dice')}<span>${escapeHTML(tr('casinoTitle'))}</span></h2>
+                    </div>
+                    <span class="script-casino-balance">${casinoIcon('coin')}<span class="script-casino-balance-value">—</span></span>
+                    <button class="script-casino-refresh" type="button">${casinoIcon('refresh')}<span>${escapeHTML(tr('casinoRefresh'))}</span></button>
+                    <button class="script-casino-close" type="button" aria-label="${escapeHTML(tr('casinoClose'))}">${casinoIcon('close')}</button>
+                </header>
+                <div class="script-casino-layout">
+                    <div class="script-casino-catalog">
+                        <div class="script-casino-status" aria-live="polite">${escapeHTML(tr('casinoLoading'))}</div>
+                        <div class="script-casino-progress" hidden>
+                            <div class="script-casino-progress-bar"><i></i></div>
+                            <span class="script-casino-progress-count">0 / 0</span>
+                            <span class="script-casino-progress-name"></span>
+                        </div>
+                        <div class="script-casino-results" hidden>
+                            <div class="script-casino-result is-net">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultNet'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <div class="script-casino-result">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultSpent'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <div class="script-casino-result">
+                                <span class="script-casino-result-label">${escapeHTML(tr('casinoResultEarned'))}</span>
+                                <b class="script-casino-result-value">—</b>
+                            </div>
+                            <span class="script-casino-result-chip">—</span>
+                        </div>
+                        <div class="script-casino-tabs" role="tablist">
+                            <button class="script-casino-tab is-active" data-tab="buy" role="tab" aria-selected="true" type="button">${escapeHTML(tr('casinoTabBuy'))}<b class="script-casino-tab-count">0</b></button>
+                            <button class="script-casino-tab" data-tab="evolve" role="tab" aria-selected="false" type="button">${casinoIcon('evolve')}<span>${escapeHTML(tr('casinoTabEvolve'))}</span><b class="script-casino-tab-count">0</b></button>
+                        </div>
+                        <div class="script-casino-list"><div class="script-casino-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
+                    </div>
+                    <aside class="script-casino-team-panel">
+                        <div class="script-casino-team-head">
+                            <div class="script-casino-team-head-line">
+                                <h3>${casinoIcon('swords')}<span>${escapeHTML(tr('casinoTeamTitle'))}</span></h3>
+                                <span class="script-casino-team-count">0</span>
+                            </div>
+                            <p>${escapeHTML(tr('casinoTeamSubtitle'))}</p>
+                            <div class="script-casino-team-tools">
+                                <label class="script-casino-iv-goal"><span>${escapeHTML(tr('casinoIvGoal'))}</span><input class="script-casino-iv-goal-input" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoIvGoalHint'))}"></label>
+                                <button class="script-casino-bulk-action script-casino-log-btn" type="button">${casinoIcon('scroll')}<span>${escapeHTML(tr('casinoAutoSellLog'))}</span></button>
+                                <button class="script-casino-bulk-action script-casino-bulk-sell" type="button">${casinoIcon('coin')}<span>${escapeHTML(tr('casinoSellAll'))}</span></button>
+                            </div>
+                        </div>
+                        <div class="script-casino-filters">
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterTier'))}</span><select class="script-casino-filter-tier"></select></label>
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterQuality'))}</span><select class="script-casino-filter-quality"></select></label>
+                            <label class="script-casino-filter"><span>${escapeHTML(tr('casinoFilterIv'))}</span><input class="script-casino-filter-iv" type="number" min="0" max="192" step="1" inputmode="numeric" placeholder="${escapeHTML(tr('casinoFilterIvHint'))}"></label>
+                            <button class="script-casino-filter-clear" type="button">${escapeHTML(tr('casinoFilterClear'))}</button>
+                            <div class="script-casino-filters-info"><span class="script-casino-filters-count"></span><span class="script-casino-filters-tierdot"></span></div>
+                            <button class="script-casino-autosell-btn" type="button">
+                                <span class="script-casino-autosell-top">${casinoIcon('gear')}<span class="script-casino-autosell-label">${escapeHTML(tr('casinoAutoSell'))}</span><span class="script-casino-autosell-badge"></span></span>
+                                <span class="script-casino-autosell-detail"></span>
+                            </button>
+                        </div>
+                        <div class="script-casino-team-list"><div class="script-casino-team-empty">${escapeHTML(tr('casinoLoading'))}</div></div>
+                    </aside>
+                </div>
+            </section>`;
+        document.body.appendChild(backdrop);
+
+        const windowElement = backdrop.querySelector('.script-marlon-window');
+        const list = backdrop.querySelector('.script-casino-list');
+        const status = backdrop.querySelector('.script-casino-status');
+        const balanceValue = backdrop.querySelector('.script-casino-balance-value');
+        const refreshButton = backdrop.querySelector('.script-casino-refresh');
+        const teamList = backdrop.querySelector('.script-casino-team-list');
+        const teamCount = backdrop.querySelector('.script-casino-team-count');
+        /* Cache de cartas de comprados: pokeId -> { key, node, signature }.
+           Permite reconciliar en vez de reconstruir, que es lo que hacia que
+           la lista parpadeara en cada operacion. */
+        const teamCards = new Map();
+        /* Que describe al Pokemon, y nada mas: lo que depende del estado del
+           panel va aparte, en refreshCardVolatileState. El ultimo campo es la
+           bandera de "recien comprado", porque tambien pinta una etiqueta en el
+           marcado y hay que repintar para que se vaya. recentTeamIds se
+           declara unas lineas mas abajo; aqui solo se lee cuando se llama, que
+           es mucho despues, asi que no hay problema. */
+        const teamCardSignature = poke => [
+            poke?.level,
+            poke?.ivTotal,
+            Number(poke?.quality || 0).toFixed(3),
+            poke?.shiny ? 1 : 0,
+            poke?.nature || '',
+            recentTeamIds.has(getPokeId(poke)) ? 1 : 0
+        ].join('|');
+        const ivGoalInput = backdrop.querySelector('.script-casino-iv-goal-input');
+        const results = backdrop.querySelector('.script-casino-results');
+        const tabBar = backdrop.querySelector('.script-casino-tabs');
+        const tabButtons = [...backdrop.querySelectorAll('.script-casino-tab')];
+        const logButton = backdrop.querySelector('.script-casino-log-btn');
+        const bulkSellButton = backdrop.querySelector('.script-casino-bulk-sell');
+        const filterTierSelect = backdrop.querySelector('.script-casino-filter-tier');
+        const filterQualitySelect = backdrop.querySelector('.script-casino-filter-quality');
+        const filterIvInput = backdrop.querySelector('.script-casino-filter-iv');
+        const filterClearButton = backdrop.querySelector('.script-casino-filter-clear');
+        const filtersCount = backdrop.querySelector('.script-casino-filters-count');
+        const autoSellButton = backdrop.querySelector('.script-casino-autosell-btn');
+        const autoSellBadge = backdrop.querySelector('.script-casino-autosell-badge');
+        const autoSellDetail = backdrop.querySelector('.script-casino-autosell-detail');
+        /* Que pestana del catalogo esta abierta. Comprables por defecto, que es
+           lo que se usa casi siempre. */
+        let catalogTab = 'buy';
+        let payload = null;
+        let allPokes = [];
+        const purchasedPokemon = [];
+        const recentTeamIds = new Set();
+        const alertedGoalPokeIds = new Set();
+        const ivGoalStorageKey = 'script_casino_iv_goal_v1';
+        let ivGoal = Math.max(0, Math.min(192, Number(localStorage.getItem(ivGoalStorageKey)) || 0));
+        let busySpeciesId = null;
+        let busyPokeId = null;
+        let busyItemId = null;
+        let closed = false;
+        ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+
+        /* --- CONFIGURACION DE AUTO-VENTA Y ALERTA POR TIER ---
+           Se guarda en localStorage y se relee al abrir el Cassino. El mismo
+           panel sirve para la auto-venta y para decidir que tiers avisan. */
+        const autoSellStorageKey = 'script_casino_auto_sell_v1';
+        const readAutoSellConfig = () => {
+            let stored = {};
+            try { stored = JSON.parse(localStorage.getItem(autoSellStorageKey) || '{}') || {}; } catch (_) {}
+            const tierId = String(stored.minTier ?? '');
+            return {
+                enabled: stored.enabled === true,
+                /* Ambos criterios son umbrales de corte, no rangos con dos
+                   extremos: lo que queda por debajo se considera descartable.
+                   En quality el corte es un tier de MARKET_QUALITY_TIER_DEFINITIONS,
+                   asi que se compara por orden y no por el numero suelto. */
+                minIv: Math.max(0, Math.min(192, Number(stored.minIv) || 0)),
+                minTier: MARKET_QUALITY_TIER_DEFINITIONS.some(d => d.id === tierId) ? tierId : '',
+                alertTiers: Array.isArray(stored.alertTiers)
+                    ? stored.alertTiers.filter(id => MARKET_QUALITY_TIER_DEFINITIONS.some(d => d.id === id))
+                    : []
+            };
+        };
+        let autoSellConfig = readAutoSellConfig();
+        const writeAutoSellConfig = () => {
+            try { localStorage.setItem(autoSellStorageKey, JSON.stringify(autoSellConfig)); } catch (_) {}
+        };
+
+        /* --- FILTROS DE LA LISTA DE COMPRADOS ---
+           Solo ocultan tarjetas: purchasedPokemon no se toca, asi que limpiar
+           el filtro devuelve todo. Se aplican sobre purchasedPokemon, que son
+           unicamente los comprados en esta sesion. */
+        const buildQualityFilterOptions = () => {
+            const options = [`<option value="">${escapeHTML(tr('casinoFilterAll'))}</option>`];
+            MARKET_QUALITY_TIER_DEFINITIONS.forEach(definition => {
+                const max = definition.max === Infinity ? '∞' : definition.max.toFixed(2);
+                options.push(`<option value="${escapeHTML(definition.id)}">${escapeHTML(definition.label)} · ${definition.min.toFixed(2)}–${max}</option>`);
+            });
+            filterQualitySelect.innerHTML = options.join('');
+        };
+        const buildTierFilterOptions = () => {
+            const options = [`<option value="">${escapeHTML(tr('casinoFilterAll'))}</option>`];
+            MARKET_QUALITY_TIER_DEFINITIONS.forEach(definition => {
+                options.push(`<option value="${escapeHTML(definition.id)}">${escapeHTML(definition.label)}</option>`);
+            });
+            filterTierSelect.innerHTML = options.join('');
+        };
+        /* El filtro de IVs es un campo de texto, no un select de bandas: se
+           escribe un numero y muestra los Pokemon con esa IV o mas. */
+        const getIvFilterMin = () => {
+            const typed = Number(String(filterIvInput.value ?? '').replace(',', '.').trim());
+            if (!Number.isFinite(typed) || typed <= 0) return null;
+            return Math.max(0, Math.min(192, Math.round(typed)));
+        };
+        const matchesFilters = poke => {
+            const tier = normalizeMarketTier(getMarketPokemonQualityTheme(poke?.quality)?.id || '');
+            if (filterTierSelect.value && tier !== filterTierSelect.value) return false;
+            if (filterQualitySelect.value) {
+                const definition = getMarketQualityTierDefinition(poke?.quality);
+                if (!definition || definition.id !== filterQualitySelect.value) return false;
+            }
+            const ivMin = getIvFilterMin();
+            if (ivMin !== null && Number(poke?.ivTotal || 0) < ivMin) return false;
+            return true;
+        };
+        const hasActiveFilters = () => Boolean(
+            filterTierSelect.value || filterQualitySelect.value || getIvFilterMin() !== null
+        );
+
+        /* Orden de los tiers, de menor a mayor. Permite comparar dos quality
+           por posicion en la escala y no por su numero suelto, que es lo que
+           hace falta para "todo lo que sea inferior a este tier". */
+        const getTierLabel = id => MARKET_QUALITY_TIER_DEFINITIONS.find(d => d.id === id)?.label || '';
+
+        /* --- REGLA DE AUTO-VENTA ---
+           Los dos criterios son umbrales de corte: se vende lo que queda por
+           debajo, no dentro de un rango con dos extremos. Se exigen los dos a
+           la vez, con un "y" y no un "o": un Pokemon que conserve IVs buenos o
+           un tier alto nunca se vende, aunque el otro valor sea malo. Ese es
+           el freno para no cargarse nada aprovechable. */
+        const shouldAutoSell = poke => {
+            if (!autoSellConfig.enabled) return false;
+            if (isTeamPokemonProtected(poke)) return false;
+            if (Number(poke?.sellValue || 0) <= 0) return false;
+            if (Number(poke?.ivTotal || 0) >= autoSellConfig.minIv) return false;
+            if (autoSellConfig.minTier) {
+                const actual = tierOrder(getPokemonTierId(poke));
+                const corte = tierOrder(autoSellConfig.minTier);
+                /* Sin corte de quality, o con tier igual o superior al del
+                   Pokemon, este se conserva. */
+                if (actual < 0 || actual >= corte) return false;
+            }
+            return true;
+        };
+        const shouldAlertTier = poke => {
+            if (!autoSellConfig.alertTiers.length) return false;
+            const definition = getMarketPokemonQualityTheme(poke?.quality);
+            return Boolean(definition && autoSellConfig.alertTiers.includes(definition.id));
+        };
+        const describeAutoSellLimits = () => {
+            const tier = autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoTierAll');
+            return `IV<${autoSellConfig.minIv} · <${tier}`;
+        };
+        const refreshAutoSellButton = () => {
+            const on = autoSellConfig.enabled;
+            autoSellButton.classList.toggle('is-on', on);
+            const sold = autoSellLog.entries.length;
+            /* El boton va en dos lineas: arriba el nombre con su pastilla de
+               estado, abajo los cortes y el saldo. Antes era una sola linea con
+               las tres cosas encajadas y no se leia nada. */
+            autoSellBadge.textContent = on ? tr('casinoAutoSellOn') : tr('casinoAutoSellOff');
+            autoSellBadge.classList.toggle('is-on', on);
+            const limits = on ? describeAutoSellLimits() : tr('casinoAutoSellRuleOff');
+            autoSellDetail.textContent = sold
+                ? `${limits} · ${formatCasinoText(tr('casinoAutoSellSessionNet'), {
+                    count:sold,
+                    net:getAutoSellSessionNetGold().toLocaleString('pt-BR')
+                })}`
+                : limits;
+        };
+        /* Tira de resultados de la tanda. El saldo va el primero y en grande
+           porque es el unico numero que explica por que la cuenta quedo como
+           quedo: lo vendido son las ventas, no la diferencia. */
+        const renderResults = ({ spent = 0, earned = 0, sold = 0 } = {}) => {
+            if (!results) return;
+            if (!sold) { results.hidden = true; return; }
+            const net = earned - spent;
+            const values = results.querySelectorAll('.script-casino-result');
+            const netCell = values[0];
+            const set = (cell, text) => {
+                const value = cell?.querySelector('.script-casino-result-value');
+                if (value) value.textContent = text;
+            };
+            set(netCell, `${net > 0 ? '+' : net < 0 ? '−' : ''}${Math.abs(net).toLocaleString('pt-BR')}`);
+            if (netCell) netCell.classList.toggle('is-negative', net < 0);
+            if (netCell) netCell.classList.toggle('is-positive', net > 0);
+            /* Cuando la diferencia es negativa, "Saldo" engaña: no es un
+               saldo, es dinero que se ha perdido. La etiqueta lo dice. */
+            const netLabel = netCell?.querySelector('.script-casino-result-label');
+            if (netLabel) netLabel.textContent = net < 0 ? tr('casinoResultLoss') : tr('casinoResultNet');
+            set(values[1], spent.toLocaleString('pt-BR'));
+            set(values[2], earned.toLocaleString('pt-BR'));
+            const chip = results.querySelector('.script-casino-result-chip');
+            if (chip) chip.textContent = formatCasinoText(tr('casinoResultSold'), { count:sold });
+            results.hidden = false;
+        };
+        /* El panel del historial se crea como hermano de backdrop, dentro de
+           document.body, no dentro de backdrop. Por eso se busca en el
+           documento y no en el backdrop del Cassino: buscando en backdrop el
+           listado nunca se encontraba y el historial salia siempre vacio. */
+        const renderAutoSellLog = () => {
+            const list = document.querySelector('.script-casino-autosell-log-list');
+            const total = document.querySelector('.script-casino-autosell-log-total');
+            const clear = document.querySelector('.script-casino-autosell-log-clear');
+            if (!list) return;
+            list.replaceChildren();
+            if (total) {
+                total.textContent = autoSellLog.entries.length
+                    ? formatCasinoText(tr('casinoAutoSellLogTotal'), {
+                        count:autoSellLog.entries.length,
+                        gold:getAutoSellSessionTotalGold().toLocaleString('pt-BR'),
+                        spent:getAutoSellSessionSpentGold().toLocaleString('pt-BR'),
+                        net:getAutoSellSessionNetGold().toLocaleString('pt-BR')
+                    })
+                    : tr('casinoAutoSellLogEmpty');
+            }
+            if (clear) clear.disabled = autoSellLog.entries.length === 0;
+            if (!autoSellLog.entries.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-autosell-log-empty';
+                empty.textContent = tr('casinoAutoSellLogEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            autoSellLog.entries.forEach(entry => {
+                const row = document.createElement('div');
+                const sprite = getPokemonIconUrl(entry.speciesId) || getPokeApiSpriteUrl({ speciesId:entry.speciesId });
+                const when = new Date(entry.at);
+                row.className = 'script-casino-autosell-log-row';
+                row.style.setProperty('--casino-tier', getMarketPokemonQualityTheme(entry.quality)?.color || '#64748b');
+                row.innerHTML = `
+                    <div class="script-casino-autosell-log-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(entry.name)}"></div>
+                    <div class="script-casino-autosell-log-info">
+                        <div class="script-casino-autosell-log-name">
+                            <b>${escapeHTML(entry.name)}</b>
+                            <span class="script-casino-autosell-log-tier">${escapeHTML(entry.tier)}</span>
+                        </div>
+                        <div class="script-casino-autosell-log-meta">
+                            <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(entry.level || 0)}</b></span>
+                            <span>${escapeHTML(tr('casinoIv'))} <b>${Number(entry.iv || 0)}/192</b></span>
+                            <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(entry.quality || 0).toFixed(2)}</b></span>
+                        </div>
+                        <div class="script-casino-autosell-log-net">${escapeHTML(formatCasinoText(
+                            Number(entry.spent || 0) > 0 ? tr('casinoAutoSellLogNet') : tr('casinoAutoSellLogValue'), {
+                                spent:Number(entry.spent || 0).toLocaleString('pt-BR'),
+                                gold:Number(entry.gold || 0).toLocaleString('pt-BR'),
+                                net:(Number(entry.gold || 0) - Number(entry.spent || 0)).toLocaleString('pt-BR'),
+                                value:Number(entry.catalogValue || 0).toLocaleString('pt-BR'),
+                                diff:(Number(entry.gold || 0) - Number(entry.catalogValue || 0)).toLocaleString('pt-BR')
+                            }
+                        ))}</div>
+                        <div class="script-casino-autosell-log-reason">${escapeHTML(entry.reason || '')}</div>
+                    </div>
+                    <div class="script-casino-autosell-log-side">
+                        <span class="script-casino-autosell-log-gold">${casinoIcon('coin')}<span>${Number(entry.gold || 0).toLocaleString('pt-BR')}</span></span>
+                        <span class="script-casino-autosell-log-time">${escapeHTML(when.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' }))}</span>
+                    </div>`;
+                row.querySelector('img')?.addEventListener('error', event => { event.currentTarget.style.visibility = 'hidden'; }, { once:true });
+                list.appendChild(row);
+            });
+        };
+        const openAutoSellLog = () => {
+            document.querySelector('.script-casino-config-backdrop')?.remove();
+            const layer = document.createElement('div');
+            layer.className = 'script-casino-config-backdrop';
+            layer.innerHTML = `
+                <div class="script-casino-config script-casino-config-wide" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoAutoSellLogTitle'))}">
+                    <header class="script-casino-config-head">
+                        <h3>${casinoIcon('scroll')}<span>${escapeHTML(tr('casinoAutoSellLogTitle'))}</span></h3>
+                        <button class="script-casino-config-close" type="button" aria-label="${escapeHTML(tr('casinoAutoSellClose'))}">×</button>
+                    </header>
+                    <div class="script-casino-config-body">
+                        <p class="script-casino-config-note">${escapeHTML(tr('casinoAutoSellLogHint'))}</p>
+                        <div class="script-casino-autosell-log-head">
+                            <span class="script-casino-autosell-log-total"></span>
+                            <button class="script-casino-autosell-log-clear" type="button">${escapeHTML(tr('casinoAutoSellLogClear'))}</button>
+                        </div>
+                        <div class="script-casino-autosell-log-list"></div>
+                    </div>
+                </div>`;
+            document.body.appendChild(layer);
+            const close = () => layer.remove();
+            layer.querySelector('.script-casino-config-close').addEventListener('click', close);
+            layer.querySelector('.script-casino-autosell-log-clear').addEventListener('click', () => {
+                autoSellLog = { sessionId:autoSellLog.sessionId, entries:[] };
+                writeAutoSellLog();
+                renderAutoSellLog();
+                refreshAutoSellButton();
+            });
+            layer.addEventListener('click', event => { if (event.target === layer) close(); });
+            renderAutoSellLog();
+        };
+
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+        };
+        const onKeydown = event => { if (event.key === 'Escape') close(); };
+        const setStatus = (message, kind = '') => {
+            status.textContent = message || '';
+            status.classList.toggle('is-error', kind === 'error');
+            status.classList.toggle('is-success', kind === 'success');
+        };
+        /* Tira de proceso de la tanda. La barra y el contador se actualizan por
+           propiedades, sin transicion propia: las compras van mas rapido que
+           una transicion y la barra se quedaria siempre retrasada. Solo el
+           nombre lleva fundido, porque es lo unico que cambia en cada paso. */
+        let progressName = '';
+        const progress = backdrop.querySelector('.script-casino-progress');
+        const progressBar = backdrop.querySelector('.script-casino-progress-bar > i');
+        const progressCount = backdrop.querySelector('.script-casino-progress-count');
+        const progressNameEl = backdrop.querySelector('.script-casino-progress-name');
+        const setProgress = ({ current = 0, total = 0, name = '' } = {}) => {
+            if (!progress) return;
+            progress.hidden = false;
+            const ratio = total > 0 ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+            if (progressBar) progressBar.style.width = ratio.toFixed(1) + '%';
+            if (progressCount) progressCount.textContent = `${current} / ${total}`;
+            if (progressNameEl && name && name !== progressName) {
+                progressName = name;
+                progressNameEl.textContent = name;
+                progressNameEl.classList.remove('is-in');
+                /* Forzar el reflow reinicia la animacion cuando el nombre se
+                   repite, que si no se ignoraria el cambio de clase. */
+                void progressNameEl.offsetWidth;
+                progressNameEl.classList.add('is-in');
+            }
+        };
+        const clearProgress = () => {
+            if (!progress) return;
+            progress.hidden = true;
+            progressName = '';
+        };
+        /* Carga el listado completo de Pokemon del juego. Ya NO se filtra por
+           equipo: el Cassino no depende de el. Lo que se necesita de esta
+           llamada es allPokes, que sirve para comparar antes y despues de una
+           compra y saber cual es el Pokemon nuevo. */
+        const loadAllPokes = async () => {
+            let pokemon = [];
+            if (await waitForGameSocket(900)) {
+                pokemon = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs:2200, attempts:1 });
+            }
+            if (!pokemon.length) pokemon = await requestPokemonTeamFromGameContext(1800);
+            if (pokemon.length) latestPokemon = pokemon;
+            allPokes = pokemon;
+            return pokemon;
+        };
+        const refreshCasinoData = async () => {
+            payload = await gameApiRequest('/api/game/marlon');
+            try {
+                await loadAllPokes();
+            } catch (error) {
+                console.warn('No se pudo refrescar la lista de Pokémon dentro del Cassino.', error);
+            }
+        };
+        const getTeamPower = poke => {
+            const direct = Number(poke?.power);
+            if (Number.isFinite(direct)) return direct;
+            const stats = poke?.stats || {};
+            return ['hp','atk','def','spAtk','spatk','spDef','spdef','speed','spd']
+                .reduce((total, key) => total + (Number(stats[key]) || 0), 0);
+        };
+        const getTeamStats = poke => {
+            const stats = poke?.stats || {};
+            return [
+                ['HP', stats.hp], ['ATK', stats.atk], ['DEF', stats.def],
+                ['SP.ATK', stats.spAtk ?? stats.spatk], ['SP.DEF', stats.spDef ?? stats.spdef],
+                ['VEL', stats.speed ?? stats.spd]
+            ];
+        };
+        const getTeamTypesHTML = poke => getMarketPokemonTypes(poke).map(type => {
+            const color = TYPE_COLORS[type.key] || '#91a3b7';
+            return `<span class="script-casino-team-type" style="--casino-type:${escapeHTML(color)}">${escapeHTML(type.label)}</span>`;
+        }).join('');
+        /* Alerta unificada. Se evaluan meta IV y tier a la vez para no apilar
+           dos tarjetas: si un Pokemon cumple las dos, sale una sola con ambos
+           motivos, en el color de su tier. */
+        const showPurchasedAlert = (pokes, options) => {
+            if (closed || !pokes.length) return;
+            backdrop.querySelector('.script-casino-goal-alert')?.remove();
+            const poke = pokes[0];
+            const definition = getMarketPokemonQualityTheme(poke?.quality);
+            const iv = Number(poke?.ivTotal || 0);
+            const name = poke?.name || 'Pokémon';
+            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const extra = pokes.length > 1 ? ` (+${pokes.length - 1})` : '';
+            const title = options.tierHit
+                ? `${formatCasinoText(tr('casinoTierAlert'), { tier:definition?.label || '—' })}${extra}`
+                : `${casinoIcon('star')}<span>${escapeHTML(tr('casinoIvGoalReached'))}${escapeHTML(extra)}</span>`;
+            const lines = [];
+            if (options.tierHit) lines.push(formatCasinoText(tr('casinoTierAlertDetail'), { name, tier:definition?.label || '—' }));
+            if (options.goalHit) {
+                lines.push(options.tierHit
+                    ? formatCasinoText(tr('casinoTierAlertAndGoal'), { iv, goal:ivGoal })
+                    : formatCasinoText(tr('casinoIvGoalDetail'), { name, iv, goal:ivGoal }));
+            }
+            const alert = document.createElement('div');
+            alert.className = `script-casino-goal-alert${options.tierHit ? ' is-tier' : ''}`;
+            if (options.tierHit) alert.style.setProperty('--casino-alert-tier', definition?.color || '#a855f7');
+            alert.setAttribute('role', 'alert');
+            alert.innerHTML = `
+                <img src="${escapeHTML(sprite)}" alt="${escapeHTML(name)}">
+                <div><b>${escapeHTML(title)}</b><span>${escapeHTML(lines.join(' '))}</span></div>
+                <button type="button" aria-label="${escapeHTML(tr('close'))}">×</button>`;
+            alert.querySelector('img')?.addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
+            }, { once:true });
+            alert.querySelector('button')?.addEventListener('click', () => alert.remove());
+            backdrop.appendChild(alert);
+            setTimeout(() => alert.remove(), 6500);
+        };
+        const announceIvGoalMatches = team => {
+            const fresh = team.filter(poke => recentTeamIds.has(getPokeId(poke))
+                && !alertedGoalPokeIds.has(getPokeId(poke)));
+            if (!fresh.length) return;
+            const goalMatches = ivGoal > 0
+                ? fresh.filter(poke => Number(poke?.ivTotal || 0) >= ivGoal)
+                : [];
+            const tierMatches = fresh.filter(shouldAlertTier);
+            if (!goalMatches.length && !tierMatches.length) return;
+            fresh.forEach(poke => alertedGoalPokeIds.add(getPokeId(poke)));
+            const both = tierMatches.filter(poke => goalMatches.includes(poke));
+            if (both.length) {
+                showPurchasedAlert(both, { goalHit:true, tierHit:true });
+                return;
+            }
+            const goalOnly = goalMatches.filter(poke => !tierMatches.includes(poke));
+            if (goalOnly.length) showPurchasedAlert(goalOnly, { goalHit:true, tierHit:false });
+            const tierOnly = tierMatches.filter(poke => !goalMatches.includes(poke));
+            if (tierOnly.length) showPurchasedAlert(tierOnly, { goalHit:false, tierHit:true });
+        };
+
+        /* Manda un Pokemon comprado al market global. Son dos pasos
+           obligatorios: el Pokemon recien comprado no esta en el deposito, y el
+           market solo anuncia lo que hay ahi. Primero se guarda con el mismo
+           storeTeamPokemon que usa la venta, y luego se abre el market apuntando
+           a el. El precio lo pone el usuario: el market recibe la entrada y abre
+           su editor vacio.
+
+           Se guarda con { silent:true } y solo eso: refreshCatalog repinta el
+           catalogo del deposito, que aqui sobra, y shouldRender repinta este
+           panel mientras lo estamos cerrando. */
+        const sendPurchasedPokemonToMarket = async poke => {
+            const pokeId = getPokeId(poke);
+            if (!pokeId || busyPokeId != null || busySpeciesId != null) return false;
+            busyPokeId = pokeId;
+            refreshButton.disabled = true;
+            renderTeam();
+            setStatus(formatCasinoText(tr('casinoStoringForMarket'), { name: poke?.name || 'Pokémon' }));
+            try {
+                await storeTeamPokemon(poke, { silent:true });
+                /* Fuera de la lista: a partir de aqui el market es quien responde
+                   por el. */
+                recentTeamIds.delete(pokeId);
+                const index = purchasedPokemon.findIndex(entry => getPokeId(entry) === pokeId);
+                if (index !== -1) purchasedPokemon.splice(index, 1);
+                /* El panel se cierra antes de abrir el market: el backdrop del
+                   market va a z-index 10050 y este a 2147483200, asi que sin
+                   cerrarlo el market se abriria detras y no se veria nada. Solo
+                   aqui, en el camino bueno: si el guardado falla, el Pokemon se
+                   queda en la lista y el aviso se lee aqui. */
+                close();
+                showGlobalMarketWindow({ sellPokemonId: pokeId });
+                return true;
+            } catch (error) {
+                /* Si el guardado falla el Pokemon se queda en la lista y se
+                   avisa: no se pierde nada. */
+                setStatus(`${tr('casinoMarketError')} ${error?.message || ''}`.trim(), 'error');
+                return false;
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        const storeTeamPokemon = async (poke, { silent = false, refreshCatalog = true, shouldRender = true } = {}) => {
+            const rawPokeId = poke?.id ?? poke?.capturedId ?? poke?.pokeId;
+            const pokeId = String(rawPokeId ?? '');
+            if (!pokeId) throw new Error('Pokémon sem identificador.');
+            if (!await waitForGameSocket(2200)) throw new Error('A conexão do jogo não está disponível.');
+            let updated = await requestGameEvent('pokes', { type:'poke-store', pokeId:rawPokeId }, null, 3200);
+            if (!updated.length) {
+                updated = await requestFreshGameEvent('pokes', 'pokes-get', { timeoutMs:2200, attempts:1 });
+            }
+            const stored = updated.find(entry => getPokeId(entry) === pokeId);
+            if (!updated.length || stored?.team) throw new Error(tr('casinoStoreError'));
+            latestPokemon = updated;
+            recentTeamIds.delete(pokeId);
+            if (refreshCatalog) {
+                try { payload = await gameApiRequest('/api/game/marlon'); } catch (_) {}
+            }
+            if (shouldRender && !closed) {
+                render();
+                renderTeam();
+            }
+            if (!silent) setStatus(formatCasinoText(tr('casinoStored'), { name:poke.name || 'Pokémon' }), 'success');
+            return true;
+        };
+
+        /* Devuelve el resultado real de la venta: { ok, goldGained, error }.
+           Antes no devolvia nada y ademas se comia los errores, de modo que
+           quien la llamaba no podia distinguir una venta hecha de una fallida
+           ni saber cuanto oro devolvio de verdad la API. El oro se toma de
+           result.goldGained y no de poke.sellValue, que es solo el valor
+           teorico del catalogo y no lo que el juego paga. */
+        const sellTeamPokemon = async poke => {
+            const pokeId = getPokeId(poke);
+            const sellValue = Number(poke?.sellValue || 0);
+            if (!pokeId || sellValue <= 0 || isTeamPokemonProtected(poke)) {
+                return { ok:false, goldGained:0, error:tr('casinoSellError') };
+            }
+            busyPokeId = pokeId;
+            refreshButton.disabled = true;
+            renderTeam();
+            try {
+                await storeTeamPokemon(poke, { silent:true });
+                const result = await gameApiRequest('/api/game/pokemon/sell', {
+                    method:'POST', body:JSON.stringify({ pokeIds:[pokeId] })
+                });
+                const goldGained = Number(result?.goldGained ?? 0);
+                recentTeamIds.delete(pokeId);
+                const soldIndex = purchasedPokemon.findIndex(entry => getPokeId(entry) === pokeId);
+                if (soldIndex !== -1) purchasedPokemon.splice(soldIndex, 1);
+                const successMessage = formatCasinoText(tr('casinoSold'), {
+                    name:poke.name || 'Pokémon',
+                    gold:(goldGained || sellValue).toLocaleString('pt-BR')
+                });
+                try {
+                    await refreshCasinoData();
+                } catch (refreshError) {
+                    console.warn('La venta se completó, pero el Cassino no pudo refrescar sus datos.', refreshError);
+                }
+                setStatus(successMessage, 'success');
+                sendGameMessage({ type:'pokes-get' });
+                return { ok:true, goldGained, error:null };
+            } catch (error) {
+                setStatus(`${tr('casinoSellError')} ${error.message || ''}`.trim(), 'error');
+                return { ok:false, goldGained:0, error:error?.message || tr('casinoSellError') };
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        /* El guardado masivo se elimino: su boton se sustituyo por el del
+           historial de auto-ventas. Guardar sigue disponible una carta a una,
+           desde el boton de cada Pokemon comprado. */
+
+        const sellAllPurchasedPokemon = async () => {
+            const candidates = purchasedPokemon.filter(poke => recentTeamIds.has(getPokeId(poke))
+                && !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
+            if (!candidates.length) return setStatus(tr('casinoBulkNone'), 'error');
+            busyPokeId = '__bulk_sell__';
+            refreshButton.disabled = true;
+            renderTeam();
+            const storedIds = [];
+            try {
+                for (const poke of candidates) {
+                    try {
+                        await storeTeamPokemon(poke, { silent:true });
+                        storedIds.push(getPokeId(poke));
+                    } catch (error) {
+                        console.warn(`No se pudo preparar ${poke?.name || 'Pokémon'} para la venta masiva.`, error);
+                    }
+                }
+                if (!storedIds.length) throw new Error(tr('casinoSellError'));
+                const result = await gameApiRequest('/api/game/pokemon/sell', {
+                    method:'POST', body:JSON.stringify({ pokeIds:storedIds })
+                });
+                storedIds.forEach(id => {
+                    recentTeamIds.delete(id);
+                    alertedGoalPokeIds.delete(id);
+                    const soldIndex = purchasedPokemon.findIndex(entry => getPokeId(entry) === id);
+                    if (soldIndex !== -1) purchasedPokemon.splice(soldIndex, 1);
+                });
+                const totalGold = Number(result?.goldGained ?? candidates
+                    .filter(poke => storedIds.includes(getPokeId(poke)))
+                    .reduce((sum, poke) => sum + Number(poke?.sellValue || 0), 0));
+                try { await refreshCasinoData(); } catch (_) {}
+                setStatus(formatCasinoText(tr('casinoBulkSold'), {
+                    count:storedIds.length, gold:totalGold.toLocaleString('pt-BR')
+                }), 'success');
+                sendGameMessage({ type:'pokes-get' });
+            } catch (error) {
+                setStatus(`${tr('casinoSellError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                busyPokeId = null;
+                refreshButton.disabled = false;
+                if (!closed) { render(); renderTeam(); }
+            }
+        };
+
+        /* --- ESTADO VOLATIL DE LA CARTA ---
+           teamCardSignature decide si una carta se reconstruye, y solo lleva lo
+           que DESCRIBE al Pokemon: nivel, IVs, quality, shiny y naturaleza.
+           Hay otra cosa que la carta enseña y que no sale de ahi: si el panel
+           esta ocupado, y si el Pokemon llega a la meta de IV que el usuario
+           acaba de escribir. Meter esas dos cosas en la firma las arreglaria,
+           pero haria que CADA compra y CADA venta repintaran TODAS las cartas,
+           que es justo el parpadeo que esta lista ha dejado de tener. Asi que
+           se refrescan en sitio, sobre el nodo que ya esta en el DOM.
+
+           is-new NO entra aqui aunque dependa de recentTeamIds, y no es
+           capricho: lleva ademas una etiqueta <span class="script-casino-new-tag">
+           en el marcado, y quitar solo la clase dejaria la etiqueta puesta. Va
+           en la firma, que repinta la carta entera y deja las dos cosas
+           coherentes.
+
+           Los botones se buscan por la clase base .script-casino-team-action y
+           no de uno en uno: el de venta y el de market global la comparten, y
+           asi un boton nuevo nace cubierto sin tocar nada aqui. */
+        const refreshCardVolatileState = (card, poke) => {
+            if (!card) return;
+            const busy = busyPokeId != null || busySpeciesId != null;
+            const disabled = busy || isTeamPokemonProtected(poke) || Number(poke?.sellValue || 0) <= 0;
+            card.querySelectorAll('.script-casino-team-action').forEach(button => {
+                button.disabled = disabled;
+            });
+            card.classList.toggle('is-iv-goal', ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal);
+        };
+
+        /* Construye una carta de comprado. El marcado es el mismo que habia
+           dentro del bucle de renderTeam; lo que cambia es que ahora se llama
+           solo para las cartas nuevas, no para todas en cada refresco. */
+        const buildTeamCard = poke => {
+            const pokeId = getPokeId(poke);
+            const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
+            const protectedPoke = isTeamPokemonProtected(poke);
+            const sellValue = Number(poke?.sellValue || 0);
+            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const stats = getTeamStats(poke);
+            const reachedIvGoal = ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal;
+            const busy = busyPokeId != null || busySpeciesId != null;
+            const card = document.createElement('article');
+            card.className = `script-casino-team-card${recentTeamIds.has(pokeId) ? ' is-new' : ''}${reachedIvGoal ? ' is-iv-goal' : ''}`;
+            card.style.setProperty('--casino-tier', qualityTheme.color);
+            card.dataset.signature = teamCardSignature(poke);
+            card.innerHTML = `
+                <div class="script-casino-team-art"><img src="${escapeHTML(sprite)}" alt="${escapeHTML(poke?.name || 'Pokémon')}"></div>
+                <div class="script-casino-team-info">
+                    <div class="script-casino-team-name-line">
+                        <b class="script-casino-team-name">${poke?.shiny ? casinoIcon('sparkle') : ''}<span>${escapeHTML(poke?.name || 'Pokémon')}</span></b>
+                        <span class="script-casino-team-tier">${escapeHTML(qualityTheme.label)}</span>
+                        ${recentTeamIds.has(pokeId) ? `<span class="script-casino-new-tag">${escapeHTML(tr('casinoNewPokemon'))}</span>` : ''}
+                    </div>
+                    <div class="script-casino-team-meta">
+                        <span>${escapeHTML(tr('casinoLevel'))} <b>${Number(poke?.level || 1)}</b></span>
+                        <span>${escapeHTML(tr('casinoPower'))} <b>${getTeamPower(poke).toLocaleString('pt-BR')}</b></span>
+                        <span>${escapeHTML(tr('casinoIv'))} <b>${Number(poke?.ivTotal || 0)}/192</b></span>
+                        <span>${escapeHTML(tr('casinoQuality'))} <b>${Number(poke?.quality || 0).toFixed(2)}</b></span>
+                        ${poke?.nature ? `<span>${escapeHTML(tr('casinoNature'))} <b>${escapeHTML(poke.nature)}</b></span>` : ''}
+                    </div>
+                    <div class="script-casino-team-types">${getTeamTypesHTML(poke)}</div>
+                </div>
+                <div class="script-casino-team-stats">${stats.map(([label, value]) => `<span class="script-casino-team-stat">${label}<b>${Number(value || 0).toLocaleString('pt-BR')}</b></span>`).join('')}</div>
+                <div class="script-casino-team-value">${escapeHTML(tr('casinoSellValue'))}: ${casinoIcon('coin')}<span>${sellValue.toLocaleString('pt-BR')}</span>${protectedPoke ? ` · ${escapeHTML(tr('casinoProtected'))}` : ''}</div>
+                <div class="script-casino-team-actions">
+                    <button class="script-casino-team-action script-casino-sell" type="button" ${busy || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>${casinoIcon('coin')}<span>${escapeHTML(tr('casinoSellPokemon'))}</span></button>
+                    <button class="script-casino-team-action script-casino-market" type="button" ${busy || protectedPoke || sellValue <= 0 ? 'disabled' : ''}>${casinoIcon('market')}<span>${escapeHTML(tr('casinoMarketSell'))}</span></button>
+                </div>`;
+            card.querySelector('.script-casino-team-art img')?.addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId:poke?.speciesId });
+            }, { once:true });
+            card.querySelector('.script-casino-sell').addEventListener('click', () => sellTeamPokemon(poke));
+            card.querySelector('.script-casino-market')?.addEventListener('click', () => sendPurchasedPokemonToMarket(poke));
+            return { key: pokeId, node: card, signature: card.dataset.signature };
+        };
+
+        const renderTeam = () => {
+            teamCount.textContent = String(purchasedPokemon.length);
+            const purchasedTeam = purchasedPokemon;
+            const sellablePurchased = purchasedTeam.filter(poke => !isTeamPokemonProtected(poke) && Number(poke?.sellValue || 0) > 0);
+            /* El boton de historial no depende de lo que haya comprado: siempre
+               se puede abrir, y lleva la cuenta de lo vendido por su cuenta. */
+            logButton.disabled = busyPokeId != null || busySpeciesId != null;
+            logButton.classList.toggle('has-entries', autoSellLog.entries.length > 0);
+            bulkSellButton.disabled = busyPokeId != null || busySpeciesId != null || sellablePurchased.length === 0;
+            const sellLabel = bulkSellButton.querySelector('span');
+            if (sellLabel) sellLabel.textContent = `${tr('casinoSellAll')} (${sellablePurchased.length})`;
+            refreshAutoSellButton();
+            announceIvGoalMatches(purchasedTeam);
+
+            /* El filtro solo oculta tarjetas. purchasedPokemon no se modifica, de
+               modo que limpiar el filtro devuelve la lista completa. */
+            const visibleTeam = purchasedTeam.filter(matchesFilters);
+            filtersCount.textContent = formatCasinoText(tr('casinoFilterShowing'), {
+                shown:visibleTeam.length, total:purchasedTeam.length
+            });
+            filterClearButton.disabled = !hasActiveFilters();
+            if (!purchasedTeam.length) {
+                teamList.replaceChildren();
+                teamCards.clear();
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-team-empty';
+                empty.textContent = tr('casinoTeamEmpty');
+                teamList.appendChild(empty);
+                return;
+            }
+            teamList.querySelector('.script-casino-team-empty, .script-casino-filters-empty')?.remove();
+            if (!visibleTeam.length) {
+                teamList.replaceChildren();
+                teamCards.clear();
+                const none = document.createElement('div');
+                none.className = 'script-casino-filters-empty';
+                none.textContent = tr('casinoFilterNone');
+                teamList.appendChild(none);
+                return;
+            }
+            /* Antes: teamList.replaceChildren() y un bucle que reconstruia
+               todas las cartas en cada operacion. Eso hacia que la lista
+               pareciera un salto: los nodos anteriores ya no existian y no
+               habia nada que animar. Ahora se reconcilia por pokeId. */
+            /* La vista lleva TODAS las compradas, con visible a false para las
+               que el filtro oculta, para que ocultarlas no sea retirarlas. La
+               arma buildTeamView, que es pura y esta probada por separado. Se
+               le pasa la visibleTeam de arriba, que ya esta calculada: no se
+               vuelve a recorrer el filtro. */
+            const view = buildTeamView(purchasedTeam, visibleTeam, getPokeId, teamCardSignature);
+            /* create y update reciben el item de la vista, no el Pokemon: por eso
+               este mapa. Sin el, buildTeamCard se comeria un { id, signature } y
+               dibujaria una carta vacia. */
+            const purchasedById = new Map(purchasedTeam.map(poke => [getPokeId(poke), poke]));
+            reconcileTeamCards(view, {
+                existing: id => teamCards.get(id) || null,
+                existingAllIds: () => [...teamCards.keys()],
+                create: item => {
+                    const fresh = buildTeamCard(purchasedById.get(String(item.id)));
+                    teamCards.set(fresh.key, fresh);
+                    return fresh;
+                },
+                update: (node, item) => {
+                    /* La firma cambio: se reconstruye la carta. Es un caso raro
+                       (el nivel o los IVs suben tras un guardado), y es mas
+                       seguro reconstruir que intentar parchear campos sueltos. */
+                    const fresh = buildTeamCard(purchasedById.get(String(item.id)));
+                    node.replaceWith(fresh.node);
+                    teamCards.set(fresh.key, fresh);
+                },
+                enter: node => {
+                    /* Lo mas nuevo va primero, como cuando purchasedPokemon
+                       hace unshift. Las que ya estan no se reordenan nunca, para
+                       no provocar movimientos en cada compra. */
+                    teamList.insertBefore(node, teamList.firstElementChild);
+                    node.classList.add('is-entering');
+                    /* La entrada tiene dos caminos: el evento y un setTimeout.
+                       No solo por el movimiento reducido, sino porque la
+                       transicion o la animacion pueden no existir, y porque un
+                       evento puede no llegar nunca. El setTimeout lo
+                       garantiza igual, asi que la clase se va siempre. */
+                    const done = () => node.classList.remove('is-entering');
+                    /* El guardia del origen no es cosmetico: animationend SUBE
+                       por el DOM, y un boton de dentro de la carta anima al
+                       pasar por encima. Sin el, ese evento de un hijo retendria
+                       la tarjeta antes de tiempo. Y por eso el listener NO va
+                       con { once:true }: al primer evento de un hijo se gastaria
+                       sin actuar y el camino bueno se perderia. Quitar una
+                       clase es idempotente, asi que done puede correr las veces
+                       que haga falta. */
+                    node.addEventListener('animationend', event => {
+                        if (event.target !== node) return;
+                        done();
+                    });
+                    setTimeout(done, 420);
+                },
+                leave: (node, id) => {
+                    node.classList.add('is-leaving');
+                    /* Doble retirada: el transitionend y un setTimeout de 400
+                       ms. Los dos entran por el mismo done, y los dos miran
+                       isConnected antes de tocar nada. Ningun camino borra dos
+                       veces: si uno retira el nodo, el otro llega y el guard lo
+                       corta, y si el panel se cerro por debajo tambien. */
+                    const done = () => {
+                        if (!node.isConnected) return;
+                        node.remove();
+                        /* Redundante con drop, que ya lo poda al instante: se
+                           deja como cinturon por si acaso. Map.delete es
+                           idempotente. */
+                        teamCards.delete(id);
+                    };
+                    /* transitionend sube por el DOM igual que animationend, y
+                       dentro de la carta hay algo que transiciona: el boton de
+                       accion tiene transition en transform, filter y
+                       box-shadow, y los cambia al pasar por encima. Un evento de
+                       ahi retendria la tarjeta antes de tiempo. Por eso el
+                       guardia, y por eso el listener NO lleva { once:true }: con
+                       el guardia puesto, { once:true } se gastaria en el primer
+                       evento de un hijo sin llegar a hacer nada, y la retirada
+                       se quedaria solo con el setTimeout. Sin el, el camino
+                       bueno sigue vivo para cuando llegue el evento de la
+                       carta. done ya es idempotente, de modo que repetirlo no
+                       hace daño. */
+                    node.addEventListener('transitionend', event => {
+                        if (event.target !== node) return;
+                        done();
+                    });
+                    setTimeout(done, 400);
+                },
+                drop: id => teamCards.delete(id)
+            });
+            /* Y ahora lo que la firma no lleva, sobre los nodos que ya estan en
+               el DOM. Va DESPUES de reconciliar a proposito: create y update
+               acaban de cambiar lo que hay en teamCards, asi que lo que se ve
+               aqui es siempre el nodo vivo. No se mira ninguna firma ni se
+               reconstruye nada. */
+            for (const item of view) {
+                if (!item.visible) continue;
+                const id = String(item.id);
+                const entry = teamCards.get(id);
+                if (entry) refreshCardVolatileState(entry.node, purchasedById.get(id));
+            }
+        };
+        const getNewPurchasedPokemon = (previousSnapshot, expectedSpeciesId = 0) => allPokes.filter(poke => {
+            const pokeId = getPokeId(poke);
+            const matchesOffer = !expectedSpeciesId || Number(poke?.speciesId || 0) === Number(expectedSpeciesId);
+            return pokeId && matchesOffer && (!previousSnapshot.has(pokeId)
+                || previousSnapshot.get(pokeId) !== Number(poke?.speciesId || 0));
+        });
+        const refreshPurchasedPokemon = async (previousSnapshot, expectedSpeciesId) => {
+            let purchased = [];
+            for (let attempt = 0; attempt < 4 && !closed; attempt += 1) {
+                await refreshCasinoData();
+                purchased = getNewPurchasedPokemon(previousSnapshot, expectedSpeciesId);
+                if (purchased.length) break;
+                if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 140));
+            }
+            return purchased;
+        };
+        /* --- HISTORIAL DE AUTO-VENTA ---
+           Guarda lo vendido automaticamente, con el motivo por el que se
+           vendio. Se resetea al abrir una sesion nueva del Cassino: la clave
+           lleva el identificador de sesion, asi que cada compra en cantidad
+           empieza con su propio historial y el anterior ya no se consulta. */
+        const autoSellLogStorageKey = 'script_casino_auto_sell_log_v1';
+        const autoSellSessionStorageKey = 'script_casino_auto_sell_session_v1';
+        const readAutoSellLog = () => {
+            let stored = null;
+            try { stored = JSON.parse(localStorage.getItem(autoSellLogStorageKey) || 'null'); } catch (_) {}
+            const sessionId = localStorage.getItem(autoSellSessionStorageKey) || '';
+            /* Sin sesion guardada, o con una sesion distinta, se empieza de cero. */
+            if (!stored || stored.sessionId !== sessionId) return { sessionId, entries: [] };
+            return { sessionId, entries: Array.isArray(stored.entries) ? stored.entries : [] };
+        };
+        let autoSellLog = readAutoSellLog();
+        const writeAutoSellLog = () => {
+            try { localStorage.setItem(autoSellLogStorageKey, JSON.stringify(autoSellLog)); } catch (_) {}
+        };
+        /* Una sesion nueva por pestana abierta. Se genera al abrir el Cassino,
+           no se hereda del guardado, para que reabrir el panel sea continuar la
+           misma sesion y no perder el historial a media compra. */
+        const startAutoSellSession = () => {
+            const sessionId = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+            try { localStorage.setItem(autoSellSessionStorageKey, sessionId); } catch (_) {}
+            autoSellLog = { sessionId, entries: [] };
+            writeAutoSellLog();
+        };
+        const addAutoSellLogEntry = entry => {
+            if (!entry) return;
+            autoSellLog.entries.unshift(entry);
+            /* Tope para que el guardado no crezca sin limite si se compran
+               muchas tandas. */
+            if (autoSellLog.entries.length > 200) autoSellLog.entries.length = 200;
+            writeAutoSellLog();
+        };
+        const getAutoSellSessionTotalGold = () => autoSellLog.entries.reduce(
+            (sum, entry) => sum + Number(entry?.gold || 0), 0
+        );
+        /* Lo que costo el conjunto de los Pokemon auto-vendidos de la sesion.
+           El saldo que de verdad se ve en la cuenta es gold - spent: la suma
+           de las ventas sola nunca es el dinero que te queda. */
+        const getAutoSellSessionSpentGold = () => autoSellLog.entries.reduce(
+            (sum, entry) => sum + Number(entry?.spent || 0), 0
+        );
+        const getAutoSellSessionNetGold = () => (
+            getAutoSellSessionTotalGold() - getAutoSellSessionSpentGold()
+        );
+
+        /* Aplica la auto-venta a lo recien comprado. Reutiliza
+           sellTeamPokemon, que ya hace el ciclo completo: guardar en el Box,
+           vender por API y quitarlo de purchasedPokemon. Por eso un Pokemon
+           auto-vendido no aparece en la lista de comprados.
+           Solo se cuenta y se registra lo que la API confirmo: si una venta
+           falla, no suma oro ni entra en el historial. */
+        const runAutoSellOnPurchased = async purchased => {
+            if (!autoSellConfig.enabled || !purchased.length) return { sold:0, gold:0, failed:0 };
+            let sold = 0;
+            let failed = 0;
+            let gold = 0;
+            for (const poke of purchased) {
+                if (!shouldAutoSell(poke)) continue;
+                const iv = Number(poke?.ivTotal || 0);
+                const quality = Number(poke?.quality || 0);
+                const tierId = getPokemonTierId(poke);
+                const value = Number(poke?.sellValue || 0);
+                /* Lo que costo cada Pokemon. El precio de compra no viene en
+                   el Pokemon devuelto por la compra, asi que lo toma el
+                   llamador del precio de la oferta vigente. Es lo que permite
+                   restar el gasto y saber el saldo real. */
+                const spent = Math.max(0, Number(poke?.scriptBuyPrice ?? 0));
+                setStatus(formatCasinoText(tr('casinoAutoSellSold'), {
+                    name:poke?.name || 'Pokémon', iv, quality:quality.toFixed(2),
+                    tier:getTierLabel(tierId) || '—',
+                    minIv:autoSellConfig.minIv,
+                    minTier:autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoAutoSellMinTierAny')
+                }));
+                /* sellTeamPokemon limpia el estado y refresca, asi que se
+                   espera antes de seguir con el siguiente. */
+                const outcome = await sellTeamPokemon(poke);
+                if (!outcome?.ok) {
+                    failed += 1;
+                    /* La venta fallo. El Pokemon sigue en la cuenta, asi que se
+                       mantiene la reserva: es el unico sitio donde se puede
+                       vender bien, y la auto-venta de capturas no debe tocarlo. */
+                    continue;
+                }
+                /* Vendido y confirmado por la API. La reserva se suelta: ya no
+                   esta en la lista y no hay nada que pueda volver a venderlo. */
+                forgetCasinoPokemon(poke);
+                sold += 1;
+                /* El oro es el que devolvio la API, no el valor del catalogo. */
+                gold += Number(outcome.goldGained || 0);
+                addAutoSellLogEntry({
+                    at: Date.now(),
+                    id:getPokeId(poke),
+                    name:poke?.name || 'Pokémon',
+                    speciesId:Number(poke?.speciesId || 0),
+                    level:Number(poke?.level || 0),
+                    iv, quality, tier:getTierLabel(tierId) || '—',
+                    tierId, gold:Number(outcome.goldGained || 0),
+                    /* Se guardan tambien el valor teorico del catalogo y lo que
+                       costo comprar, para poder ver en cada venta cuanto se
+                       perdio y cual fue el saldo real. */
+                    catalogValue:value,
+                    spent,
+                    minIv:autoSellConfig.minIv,
+                    minTier:autoSellConfig.minTier || '',
+                    reason:formatCasinoText(tr('casinoAutoSellReasonBad'), {
+                        iv, minIv:autoSellConfig.minIv,
+                        tier:getTierLabel(tierId) || '—',
+                        minTier:autoSellConfig.minTier ? getTierLabel(autoSellConfig.minTier) : tr('casinoAutoSellMinTierAny')
+                    })
+                });
+            }
+            if (sold) {
+                setStatus(formatCasinoText(tr('casinoAutoSellSessionSold'), {
+                    count:sold, gold:gold.toLocaleString('pt-BR')
+                }) + (failed ? ` ${formatCasinoText(tr('casinoAutoSellSessionFailed'), { count:failed })}` : ''),
+                failed ? 'error' : 'success');
+            }
+            return { sold, gold, failed };
+        };
+        const openAutoSellConfig = () => {
+            document.querySelector('.script-casino-config-backdrop')?.remove();
+            const layer = document.createElement('div');
+            layer.className = 'script-casino-config-backdrop';
+            const tierChecks = MARKET_QUALITY_TIER_DEFINITIONS.map(definition => `
+                <label class="script-casino-config-check">
+                    <input type="checkbox" value="${escapeHTML(definition.id)}" ${autoSellConfig.alertTiers.includes(definition.id) ? 'checked' : ''}>
+                    <span style="color:${escapeHTML(definition.color)}">${escapeHTML(definition.label)}</span>
+                </label>`).join('');
+            /* El corte de quality es un selector de tier, no un numero: asi se
+               elige "legendario" y se descarta todo lo que este por debajo. */
+            const tierSelectOptions = [`<option value="">${escapeHTML(tr('casinoAutoSellMinTierAny'))}</option>`]
+                .concat(MARKET_QUALITY_TIER_DEFINITIONS.map(definition =>
+                    `<option value="${escapeHTML(definition.id)}" ${autoSellConfig.minTier === definition.id ? 'selected' : ''}>${escapeHTML(definition.label)}</option>`
+                )).join('');
+            layer.innerHTML = `
+                <div class="script-casino-config" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('casinoAutoSellTitle'))}">
+                    <header class="script-casino-config-head">
+                        <h3>${casinoIcon('gear')}<span>${escapeHTML(tr('casinoAutoSellTitle'))}</span></h3>
+                        <button class="script-casino-config-close" type="button" aria-label="${escapeHTML(tr('casinoAutoSellClose'))}">×</button>
+                    </header>
+                    <div class="script-casino-config-body">
+                        <label class="script-casino-config-check" style="grid-template-columns:auto 1fr;">
+                            <input type="checkbox" class="script-casino-config-enabled" ${autoSellConfig.enabled ? 'checked' : ''}>
+                            <span>${escapeHTML(tr('casinoAutoSellEnable'))}</span>
+                        </label>
+                        <p class="script-casino-config-note">${escapeHTML(tr('casinoAutoSellRule'))}</p>
+                        <div class="script-casino-config-group">
+                            <h4>${escapeHTML(tr('casinoAutoSell'))}</h4>
+                            <div class="script-casino-config-row">
+                                <label class="script-casino-config-field"><label>${escapeHTML(tr('casinoAutoSellMinIv'))}</label><input type="number" class="script-casino-config-iv" min="0" max="192" step="1" value="${autoSellConfig.minIv}"></label>
+                                <label class="script-casino-config-field"><label>${escapeHTML(tr('casinoAutoSellMinTier'))}</label><select class="script-casino-config-tier">${tierSelectOptions}</select></label>
+                            </div>
+                            <p class="script-casino-config-preview" data-role="preview"></p>
+                        </div>
+                        <div class="script-casino-config-group">
+                            <h4>${escapeHTML(tr('casinoAutoSellAlertTier'))}</h4>
+                            <div class="script-casino-config-checks">${tierChecks}</div>
+                        </div>
+                        <div class="script-casino-config-actions">
+                            <button class="script-casino-config-btn script-casino-config-cancel" type="button">${escapeHTML(tr('casinoAutoSellCancel'))}</button>
+                            <button class="script-casino-config-btn script-casino-config-save" type="button">${escapeHTML(tr('casinoAutoSellSell'))}</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(layer);
+
+            const enabledInput = layer.querySelector('.script-casino-config-enabled');
+            const ivInput = layer.querySelector('.script-casino-config-iv');
+            const tierInput = layer.querySelector('.script-casino-config-tier');
+            const preview = layer.querySelector('[data-role="preview"]');
+            const close = () => layer.remove();
+            const updatePreview = () => {
+                const enabled = enabledInput.checked;
+                const minIv = Math.max(0, Math.min(192, Math.round(Number(ivInput.value) || 0)));
+                const minTier = tierInput.value;
+                if (!enabled) {
+                    preview.innerHTML = `<b>${escapeHTML(tr('casinoAutoSellOff'))}</b> ${escapeHTML(tr('casinoAutoSellRuleOff'))}`;
+                    return;
+                }
+                /* Cuenta sobre lo comprado ahora mismo, para que el usuario vea
+                   el efecto de lo que configura antes de guardar. Usa la misma
+                   regla que shouldAutoSell, para que el numero no mienta. */
+                const trial = { enabled:true, minIv, minTier, alertTiers:autoSellConfig.alertTiers };
+                const matched = purchasedPokemon.filter(poke => {
+                    if (isTeamPokemonProtected(poke) || Number(poke?.sellValue || 0) <= 0) return false;
+                    if (Number(poke?.ivTotal || 0) >= trial.minIv) return false;
+                    if (trial.minTier) {
+                        const actual = tierOrder(getPokemonTierId(poke));
+                        if (actual < 0 || actual >= tierOrder(trial.minTier)) return false;
+                    }
+                    return true;
+                }).length;
+                const alcance = formatCasinoText(tr('casinoAutoSellScope'), {
+                    iv:minIv, tier:minTier ? getTierLabel(minTier) : tr('casinoAutoSellMinTierAny')
+                });
+                preview.innerHTML = `${escapeHTML(alcance)}<br>${escapeHTML(formatCasinoText(tr('casinoAutoSellPreview'), { count:matched, total:purchasedPokemon.length }))}`;
+            };
+            [enabledInput, ivInput, tierInput].forEach(input => {
+                input.addEventListener('input', updatePreview);
+                input.addEventListener('change', updatePreview);
+            });
+            layer.querySelector('.script-casino-config-close').addEventListener('click', close);
+            layer.querySelector('.script-casino-config-cancel').addEventListener('click', close);
+            layer.addEventListener('click', event => { if (event.target === layer) close(); });
+            layer.querySelector('.script-casino-config-save').addEventListener('click', () => {
+                autoSellConfig = {
+                    enabled: enabledInput.checked,
+                    minIv: Math.max(0, Math.min(192, Math.round(Number(ivInput.value) || 0))),
+                    minTier: tierInput.value,
+                    alertTiers: Array.from(layer.querySelectorAll('.script-casino-config-checks input:checked'))
+                        .map(input => input.value)
+                };
+                writeAutoSellConfig();
+                close();
+                renderTeam();
+            });
+            updatePreview();
+        };
+        const processCasinoQuantity = async (initialOffer, requestedQuantity) => {
+            const total = Math.max(1, Math.min(999, Math.floor(Number(requestedQuantity) || 1)));
+            const speciesId = Number(initialOffer?.speciesId || 0);
+            if (!speciesId || busySpeciesId != null || busyPokeId != null) return;
+            busySpeciesId = speciesId;
+            refreshButton.disabled = true;
+            let completed = 0;
+            let lastError = null;
+            /* Contabilidad de la tanda: lo que se gasto comprando y lo que la
+               API devolvio al revender. El saldo real es la diferencia, no lo
+               que dicen las ventas por separado. */
+            let batchSpent = 0;
+            let batchSoldGold = 0;
+            let batchSoldCount = 0;
+            let batchFailedCount = 0;
+            render();
+            renderTeam();
+            try {
+                for (let index = 0; index < total && !closed; index += 1) {
+                    const currentOffer = (Array.isArray(payload?.offers) ? payload.offers : [])
+                        .find(entry => Number(entry?.speciesId || 0) === speciesId) || initialOffer;
+                    if (!currentOffer?.canBuy) {
+                        lastError = new Error(getMarlonOfferReason(currentOffer, payload));
+                        break;
+                    }
+                    setProgress({
+                        current: index + 1,
+                        total,
+                        name: currentOffer.name || initialOffer.name || 'Pokémon'
+                    });
+                    const previousSnapshot = new Map(allPokes.map(poke => [
+                        getPokeId(poke), Number(poke?.speciesId || 0)
+                    ]));
+                    try {
+                        /* El precio se toma de la oferta vigente antes de
+                           comprar: es lo que sale de la cuenta en este paso.
+                           Se anota en cada Pokemon para que el historial de
+                           auto-venta pueda restarlo despues. */
+                        const unitPrice = Math.max(0, Number(currentOffer?.price ?? initialOffer?.price ?? 0));
+                        batchSpent += unitPrice;
+                        /* Se declara la compra ANTES de llamar al servidor. A
+                           partir de aqui, y hasta que se sepa el id del Pokemon,
+                           la auto-venta de capturas va a hacer como mucho una
+                           pausa: lo compra la forma de que no se lleve por
+                           delante nada de esta compra. */
+                        markCasinoPurchaseStarted(speciesId);
+                        await gameApiRequest('/api/game/marlon/buy', {
+                            method:'POST', body:JSON.stringify({ speciesId })
+                        });
+                        completed += 1;
+                        sendGameMessage({ type:'inv-get' });
+                        const purchased = await refreshPurchasedPokemon(previousSnapshot, speciesId);
+                        purchased.forEach(poke => {
+                            const pokeId = getPokeId(poke);
+                            recentTeamIds.add(pokeId);
+                            /* Ya se sabe el id: se cierra la reserva por
+                               especie y el Pokemon pasa a ser del Cassino de
+                               forma definitiva, aunque la compra se corte
+                               ahora mismo. */
+                            claimCasinoPokemon(poke);
+                            /* El precio no viene en el Pokemon que devuelve
+                               la compra, asi que se le pone aqui. Es el
+                               unico momento en que se sabe con certeza. */
+                            if (poke) poke.scriptBuyPrice = unitPrice;
+                            if (pokeId && !purchasedPokemon.some(entry => getPokeId(entry) === pokeId)) {
+                                purchasedPokemon.unshift(JSON.parse(JSON.stringify(poke)));
+                            }
+                        });
+                        announceIvGoalMatches(purchasedPokemon);
+                        /* Se evalua antes de seguir comprando, para que lo que
+                           no cumple el rango no se quede esperando en la lista
+                           mientras el usuario sigue comprando lotes. */
+                        const autoSold = await runAutoSellOnPurchased(purchased);
+                        batchSoldCount += autoSold.sold;
+                        batchSoldGold += autoSold.gold;
+                        batchFailedCount += autoSold.failed;
+                    } catch (error) {
+                        lastError = error;
+                        break;
+                    } finally {
+                        /* Siempre, incluso si la compra revienta o se corta el
+                           lote. Dejarlo colgado dejaria la auto-venta de
+                           capturas pausada para siempre. */
+                        markCasinoPurchaseFinished(speciesId);
+                    }
+                }
+            } finally {
+                try { await refreshCasinoData(); } catch (_) {}
+                busySpeciesId = null;
+                refreshButton.disabled = false;
+                if (!closed) {
+                    render();
+                    renderTeam();
+                    const name = initialOffer.name || 'Pokémon';
+                    const baseMessage = formatCasinoText(tr(completed === total
+                        ? (initialOffer.isTrade ? 'casinoBatchTraded' : 'casinoBatchBought')
+                        : 'casinoBatchPartial'), { done:completed, total, name });
+                    const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
+                    /* La barra de estado lleva solo el resultado de la compra.
+                       Las cifras de dinero van en su propia tira, que se
+                       actualiza aqui: asi el saldo no se pierde dentro de una
+                       frase larga. */
+                    setStatus(`${baseMessage}${errorMessage}`.trim(),
+                        completed === total && !lastError ? 'success' : 'error');
+                    /* La tira de proceso es de la compra: al terminar el bucle se
+                       retira, y las cifras se quedan en su propia tira de
+                       resultados. */
+                    clearProgress();
+                    renderResults({ spent:batchSpent, earned:batchSoldGold, sold:batchSoldCount });
+                }
+            }
+        };
+        const processCasinoItemQuantity = async (initialOffer, requestedQuantity) => {
+            const total = Math.max(1, Math.min(999, Math.floor(Number(requestedQuantity) || 1)));
+            const itemId = Number(initialOffer?.itemId || 0);
+            if (!itemId || busyItemId != null || busySpeciesId != null || busyPokeId != null) return;
+            busyItemId = itemId;
+            refreshButton.disabled = true;
+            const unitPrice = Math.max(0, Number(initialOffer?.price || 0)) * Math.max(1, Number(initialOffer?.qty || 1));
+            let goldAvailable = Math.max(0, Number(payload?.gold || 0));
+            let completed = 0;
+            let lastError = null;
+            render();
+            try {
+                for (let index = 0; index < total && !closed; index += 1) {
+                    const currentOffer = (Array.isArray(payload?.itemOffers) ? payload.itemOffers : [])
+                        .find(entry => Number(entry?.itemId || 0) === itemId) || initialOffer;
+                    if (!currentOffer?.canBuy || goldAvailable < unitPrice) {
+                        lastError = new Error(tr('casinoNeedGold'));
+                        break;
+                    }
+                    setProgress({
+                        current: index + 1,
+                        total,
+                        name: currentOffer.name || initialOffer.name || 'item'
+                    });
+                    try {
+                        await gameApiRequest('/api/game/pokemaniac-trader/buy', {
+                            method:'POST', body:JSON.stringify({ itemId })
+                        });
+                        completed += 1;
+                        goldAvailable = Math.max(0, goldAvailable - unitPrice);
+                        sendGameMessage({ type:'inv-get' });
+                    } catch (error) {
+                        lastError = error;
+                        break;
+                    }
+                }
+            } finally {
+                try { await refreshCasinoData(); } catch (_) {}
+                busyItemId = null;
+                refreshButton.disabled = false;
+                if (!closed) {
+                    render();
+                    renderTeam();
+                    const name = initialOffer.name || 'item';
+                    const baseMessage = formatCasinoText(tr(completed === total
+                        ? 'casinoBatchBought'
+                        : 'casinoBatchPartial'), { done:completed, total, name });
+                    const errorMessage = lastError ? ` ${lastError.message || ''}` : '';
+                    setStatus(`${baseMessage}${errorMessage}`.trim(), completed === total && !lastError ? 'success' : 'error');
+                    /* La compra de objetos usa la misma tira que la de Pokemon:
+                       una de las dos rutas no puede quedarse con la barra de
+                       texto, que es lo que se nota al comprar en cantidades. */
+                    clearProgress();
+                }
+            }
+        };
+        /* Constructor de la carta de una oferta. Vive fuera de render porque
+           las dos pestanas reutilizan exactamente la misma carta: lo unico que
+           cambia es en que lista se anade. */
+        const buildOfferCard = (offer, target) => {
+            const reason = getMarlonOfferReason(offer, payload);
+            const card = document.createElement('article');
+            card.className = `script-casino-card${offer.canBuy ? '' : ' is-disabled'}`;
+            const stoneRequired = offer.stoneItemId != null;
+            const stoneHave = Number(offer.stoneHave || 0);
+            const stoneQty = Number(offer.stoneQty || 0);
+            const stoneIcon = normalizeGameItemIcon(offer.stoneIconUrl || '');
+            card.innerHTML = `
+                <div class="script-casino-art"><img src="${escapeHTML(getMarlonPokemonSprite(offer))}" alt="${escapeHTML(offer.name || 'Pokémon')}"></div>
+                <div class="script-casino-info">
+                    <div class="script-casino-name-line">
+                        <b class="script-casino-name">${escapeHTML(offer.name || `Pokémon #${offer.speciesId || '—'}`)}</b>
+                        ${offer.isTrade ? `<span class="script-casino-evolution">${casinoIcon('evolve')}<span>${escapeHTML(tr('casinoEvolution'))}</span></span>` : ''}
+                    </div>
+                    <div class="script-casino-price">${casinoIcon('coin')}<span>${Number(offer.price || 0).toLocaleString('pt-BR')}</span></div>
+                    ${offer.isTrade ? `<div class="script-casino-requirements">
+                        <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getPokemonIconUrl(133) || getPokeApiSpriteUrl({ speciesId:133 }))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
+                        ${stoneRequired ? `<span class="script-casino-requirement${stoneHave >= stoneQty ? '' : ' is-missing'}">${stoneIcon ? `<img src="${escapeHTML(stoneIcon)}" alt="${escapeHTML(offer.stoneName || 'Stone')}">` : ''}${stoneHave.toLocaleString('pt-BR')}/${stoneQty.toLocaleString('pt-BR')} ${escapeHTML(offer.stoneName || 'Stone')}</span>` : ''}
+                    </div>` : ''}
+                </div>
+                <div class="script-casino-action-row">
+                    <span class="script-casino-reason">${escapeHTML(reason)}</span>
+                    <div class="script-casino-purchase-controls">
+                        <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}></label>
+                        <button class="script-casino-buy" type="button" ${offer.canBuy && busySpeciesId == null && busyPokeId == null ? '' : 'disabled'}>${busySpeciesId === offer.speciesId ? '…' : escapeHTML(offer.isTrade ? tr('casinoTrade') : tr('casinoBuy'))}</button>
+                    </div>
+                </div>`;
+            card.querySelector('.script-casino-art img').addEventListener('error', event => {
+                event.currentTarget.src = getPokeApiSpriteUrl({ speciesId: offer.speciesId });
+            }, { once:true });
+            const quantityInput = card.querySelector('.script-casino-quantity');
+            quantityInput.addEventListener('change', () => {
+                quantityInput.value = String(Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1))));
+            });
+            card.querySelector('.script-casino-buy').addEventListener('click', async () => {
+                if (!offer.canBuy || busySpeciesId != null || busyPokeId != null) return;
+                await processCasinoQuantity(offer, quantityInput.value);
+            });
+            target.appendChild(card);
+        };
+        const buildItemCard = (itemOffer, target) => {
+            const itemId = Number(itemOffer?.itemId || 0);
+            const price = Math.max(0, Number(itemOffer?.price || 0));
+            const unitQty = Math.max(1, Number(itemOffer?.qty || 1));
+            const have = Math.max(0, Number(itemOffer?.have || 0));
+            const canBuy = Boolean(itemOffer?.canBuy) && itemId > 0 && price > 0;
+            const card = document.createElement('article');
+            card.className = `script-casino-card script-casino-item-card${canBuy ? '' : ' is-disabled'}`;
+            const icon = normalizeGameItemIcon(itemOffer?.iconUrl || '');
+            /* Si el item no trae icono, se dibuja el de caja directamente en
+               vez de meter un <img> sin origen: un src vacio o corrupto dispara
+               el error y el marco se queda vacio hasta que llega el respaldo. */
+            const art = icon
+                ? `<img src="${escapeHTML(icon)}" alt="${escapeHTML(itemOffer?.name || 'Item')}">`
+                : `<span class="casino-ic-wrap">${casinoIcon('box')}</span>`;
+            card.innerHTML = `
+                <div class="script-casino-art">${art}</div>
+                <div class="script-casino-info">
+                    <div class="script-casino-name-line">
+                        <b class="script-casino-name"><span>${escapeHTML(itemOffer?.name || `Item #${itemId || '—'}`)}</span>${Number(itemOffer?.qty || 1) > 1 ? `<span class="script-casino-item-qty">×${Number(itemOffer.qty).toLocaleString('pt-BR')}</span>` : ''}</b>
+                        <span class="script-casino-evolution is-item"><span>${escapeHTML(tr('casinoItemBadge'))}</span></span>
+                    </div>
+                    <div class="script-casino-price">${casinoIcon('coin')}<span>${price.toLocaleString('pt-BR')}</span></div>
+                    <div class="script-casino-item-have">${escapeHTML(tr('casinoItemHave'))} <b>${have.toLocaleString('pt-BR')}</b></div>
+                    ${itemOffer?.description ? `<div class="script-casino-item-description">${escapeHTML(itemOffer.description)}</div>` : ''}
+                </div>
+                <div class="script-casino-action-row">
+                    <span class="script-casino-reason">${escapeHTML(canBuy ? '' : tr('casinoNeedGold'))}</span>
+                    <div class="script-casino-purchase-controls">
+                        <label class="script-casino-quantity-label"><span>${escapeHTML(tr('casinoQuantity'))}</span><input class="script-casino-item-quantity" type="number" min="1" max="999" step="1" inputmode="numeric" value="1" ${canBuy && busyItemId == null ? '' : 'disabled'}></label>
+                        <button class="script-casino-buy script-casino-item-buy" type="button" ${canBuy && busyItemId == null ? '' : 'disabled'}>${escapeHTML(tr('casinoBuy'))}</button>
+                    </div>
+                </div>`;
+            card.querySelector('.script-casino-art img')?.addEventListener('error', event => {
+                event.currentTarget.replaceWith(Object.assign(document.createElement('span'), { className: 'casino-ic-wrap', innerHTML: casinoIcon('box') }));
+            }, { once:true });
+            const quantityInput = card.querySelector('.script-casino-item-quantity');
+            const buyButton = card.querySelector('.script-casino-item-buy');
+            const updateItemQuantity = () => {
+                const quantity = Math.max(1, Math.min(999, Math.floor(Number(quantityInput.value) || 1)));
+                quantityInput.value = String(quantity);
+                const total = price * unitQty * quantity;
+                buyButton.disabled = !canBuy || busyItemId != null || Number(payload?.gold || 0) < total;
+                buyButton.title = buyButton.disabled && canBuy ? tr('casinoNeedGold') : tr('casinoBuy');
+            };
+            quantityInput.addEventListener('input', updateItemQuantity);
+            quantityInput.addEventListener('change', updateItemQuantity);
+            buyButton.addEventListener('click', async () => {
+                if (buyButton.disabled) return;
+                await processCasinoItemQuantity(itemOffer, quantityInput.value);
+            });
+            updateItemQuantity();
+            target.appendChild(card);
+        };
+        const render = () => {
+            const offers = Array.isArray(payload?.offers) ? payload.offers : [];
+            const itemOffers = Array.isArray(payload?.itemOffers) ? payload.itemOffers : [];
+            /* Las evoluciones de Eevee son ofertas de canje, no compras: van a
+               su propia pestana. La principal queda solo con lo comprable. */
+            const buyOffers = offers.filter(offer => !offer?.isTrade);
+            const evolveOffers = offers.filter(offer => offer?.isTrade);
+            balanceValue.textContent = Number(payload?.gold || 0).toLocaleString('pt-BR');
+            for (const button of tabButtons) {
+                const isActive = button.dataset.tab === catalogTab;
+                button.classList.toggle('is-active', isActive);
+                button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            }
+            for (const tab of ['buy', 'evolve']) {
+                const count = tabButtons.find(entry => entry.dataset.tab === tab)?.querySelector('.script-casino-tab-count');
+                if (!count) continue;
+                count.textContent = tab === 'buy'
+                    ? String(buyOffers.length + itemOffers.length)
+                    : String(evolveOffers.length);
+            }
+            list.replaceChildren();
+            if (!offers.length && !itemOffers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-empty';
+                empty.textContent = tr('casinoEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            /* Cada pestana muestra solo lo suyo y, si no hay nada que mostrar,
+               su propio estado vacio en vez de una lista mezclada. */
+            if (catalogTab === 'evolve') {
+                if (!evolveOffers.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'script-casino-empty';
+                    empty.textContent = tr('casinoTabEvolveEmpty');
+                    list.appendChild(empty);
+                    return;
+                }
+                evolveOffers.forEach(offer => buildOfferCard(offer, list));
+                return;
+            }
+            if (!buyOffers.length && !itemOffers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-casino-empty';
+                empty.textContent = tr('casinoTabBuyEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            buyOffers.forEach(offer => buildOfferCard(offer, list));
+            itemOffers.forEach(itemOffer => buildItemCard(itemOffer, list));
+        };
+        const load = async () => {
+            if (busySpeciesId != null || busyItemId != null) return;
+            refreshButton.disabled = true;
+            setStatus(tr('casinoLoading'));
+            try {
+                await refreshCasinoData();
+                if (closed) return;
+                render();
+                renderTeam();
+                setStatus('');
+            } catch (error) {
+                if (closed) return;
+                payload = null;
+                allPokes = [];
+                render();
+                renderTeam();
+                setStatus(`${tr('casinoLoadError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                if (!closed) refreshButton.disabled = false;
+            }
+        };
+
+        backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+        windowElement.addEventListener('click', event => event.stopPropagation());
+        backdrop.querySelector('.script-casino-close').addEventListener('click', close);
+        refreshButton.addEventListener('click', load);
+        logButton.addEventListener('click', openAutoSellLog);
+        bulkSellButton.addEventListener('click', sellAllPurchasedPokemon);
+        /* Pestanas del catalogo. Cambiar de pestana solo vuelve a pintar la
+           lista: no vuelve a pedir datos ni toca el estado. */
+        for (const button of tabButtons) {
+            button.addEventListener('click', () => {
+                if (catalogTab === button.dataset.tab) return;
+                catalogTab = button.dataset.tab;
+                render();
+            });
+        }
+        ivGoalInput.addEventListener('change', () => {
+            const parsed = Math.round(Number(ivGoalInput.value) || 0);
+            ivGoal = Math.max(0, Math.min(192, parsed));
+            ivGoalInput.value = ivGoal > 0 ? String(ivGoal) : '';
+            alertedGoalPokeIds.clear();
+            if (ivGoal > 0) localStorage.setItem(ivGoalStorageKey, String(ivGoal));
+            else localStorage.removeItem(ivGoalStorageKey);
+            renderTeam();
+        });
+        [filterTierSelect, filterQualitySelect].forEach(select => {
+            select.addEventListener('change', renderTeam);
+        });
+        /* El campo de IVs filtra mientras se escribe, para no obligar a
+           confirmar con Enter. */
+        filterIvInput.addEventListener('input', renderTeam);
+        filterIvInput.addEventListener('change', renderTeam);
+        filterClearButton.addEventListener('click', () => {
+            filterTierSelect.value = '';
+            filterQualitySelect.value = '';
+            filterIvInput.value = '';
+            renderTeam();
+        });
+        autoSellButton.addEventListener('click', openAutoSellConfig);
+        /* Sesion nueva: el historial arranca vacio cada vez que se abre el
+           Cassino, tal como se pidio. */
+        startAutoSellSession();
+        buildTierFilterOptions();
+        buildQualityFilterOptions();
+        refreshAutoSellButton();
+        document.addEventListener('keydown', onKeydown);
+        applyBetterWindowScales();
+        await load();
+    }
+
+    async function showPortableStoneSeller() {
+        document.querySelector('.script-flint-backdrop')?.remove();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'script-flint-backdrop';
+        backdrop.innerHTML = `
+            <section class="win-window script-flint-window" role="dialog" aria-modal="true" aria-label="${escapeHTML(tr('stoneSellerTitle'))}">
+                <header class="script-flint-head">
+                    <div class="script-flint-head-copy">
+                        <span class="script-flint-kicker">PEWTER STONE SERVICE</span>
+                        <h2 class="script-flint-title">💎 ${escapeHTML(tr('stoneSellerTitle'))}</h2>
+                    </div>
+                    <span class="script-flint-balance">💲 —</span>
+                    <button class="script-flint-refresh" type="button">↻ ${escapeHTML(tr('stoneSellerRefresh'))}</button>
+                    <button class="script-flint-close" type="button" aria-label="${escapeHTML(tr('stoneSellerClose'))}">×</button>
+                </header>
+                <div class="script-flint-summary"><span>${escapeHTML(tr('stoneSellerSubtitle'))}</span><b>Lavender (Pewter) · Flint</b></div>
+                <div class="script-flint-status" aria-live="polite">${escapeHTML(tr('stoneSellerLoading'))}</div>
+                <div class="script-flint-list"><div class="script-flint-empty">${escapeHTML(tr('stoneSellerLoading'))}</div></div>
+            </section>`;
+        document.body.appendChild(backdrop);
+
+        const windowElement = backdrop.querySelector('.script-flint-window');
+        const list = backdrop.querySelector('.script-flint-list');
+        const status = backdrop.querySelector('.script-flint-status');
+        const balance = backdrop.querySelector('.script-flint-balance');
+        const refreshButton = backdrop.querySelector('.script-flint-refresh');
+        let payload = null;
+        let busyItemId = null;
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+        };
+        const onKeydown = event => { if (event.key === 'Escape') close(); };
+        const setStatus = (message, kind = '') => {
+            status.textContent = message || '';
+            status.classList.toggle('is-success', kind === 'success');
+            status.classList.toggle('is-error', kind === 'error');
+        };
+        const clampQuantity = (value, max) => Math.max(1, Math.min(Math.max(1, Number(max) || 1), Math.floor(Number(value) || 1)));
+
+        const render = () => {
+            if (closed) return;
+            const stones = Array.isArray(payload?.stones) ? payload.stones.filter(stone => Number(stone?.quantity) > 0) : [];
+            balance.textContent = `💲 ${Number(payload?.gold || 0).toLocaleString('pt-BR')}`;
+            list.replaceChildren();
+            if (!stones.length) {
+                const empty = document.createElement('div');
+                empty.className = 'script-flint-empty';
+                empty.textContent = tr('stoneSellerEmpty');
+                list.appendChild(empty);
+                return;
+            }
+            stones.forEach(stone => {
+                const maxQuantity = Math.max(1, Number(stone?.quantity) || 1);
+                const unitPrice = Math.max(0, Number(stone?.unitPrice) || 0);
+                const card = document.createElement('article');
+                card.className = 'script-flint-card';
+                const presets = [1, 5, 10, 25, 50, 100];
+                card.innerHTML = `
+                    <div class="script-flint-art"><img src="${escapeHTML(normalizeGameItemIcon(stone?.icon || ''))}" alt="${escapeHTML(stone?.name || 'Stone')}"></div>
+                    <div class="script-flint-info">
+                        <b class="script-flint-name">${escapeHTML(stone?.name || 'Stone')}</b>
+                        <div class="script-flint-meta">
+                            <span>${escapeHTML(tr('stoneSellerAvailable'))}<b>${maxQuantity.toLocaleString('pt-BR')}</b></span>
+                            <span>${escapeHTML(tr('stoneSellerUnitPrice'))}<b>💲 ${unitPrice.toLocaleString('pt-BR')}</b></span>
+                        </div>
+                    </div>
+                    <div class="script-flint-controls">
+                        <div class="script-flint-presets">
+                            ${presets.map(quantity => `<button class="script-flint-preset" type="button" data-qty="${quantity}" ${quantity > maxQuantity ? 'disabled' : ''}>${quantity}</button>`).join('')}
+                            <button class="script-flint-preset" type="button" data-mode="half">${escapeHTML(tr('stoneSellerHalf'))}</button>
+                            <button class="script-flint-preset" type="button" data-mode="all">${escapeHTML(tr('stoneSellerAll'))}</button>
+                        </div>
+                        <div class="script-flint-sale-row">
+                            <label class="script-flint-qty-wrap"><span>${escapeHTML(tr('stoneSellerQuantity'))}</span><input class="script-flint-qty" type="number" min="1" max="${maxQuantity}" step="1" inputmode="numeric" value="1"></label>
+                            <span class="script-flint-estimate">${escapeHTML(tr('stoneSellerEstimated'))}<b>💲 ${unitPrice.toLocaleString('pt-BR')}</b></span>
+                            <button class="script-flint-sell" type="button">💰 ${escapeHTML(tr('stoneSellerSell'))} 1</button>
+                        </div>
+                    </div>`;
+                const quantityInput = card.querySelector('.script-flint-qty');
+                const estimate = card.querySelector('.script-flint-estimate b');
+                const sellButton = card.querySelector('.script-flint-sell');
+                const presetButtons = Array.from(card.querySelectorAll('.script-flint-preset'));
+                const updateQuantity = value => {
+                    const quantity = clampQuantity(value, maxQuantity);
+                    quantityInput.value = String(quantity);
+                    estimate.textContent = `💲 ${(quantity * unitPrice).toLocaleString('pt-BR')}`;
+                    sellButton.textContent = `💰 ${tr('stoneSellerSell')} ${quantity.toLocaleString('pt-BR')}`;
+                    sellButton.disabled = busyItemId != null;
+                    presetButtons.forEach(button => {
+                        const target = button.dataset.mode === 'all' ? maxQuantity
+                            : button.dataset.mode === 'half' ? Math.max(1, Math.floor(maxQuantity / 2))
+                            : Number(button.dataset.qty);
+                        button.classList.toggle('is-active', target === quantity);
+                    });
+                    return quantity;
+                };
+                quantityInput.addEventListener('input', () => {
+                    if (quantityInput.value === '') {
+                        estimate.textContent = '💲 0';
+                        sellButton.disabled = true;
+                        presetButtons.forEach(button => button.classList.remove('is-active'));
+                        return;
+                    }
+                    updateQuantity(quantityInput.value);
+                });
+                quantityInput.addEventListener('change', () => updateQuantity(quantityInput.value));
+                presetButtons.forEach(button => button.addEventListener('click', () => {
+                    const target = button.dataset.mode === 'all' ? maxQuantity
+                        : button.dataset.mode === 'half' ? Math.max(1, Math.floor(maxQuantity / 2))
+                        : Number(button.dataset.qty);
+                    updateQuantity(target);
+                }));
+                sellButton.addEventListener('click', async () => {
+                    const quantity = Math.floor(Number(quantityInput.value));
+                    if (!Number.isFinite(quantity) || quantity < 1 || quantity > maxQuantity || busyItemId != null) {
+                        setStatus(tr('stoneSellerInvalidQty'), 'error');
+                        return;
+                    }
+                    busyItemId = String(stone.id);
+                    refreshButton.disabled = true;
+                    list.querySelectorAll('button,input').forEach(control => { control.disabled = true; });
+                    sellButton.textContent = tr('stoneSellerSelling');
+                    try {
+                        const result = await gameApiRequest('/api/game/flint/sell', {
+                            method:'POST', body:JSON.stringify({ itemId:stone.id, qty:quantity })
+                        });
+                        sendGameMessage({ type:'inv-get' });
+                        const soldQuantity = Number(result?.sold ?? quantity);
+                        const goldGained = Number(result?.goldGained ?? soldQuantity * unitPrice);
+                        payload = {
+                            ...payload,
+                            gold:Number(payload?.gold || 0) + goldGained,
+                            stones:(Array.isArray(payload?.stones) ? payload.stones : []).map(entry =>
+                                String(entry?.id) === String(stone.id)
+                                    ? { ...entry, quantity:Math.max(0, Number(entry?.quantity || 0) - soldQuantity) }
+                                    : entry)
+                        };
+                        try { payload = await gameApiRequest('/api/game/flint'); }
+                        catch (refreshError) { console.warn('La venta se completó, pero no se pudo refrescar Flint.', refreshError); }
+                        render();
+                        setStatus(formatCasinoText(tr('stoneSellerSold'), {
+                            count:soldQuantity.toLocaleString('pt-BR'),
+                            item:result?.item || stone.name || 'Stone',
+                            gold:goldGained.toLocaleString('pt-BR')
+                        }), 'success');
+                    } catch (error) {
+                        setStatus(`${tr('stoneSellerSellError')} ${error.message || ''}`.trim(), 'error');
+                    } finally {
+                        busyItemId = null;
+                        refreshButton.disabled = false;
+                        if (!closed) render();
+                    }
+                });
+                updateQuantity(1);
+                list.appendChild(card);
+            });
+        };
+        const load = async () => {
+            if (busyItemId != null) return;
+            refreshButton.disabled = true;
+            setStatus(tr('stoneSellerLoading'));
+            try {
+                payload = await gameApiRequest('/api/game/flint');
+                render();
+                setStatus('');
+            } catch (error) {
+                payload = null;
+                list.innerHTML = `<div class="script-flint-empty">${escapeHTML(tr('stoneSellerLoadError'))}</div>`;
+                setStatus(`${tr('stoneSellerLoadError')} ${error.message || ''}`.trim(), 'error');
+            } finally {
+                refreshButton.disabled = false;
+            }
+        };
+
+        backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+        windowElement.addEventListener('click', event => event.stopPropagation());
+        backdrop.querySelector('.script-flint-close').addEventListener('click', close);
+        refreshButton.addEventListener('click', load);
+        document.addEventListener('keydown', onKeydown);
+        applyBetterWindowScales();
+        await load();
+    }
+
+    const SCRIPT_DOCK_ICONS = Object.freeze({
+        shops: '<span class="script-dock-emoji" aria-hidden="true">🛍️</span>',
+        depot: '<svg class="script-shop-icon-depot" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 7 9-4 9 4-9 4-9-4Z"></path><path d="M3 7v10l9 4 9-4V7M12 11v10M7.5 5l9 4"></path></svg>'
+    });
+    const SCRIPT_SHOP_MENU_ICONS = Object.freeze({
+        market: '<svg class="script-shop-icon-market" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Z"></path><path d="M4 9v11h16V9M4 9h16M8 20v-5h3v5"></path><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"></path></svg>',
+        casino: '<svg class="script-shop-icon-casino" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"></rect><circle cx="8.5" cy="8.5" r="1.2"></circle><circle cx="15.5" cy="15.5" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle></svg>',
+
+        balls: '<img class="script-shop-sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" alt="Poké Ball">',
+        sell: '<img class="script-shop-sprite" src="/assets/pokeitems/36639.png" alt="">',
+        stones: '<img class="script-shop-sprite" src="/assets/items/fire_stone.gif" alt="Fire Stone">'
+    });
+
+    function getScriptMenuEntrySprite(entry) {
+        const raw = entry?.iconUrl || entry?.imageUrl || entry?.icon || entry?.image || entry?.sprite || entry?.img || '';
+        return raw ? normalizeGameItemIcon(String(raw)) : '';
+    }
+
+    function uniqueScriptMenuSprites(entries) {
+        return [...new Set(entries.filter(Boolean))];
+    }
+
+    async function loadScriptShopMenuSpritePools() {
+        const [ballResult, flintResult] = await Promise.allSettled([
+            loadBallCatalog(),
+            gameApiRequest('/api/game/flint')
+        ]);
+        await Promise.resolve(itemDataLoadPromise).catch(() => null);
+        const knownItems = [...new Set(globalItemApiData.values())];
+        const ballsPayload = ballResult.status === 'fulfilled' ? ballResult.value : {};
+        const ballEntries = Array.isArray(ballsPayload?.catalog) ? ballsPayload.catalog
+            : Array.isArray(ballsPayload?.catalog?.balls) ? ballsPayload.catalog.balls
+                : Array.isArray(ballsPayload?.balls) ? ballsPayload.balls
+                    : Array.isArray(ballsPayload) ? ballsPayload : [];
+        const flintStones = flintResult.status === 'fulfilled' && Array.isArray(flintResult.value?.stones)
+            ? flintResult.value.stones : [];
+        const catalogStones = knownItems.filter(entry => {
+            const category = String(entry?.category || entry?.kind || entry?.type || '').toLowerCase();
+            const name = String(entry?.name || entry?.title || '').toLowerCase();
+            return category === 'stone' || /\bstone\b/.test(name);
+        });
+        const preferredSellItem = knownItems.find(entry => /bag of pollen/i.test(String(entry?.name || entry?.title || '')))
+            || knownItems.find(entry => getScriptMenuEntrySprite(entry) && String(entry?.category || '').toLowerCase() !== 'stone');
+        return {
+            balls: uniqueScriptMenuSprites([
+                ...ballEntries.map(getScriptMenuEntrySprite),
+                '/assets/items/cute_ball.png'
+            ]),
+            stones: uniqueScriptMenuSprites([
+                ...flintStones.map(getScriptMenuEntrySprite),
+                ...catalogStones.map(getScriptMenuEntrySprite),
+                '/assets/items/fire_stone.gif'
+            ]),
+            sell: uniqueScriptMenuSprites([
+                getPokemonIconUrl(25),
+                getScriptMenuEntrySprite(preferredSellItem),
+                '/assets/items/bag_of_pollen.png'
+            ])
+        };
+    }
+
+    function animateScriptMenuSprite(menu, role, pool) {
+        const host = menu.querySelector(`[data-menu-sprite="${role}"]`);
+        const image = host?.querySelector('.script-menu-sprite-img');
+        if (!image || !pool.length) return;
+        let currentIndex = Math.max(0, pool.indexOf(image.getAttribute('src')));
+        const schedule = () => window.setTimeout(rotate, 2450);
+        const rotate = () => {
+            if (!image.isConnected || menu.hidden) return;
+            let nextIndex = Math.floor(Math.random() * pool.length);
+            if (pool.length > 1 && nextIndex === currentIndex) nextIndex = (nextIndex + 1) % pool.length;
+            currentIndex = nextIndex;
+            image.classList.add('is-switching');
+            window.setTimeout(() => {
+                if (!image.isConnected || menu.hidden) return;
+                image.src = pool[currentIndex];
+                requestAnimationFrame(() => image.classList.remove('is-switching'));
+                schedule();
+            }, 160);
+        };
+        schedule();
+    }
+
+    async function startScriptShopMenuSprites(menu) {
+        const runId = Symbol('script-shop-menu-sprites');
+        menu._scriptSpriteRunId = runId;
+        const pools = await loadScriptShopMenuSpritePools();
+        if (!menu.isConnected || menu.hidden || menu._scriptSpriteRunId !== runId) return;
+        animateScriptMenuSprite(menu, 'balls', pools.balls);
+        animateScriptMenuSprite(menu, 'stones', pools.stones);
+        animateScriptMenuSprite(menu, 'sell', pools.sell);
+    }
+
+    const SCRIPT_SHOP_BAR_POSITION = 'script_shop_bar_position_v1';
+    /* Filas que se pintan de golpe en las listas del Mercado. Antes eran 100 y cada
+       fila arrastra sprite, input de cantidad y boton: el panel abria con ~2.400 nodos
+       y se caia a 30 fps. 30 mantiene el panel por debajo de ~800 nodos; el boton
+       "cargar mas" sigue presente, solo que en pasos de 30 en vez de 100. */
+    const SCRIPT_MARKET_PAGE_SIZE = 30;
+    const SCRIPT_SHOP_BAR_COLLAPSED = 'script_shop_bar_collapsed_v1';
+    const SCRIPT_SHOP_BAR_HIDDEN = 'script_shop_bar_hidden_v1';
+    const SCRIPT_SHOP_BAR_SCALE = 'script_shop_bar_scale_v1';
+    const SCRIPT_SHOP_BAR_MIN_SCALE = 0.7;
+    const SCRIPT_SHOP_BAR_MAX_SCALE = 1.6;
+    const SCRIPT_SHOP_BAR_SCALE_STEP = 0.1;
+    const SCRIPT_DAILY_KILL_OVERLAY_POSITION = 'script_daily_kill_overlay_pos_v1';
+    let dailyKillMonitorTimer = null;
+    let dailyKillRefreshInFlight = false;
+    let dailyKillStateRevision = 0;
+    let latestDailyKillState = null;
+    let dailyKillMonitorElement = null;
+
+    function ensureDailyKillMonitorElement() {
+        let monitor = document.getElementById('script-daily-kill-monitor');
+        if (monitor) {
+            dailyKillMonitorElement = monitor;
+            return monitor;
+        }
+        if (!document.getElementById('script-daily-kill-monitor-style')) {
+            const style = document.createElement('style');
+            style.id = 'script-daily-kill-monitor-style';
+            style.textContent = `
+                #script-daily-kill-monitor{box-sizing:border-box;position:fixed;z-index:2147483001;display:flex;align-items:center;gap:6px;width:max-content;min-width:0;max-width:min(420px,calc(100vw - 16px));padding:5px 8px;border:1px solid #334c68;border-radius:9px;background:linear-gradient(145deg,#17283d,#122238);box-shadow:0 5px 14px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.035);color:#f2f6fb;font-family:var(--piw-game-font,Inter,"Segoe UI",Arial,sans-serif);user-select:none;touch-action:none}
+                #script-daily-kill-monitor .script-daily-kill-monitor-grip{width:18px;height:22px;flex-basis:18px;font-size:14px}
+                #script-daily-kill-monitor .script-daily-kill-monitor-content{gap:1px}
+                #script-daily-kill-monitor .script-daily-kill-monitor-title{font-size:9px}
+                #script-daily-kill-monitor .script-daily-kill-monitor-progress{font-size:9px}
+                #script-daily-kill-monitor[hidden]{display:none!important}
+                #script-daily-kill-monitor.is-claimable{border-color:#66ee91;box-shadow:0 0 0 2px #66ee9144,0 8px 22px rgba(0,0,0,.35),inset 0 1px rgba(255,255,255,.035)}
+                .script-daily-kill-monitor-grip{display:grid;place-items:center;width:24px;height:28px;flex:0 0 24px;border:0;border-radius:6px;background:transparent;color:#90a3b9;font-size:16px;cursor:grab;touch-action:none}.script-daily-kill-monitor-grip:active{cursor:grabbing}
+                .script-daily-kill-monitor-content{min-width:0;display:grid;gap:3px}.script-daily-kill-monitor-title{overflow:hidden;color:#f2f6fb;font-size:10px;font-weight:800;text-overflow:ellipsis;white-space:nowrap}.script-daily-kill-monitor-progress{color:#90a3b9;font-size:10px;white-space:nowrap}.is-claimable .script-daily-kill-monitor-progress{color:#66ee91;font-weight:800}
+            `;
+            document.head.appendChild(style);
+        }
+        monitor = document.createElement('div');
+        monitor.id = 'script-daily-kill-monitor';
+        monitor.hidden = true;
+        monitor.innerHTML = '<button class="script-daily-kill-monitor-grip" type="button" aria-label="Mover contador de Daily Kill">⠿</button><div class="script-daily-kill-monitor-content"><b class="script-daily-kill-monitor-title">Daily Kill</b><span class="script-daily-kill-monitor-progress">—</span></div>';
+        document.body.appendChild(monitor);
+        const grip = monitor.querySelector('.script-daily-kill-monitor-grip');
+        const title = monitor.querySelector('.script-daily-kill-monitor-title');
+        const progress = monitor.querySelector('.script-daily-kill-monitor-progress');
+        const saved = (() => { try { return JSON.parse(localStorage.getItem(SCRIPT_DAILY_KILL_OVERLAY_POSITION) || 'null'); } catch (_) { return null; } })();
+        const place = (left, top) => {
+            const width = monitor.offsetWidth || 240;
+            const height = monitor.offsetHeight || 48;
+            const maxLeft = Math.max(8, window.innerWidth - width - 8);
+            const maxTop = Math.max(8, window.innerHeight - height - 8);
+            const nextLeft = Math.max(8, Math.min(maxLeft, Number(left)));
+            const nextTop = Math.max(8, Math.min(maxTop, Number(top)));
+            monitor.style.left = `${nextLeft}px`;
+            monitor.style.top = `${nextTop}px`;
+            monitor.style.right = 'auto';
+            monitor.style.bottom = 'auto';
+        };
+        place(Number.isFinite(saved?.left) ? saved.left : Math.max(8, window.innerWidth - 270), Number.isFinite(saved?.top) ? saved.top : 112);
+        let drag = null;
+        const move = event => {
+            if (!drag) return;
+            place(drag.left + event.clientX - drag.x, drag.top + event.clientY - drag.y);
+        };
+        const stop = event => {
+            if (!drag) return;
+            drag = null;
+            try { localStorage.setItem(SCRIPT_DAILY_KILL_OVERLAY_POSITION, JSON.stringify({ left: parseFloat(monitor.style.left), top: parseFloat(monitor.style.top) })); } catch (_) {}
+            event.preventDefault();
+        };
+        grip.addEventListener('pointerdown', event => {
+            if (event.button !== 0) return;
+            const rect = monitor.getBoundingClientRect();
+            drag = { x:event.clientX, y:event.clientY, left:rect.left, top:rect.top };
+            grip.setPointerCapture?.(event.pointerId);
+            event.preventDefault();
+        });
+        window.addEventListener('pointermove', move, { passive:true });
+        window.addEventListener('pointerup', stop, { passive:false });
+        window.addEventListener('pointercancel', stop, { passive:false });
+        window.addEventListener('resize', () => place(parseFloat(monitor.style.left) || 8, parseFloat(monitor.style.top) || 8));
+        dailyKillMonitorElement = monitor;
+        return monitor;
+    }
+
+    function updateDailyKillMonitor() {
+        const monitor = ensureDailyKillMonitorElement();
+        const button = document.getElementById('script-shop-bar-daily-kill');
+        const selected = latestDailyKillState?.pickedIdx >= 0 ? latestDailyKillState.options?.[latestDailyKillState.pickedIdx] || null : null;
+        const claimable = Boolean(selected?.done && !latestDailyKillState?.claimed);
+        button?.classList.toggle('is-active', Boolean(selected && !latestDailyKillState?.claimed));
+        button?.classList.toggle('is-claimable', claimable);
+        if (!selected || latestDailyKillState?.claimed) {
+            monitor.hidden = true;
+            return;
+        }
+        monitor.hidden = false;
+        monitor.classList.toggle('is-claimable', claimable);
+        const title = monitor.querySelector('.script-daily-kill-monitor-title');
+        const progress = monitor.querySelector('.script-daily-kill-monitor-progress');
+        const remaining = Math.max(0, Number(selected.qty || 0) - Number(selected.have || 0));
+        if (title) title.textContent = `Daily Kill · ${selected.name || 'Misión'}`;
+        if (progress) progress.textContent = claimable ? '¡Recompensa lista!' : `${Number(selected.have || 0).toLocaleString()} / ${Number(selected.qty || 0).toLocaleString()} · Faltan ${remaining.toLocaleString()} kills`;
+    }
+
+    function startDailyKillMonitor() {
+        if (dailyKillMonitorTimer) return;
+        ensureDailyKillMonitorElement();
+        const refresh = async () => {
+            if (dailyKillRefreshInFlight) return;
+            dailyKillRefreshInFlight = true;
+            const revisionAtStart = dailyKillStateRevision;
+            try {
+                const nextState = await gameApiRequest('/api/game/daily-kill');
+                if (revisionAtStart === dailyKillStateRevision) {
+                    latestDailyKillState = nextState;
+                    updateDailyKillMonitor();
+                }
+            } catch (_) {
+            } finally {
+                dailyKillRefreshInFlight = false;
+            }
+        };
+        void refresh();
+        dailyKillMonitorTimer = setInterval(refresh, 5000);
+    }
+
+    function injectIndependentShopBar() {
+        if (!document.body || document.getElementById('script-independent-shop-bar')) return;
+        if (!document.getElementById('script-independent-shop-bar-style')) {
+            const style = document.createElement('style');
+            style.id = 'script-independent-shop-bar-style';
+            style.textContent = '#script-independent-shop-bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:2147483000;display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin:2px;padding:2px 4px;background:transparent;border:none;border-radius:8px;pointer-events:none;overscroll-behavior:contain}#script-independent-shop-bar .script-shop-bar-list{flex:1 1 auto;min-height:0;width:max-content;display:flex;flex-direction:column;align-items:flex-start;gap:2px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;pointer-events:none}#script-independent-shop-bar .script-shop-bar-list::-webkit-scrollbar{width:4px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px}#script-independent-shop-bar .script-shop-bar-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.3);border-radius:2px}#script-independent-shop-bar .script-shop-bar-grip{flex:0 0 36px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:18px;border:none;background:transparent;cursor:pointer;pointer-events:auto}#script-independent-shop-bar .script-shop-bar-toggle{flex:0 0 36px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:18px;border:none;background:transparent;cursor:pointer;pointer-events:auto}#script-independent-shop-bar .script-shop-bar-arrow{flex:0 0 30px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;border:none;background:transparent;cursor:pointer;pointer-events:auto}#script-independent-shop-bar .script-shop-bar-button{flex:0 0 auto;width:36px;height:36px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;cursor:pointer;transition:width .15s cubic-bezier(.4,0,.2,1);pointer-events:auto;position:relative}#script-independent-shop-bar .script-shop-bar-button .script-shop-bar-icon{flex:0 0 24px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:14px}#script-independent-shop-bar .script-shop-bar-button .script-shop-bar-label{position:absolute;left:44px;top:50%;transform:translateY(-50%);opacity:0;color:#f1f5f9;font-size:10px;font-weight:600;letter-spacing:.02em;white-space:nowrap;transition:opacity .12s ease;pointer-events:none;white-space:nowrap}#script-independent-shop-bar .script-shop-bar-button:hover .script-shop-bar-label{opacity:1}#script-independent-shop-bar .script-shop-bar-button:hover{width:calc(var(--hover-width,140px) + 44px)}/* Colores sólidos por tipo de botón con fondo */#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-market{background:#1e293b;color:#e2e8f0}#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-casino{background:#371f26;color:#f87171}#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-stones{background:#371f26;color:#f6ad55}#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-balls{background:#1e293b;color:#63b3ed}#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-items{background:#1e293b;color:#86efac}#script-independent-shop-bar .script-shop-bar-button#script-shop-bar-depot{background:#1e293b;color:#a5f3fc}@media(max-width:600px){#script-independent-shop-bar{gap:2px;padding:1px}#script-independent-shop-bar .script-shop-bar-button{width:28px;height:28px}#script-independent-shop-bar .script-shop-bar-icon{flex-basis:24px;width:24px;height:24px;font-size:12px}#script-independent-shop-bar .script-shop-bar-label{display:none!important}}'
+            document.head.appendChild(style);
+            const polishStyle = document.createElement('style');
+            polishStyle.id = 'script-independent-shop-bar-polish-style';
+            polishStyle.textContent = `
+                #script-independent-shop-bar {
+                    --shop-scale: 1;
+                    --shop-button-size: 36px;
+                    --shop-icon-size: 18px;
+                    --shop-control-size: 26px;
+                    --shop-control-font-size: 13px;
+                    --shop-control-offset: -34px;
+                    --shop-control-gap: 4px;
+                    --shop-border-radius: 8px;
+                    --shop-control-radius: 6px;
+                    --shop-label-size: 10px;
+                    max-height: calc(100vh - 28px);
+                 }
+                 #script-independent-shop-bar .script-shop-bar-top-controls { display:flex;align-items:center;gap:var(--shop-control-gap);pointer-events:none; }
+                 #script-independent-shop-bar .script-shop-bar-top-controls > * { pointer-events:auto; }
+                 #script-independent-shop-bar .script-shop-bar-visibility {
+                     flex:0 0 var(--shop-button-size);width:var(--shop-button-size);height:var(--shop-button-size);display:grid;place-items:center;padding:0;border:1px solid #3d5875;border-radius:var(--shop-border-radius);background:linear-gradient(145deg,rgba(39,65,92,.78),rgba(17,34,54,.7));color:#dbeafe;box-shadow:inset 0 1px rgba(255,255,255,.16),0 6px 16px rgba(0,0,0,.2);backdrop-filter:blur(10px) saturate(135%);-webkit-backdrop-filter:blur(10px) saturate(135%);cursor:pointer;pointer-events:auto;transition:background .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease;
+                 }
+                 #script-independent-shop-bar .script-shop-bar-visibility:hover { color:#fff;background:linear-gradient(145deg,rgba(55,91,126,.9),rgba(25,49,75,.82));box-shadow:inset 0 1px rgba(255,255,255,.24),0 8px 20px rgba(0,0,0,.28); }
+                 #script-independent-shop-bar .script-shop-bar-visibility:active { transform:scale(.94); }
+                 #script-independent-shop-bar .script-shop-bar-eye { width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
+                 #script-independent-shop-bar .script-shop-bar-eye-closed { display:none; }
+                 #script-independent-shop-bar.is-hidden { pointer-events:none; }
+                                  #script-independent-shop-bar.is-hidden .script-shop-bar-side-controls,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-grip,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-arrow,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-toggle,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-scale-controls,
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-top-controls { display:none!important; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-list { display:grid!important; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-list > * { display:none!important; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-list > .script-shop-bar-visibility { display:grid!important;grid-column:1;grid-row:2; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-visibility { display:grid!important;pointer-events:auto; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-eye-open { display:none; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-eye-closed { display:block; }
+                    
+                #script-independent-shop-bar .script-shop-bar-list {
+                    display:grid!important;
+                    grid-template-columns:repeat(2,var(--shop-button-size))!important;
+                    align-content:start;
+                    gap:var(--shop-control-gap)!important;
+                    width:max-content!important;
+                    overflow:visible;
+                }
+                #script-independent-shop-bar .script-shop-bar-button {
+                    justify-content: flex-start;
+                    align-items: center;
+                    width: var(--shop-button-size);
+                    min-width: var(--shop-button-size);
+                    height: var(--shop-button-size);
+                    min-height: var(--shop-button-size);
+                    padding: 0;
+                    overflow: visible;
+                    position: relative;
+                    z-index: 1;
+                    border: 0;
+                    border-radius: var(--shop-border-radius);
+                    color: #f8fafc;
+                    background: var(--shop-button-color, #273449);
+                     background: linear-gradient(145deg,color-mix(in srgb,var(--shop-button-color,#273449) 68%,transparent),color-mix(in srgb,var(--shop-button-color,#273449) 32%,transparent));
+                     border:1px solid color-mix(in srgb,var(--shop-button-color,#273449) 70%,#4b637e);
+                     box-shadow:inset 0 1px rgba(255,255,255,.18),0 6px 16px rgba(0,0,0,.2);
+                     backdrop-filter:blur(10px) saturate(135%);
+                     -webkit-backdrop-filter:blur(10px) saturate(135%);
+                    transition:
+                        width .42s cubic-bezier(.22, 1, .36, 1),
+                        height .28s cubic-bezier(.22, 1, .36, 1),
+                        min-width .28s cubic-bezier(.22, 1, .36, 1),
+                        min-height .28s cubic-bezier(.22, 1, .36, 1),
+                        border-radius .28s ease,
+                        background-color .28s ease,
+                         background .2s ease,
+                         box-shadow .2s ease,
+                        filter .28s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-button:hover,
+                #script-independent-shop-bar .script-shop-bar-button:focus-visible {
+                    width: var(--shop-button-size);
+                    min-width: var(--shop-button-size);
+                    outline: 0;
+                    background: linear-gradient(145deg,color-mix(in srgb,var(--shop-button-color,#273449) 84%,transparent),color-mix(in srgb,var(--shop-button-color,#273449) 46%,transparent));
+                     box-shadow:inset 0 1px rgba(255,255,255,.26),0 8px 20px rgba(0,0,0,.28),0 0 0 1px color-mix(in srgb,var(--shop-button-color,#273449) 30%,transparent);
+                     filter: brightness(1.08) saturate(1.08);
+                }
+                #script-independent-shop-bar .script-shop-bar-button .script-shop-bar-icon {
+                    position: relative;
+                    z-index: 2;
+                    flex: 0 0 var(--shop-button-size);
+                    width: var(--shop-button-size);
+                    height: var(--shop-button-size);
+                    display: grid;
+                    place-items: center;
+                    font-size: var(--shop-icon-size);
+                    font-family: system-ui, sans-serif;
+                    line-height: 1;
+                    transform: none;
+                }
+                #script-independent-shop-bar .script-shop-bar-icon > svg { width:22px;height:22px;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round; }
+                 #script-independent-shop-bar .script-shop-bar-icon img,
+                #script-independent-shop-bar .script-shop-bar-icon .script-menu-sprite-rotator,
+                #script-independent-shop-bar .script-shop-bar-icon .script-dock-sprite,
+                #script-independent-shop-bar .script-shop-bar-icon .script-menu-sprite-img {
+                    width: var(--shop-icon-size);
+                    height: var(--shop-icon-size);
+                    max-width: var(--shop-icon-size);
+                    max-height: var(--shop-icon-size);
+                    object-fit: contain;
+                    image-rendering: pixelated;
+                    filter: none;
+                }
+                #script-independent-shop-bar .script-shop-bar-button .script-shop-bar-label {
+                    position:absolute;
+                    left:calc(100% + 6px);
+                    top:50%;
+                    z-index:20;
+                    min-width:max-content;
+                    max-width:220px;
+                    margin:0;
+                    padding:5px 8px;
+                    overflow:hidden;
+                    border:1px solid #3c5874;
+                    border-radius:6px;
+                    background:rgba(8,19,33,.96);
+                    box-shadow:0 5px 14px rgba(0,0,0,.35);
+                    color:#f8fafc;
+                    font-family:system-ui,sans-serif;
+                    font-size:var(--shop-label-size);
+                    font-weight:700;
+                    line-height:1;
+                    letter-spacing:.02em;
+                    text-align:left;
+                    text-overflow:ellipsis;
+                    white-space:nowrap;
+                    opacity:0;
+                    pointer-events:none;
+                    transform:translateY(-50%) translateX(-4px);
+                    transition:opacity .16s ease,transform .16s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-button:hover,
+                #script-independent-shop-bar .script-shop-bar-button:focus-visible { z-index:25; }
+                #script-independent-shop-bar .script-shop-bar-button:nth-child(odd) .script-shop-bar-label {
+                     left: calc(200% + 10px);
+                 }
+                 #script-independent-shop-bar .script-shop-bar-button:hover .script-shop-bar-label,
+                #script-independent-shop-bar .script-shop-bar-button:focus-visible .script-shop-bar-label {
+                    opacity:1;
+                    transform:translateY(-50%) translateX(0);
+                }
+                #script-independent-shop-bar #script-shop-bar-market { --shop-button-color: #24496b; }
+
+                #script-independent-shop-bar #script-shop-bar-casino { --shop-button-color: #54263f; }
+                #script-independent-shop-bar #script-shop-bar-held-machine { --shop-button-color: #294b58; }
+                 #script-independent-shop-bar #script-shop-bar-held-market { --shop-button-color: #356d63; }
+                #script-independent-shop-bar #script-shop-bar-daily-kill { --shop-button-color: #294f5e; }
+                #script-independent-shop-bar #script-shop-bar-daily-kill.is-active { box-shadow:0 0 0 2px #55bfff66; }
+                #script-independent-shop-bar #script-shop-bar-daily-kill.is-claimable { --shop-button-color: #24543b; box-shadow:0 0 0 2px #66ee91,0 0 14px #66ee9166; }
+                #script-independent-shop-bar #script-shop-bar-stones { --shop-button-color: #63391c; }
+                #script-independent-shop-bar #script-shop-bar-balls { --shop-button-color: #164b57; }
+                #script-independent-shop-bar #script-shop-bar-items { --shop-button-color: #24553d; }
+                #script-independent-shop-bar #script-shop-bar-depot { --shop-button-color: #51431c; }
+                #script-independent-shop-bar .market-alert-dock-badge,
+                #script-independent-shop-bar .market-sale-dock-badge {
+                    right: 2px !important;
+                    top: 2px !important;
+                    z-index: 5;
+                }
+                #script-independent-shop-bar .script-shop-bar-side-controls {
+                    position: absolute;
+                    left: auto;
+                    right: var(--shop-control-offset);
+                    top: 50%;
+                    z-index: 3;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: var(--shop-control-gap);
+                    transform: translateY(-50%);
+                    pointer-events: auto;
+                }
+                #script-independent-shop-bar .script-shop-bar-scale-controls {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: var(--shop-control-gap);
+                    pointer-events: auto;
+                    transition: opacity .16s ease, visibility .16s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-grip {
+                    flex: 0 0 var(--shop-control-size);
+                    width: var(--shop-control-size);
+                    height: var(--shop-control-size);
+                    display: grid;
+                    place-items: center;
+                    padding: 0;
+                    border: 1px solid #526174;
+                    border-radius: var(--shop-control-radius);
+                    background: #111b28;
+                    color: #dbeafe;
+                    font-size: var(--shop-control-font-size);
+                    line-height: 1;
+                    cursor: grab;
+                    pointer-events: auto;
+                    transition: background-color .2s ease, color .2s ease, transform .2s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-grip:hover { background: #1b2a3a; color: #fff; }
+                #script-independent-shop-bar .script-shop-bar-grip:active { cursor: grabbing; transform: scale(.94); }
+                #script-independent-shop-bar:has(.script-shop-bar-button:hover) .script-shop-bar-scale-controls,
+                #script-independent-shop-bar:has(.script-shop-bar-button:focus-visible) .script-shop-bar-scale-controls {
+                    opacity: 0;
+                    visibility: hidden;
+                    pointer-events: none;
+                }
+                #script-independent-shop-bar .script-shop-bar-scale-button {
+                    width: var(--shop-control-size);
+                    height: var(--shop-control-size);
+                    display: grid;
+                    place-items: center;
+                    padding: 0;
+                    border: 1px solid #526174;
+                    border-radius: var(--shop-control-radius);
+                    background: #111b28;
+                    color: #dbeafe;
+                    font-family: system-ui, sans-serif;
+                    font-size: var(--shop-control-font-size);
+                    font-weight: 800;
+                    line-height: 1;
+                    cursor: pointer;
+                    transition: background-color .2s ease, color .2s ease, transform .2s ease;
+                }
+                #script-independent-shop-bar .script-shop-bar-scale-button:hover {
+                    background: #26364d;
+                    color: #ffffff;
+                }
+                #script-independent-shop-bar .script-shop-bar-scale-button:active { transform: scale(.92); }
+                #script-independent-shop-bar .script-shop-bar-scale-button:disabled {
+                    opacity: .35;
+                    cursor: default;
+                    transform: none;
+                }
+                @media (max-width: 600px) {
+                    #script-independent-shop-bar .script-shop-bar-button:hover,
+                    #script-independent-shop-bar .script-shop-bar-button:focus-visible {
+                        width: var(--shop-button-size);
+                    }
+                    #script-independent-shop-bar .script-shop-bar-button .script-shop-bar-label {
+                        display: none !important;
+                    }
+                }
+            `;
+            document.head.appendChild(polishStyle);
+        }
+        const bar = document.createElement('div');
+        bar.id = 'script-independent-shop-bar';
+        bar.setAttribute('aria-label', 'Accesos de tiendas');
+        const scaleControls = document.createElement('div');
+        scaleControls.className = 'script-shop-bar-scale-controls';
+        scaleControls.setAttribute('aria-label', 'Tamaño de la botonera');
+        const scaleUpButton = document.createElement('button');
+        scaleUpButton.type = 'button';
+        scaleUpButton.className = 'script-shop-bar-scale-button script-shop-bar-scale-up';
+        scaleUpButton.textContent = '+';
+        const scaleDownButton = document.createElement('button');
+        scaleDownButton.type = 'button';
+        scaleDownButton.className = 'script-shop-bar-scale-button script-shop-bar-scale-down';
+        scaleDownButton.textContent = '−';
+        scaleControls.append(scaleUpButton, scaleDownButton);
+        const normalizeShopBarScale = value => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return 1;
+            return Math.round(Math.max(SCRIPT_SHOP_BAR_MIN_SCALE, Math.min(SCRIPT_SHOP_BAR_MAX_SCALE, numeric)) * 10) / 10;
+        };
+        let savedShopBarScale = 1;
+        try { savedShopBarScale = normalizeShopBarScale(localStorage.getItem(SCRIPT_SHOP_BAR_SCALE) || '1'); } catch (_) {}
+        let currentShopBarScale = savedShopBarScale;
+        let baseShopListWidth = null;
+        const applyShopBarScale = (value, persist = true) => {
+            currentShopBarScale = normalizeShopBarScale(value);
+            const scaledPixels = value => `${Math.round(value * currentShopBarScale * 10) / 10}px`;
+            bar.style.setProperty('--shop-scale', currentShopBarScale.toFixed(1));
+            bar.style.setProperty('--shop-button-size', scaledPixels(36));
+            bar.style.setProperty('--shop-icon-size', scaledPixels(18));
+            bar.style.setProperty('--shop-control-size', scaledPixels(26));
+            bar.style.setProperty('--shop-control-font-size', scaledPixels(13));
+            bar.style.setProperty('--shop-control-offset', scaledPixels(-34));
+            bar.style.setProperty('--shop-control-gap', scaledPixels(4));
+            bar.style.setProperty('--shop-border-radius', scaledPixels(8));
+            bar.style.setProperty('--shop-control-radius', scaledPixels(6));
+            bar.style.setProperty('--shop-label-size', scaledPixels(10));
+            bar.querySelectorAll('.script-shop-bar-button').forEach(button => {
+                const baseHoverWidth = Number.parseFloat(button.style.getPropertyValue('--hover-width-base'));
+                if (Number.isFinite(baseHoverWidth)) {
+                    button.style.setProperty('--hover-width', scaledPixels(baseHoverWidth));
+                }
+            });
+            if (Number.isFinite(baseShopListWidth)) list.style.width = scaledPixels(baseShopListWidth);
+            const percent = Math.round(currentShopBarScale * 100);
+            scaleUpButton.disabled = currentShopBarScale >= SCRIPT_SHOP_BAR_MAX_SCALE;
+            scaleDownButton.disabled = currentShopBarScale <= SCRIPT_SHOP_BAR_MIN_SCALE;
+            scaleUpButton.title = `Aumentar tamaño de la botonera (${percent}%)`;
+            scaleDownButton.title = `Reducir tamaño de la botonera (${percent}%)`;
+            scaleUpButton.setAttribute('aria-label', scaleUpButton.title);
+            scaleDownButton.setAttribute('aria-label', scaleDownButton.title);
+            if (persist) {
+                try { localStorage.setItem(SCRIPT_SHOP_BAR_SCALE, currentShopBarScale.toFixed(1)); } catch (_) {}
+            }
+            requestAnimationFrame(() => {
+                if (typeof updateArrows === 'function') updateArrows();
+            });
+        };
+        scaleUpButton.addEventListener('click', () => applyShopBarScale(currentShopBarScale + SCRIPT_SHOP_BAR_SCALE_STEP));
+        scaleDownButton.addEventListener('click', () => applyShopBarScale(currentShopBarScale - SCRIPT_SHOP_BAR_SCALE_STEP));
+        applyShopBarScale(savedShopBarScale, false);
+        const sideControls = document.createElement('div');
+        sideControls.className = 'script-shop-bar-side-controls';
+        sideControls.setAttribute('aria-label', 'Controles de la botonera');
+        sideControls.appendChild(scaleControls);
+        bar.appendChild(sideControls);
+        const savedPosition = (() => { try { return JSON.parse(localStorage.getItem(SCRIPT_SHOP_BAR_POSITION) || 'null'); } catch (_) { return null; } })();
+        if (Number.isFinite(savedPosition?.left) && Number.isFinite(savedPosition?.top)) {
+            bar.style.left = savedPosition.left + 'px';
+            bar.style.top = savedPosition.top + 'px';
+            bar.style.bottom = 'auto';
+            bar.style.transform = 'none';
+        }
+        const grip = document.createElement('button');
+        grip.type = 'button';
+        grip.className = 'script-shop-bar-grip';
+        grip.textContent = '⠿';
+        grip.title = 'Arrastrar botonera';
+        grip.setAttribute('aria-label', 'Arrastrar botonera');
+        sideControls.appendChild(grip);
+        // Flechas de desplazamiento: solo son visibles cuando la ventana es tan
+        // pequeña que la lista de botones no cabe completa dentro de ella.
+        const list = document.createElement('div');
+        list.className = 'script-shop-bar-list';
+        const makeArrow = (direction) => {
+            const arrow = document.createElement('button');
+            arrow.type = 'button';
+            arrow.className = 'script-shop-bar-arrow';
+            arrow.style.display = 'none';
+            arrow.innerHTML = '<span aria-hidden="true">' + (direction === 'up' ? '▲' : '▼') + '</span>';
+            const label = direction === 'up' ? 'Subir botones' : 'Bajar botones';
+            arrow.title = label;
+            arrow.setAttribute('aria-label', label);
+            arrow.addEventListener('click', () => list.scrollBy({ top: direction === 'up' ? -80 : 80, behavior: 'smooth' }));
+            return arrow;
+        };
+        const upArrow = makeArrow('up');
+        const downArrow = makeArrow('down');
+        bar.appendChild(upArrow);
+        bar.appendChild(list);
+        bar.appendChild(downArrow);
+        function updateArrows() {
+            const overflow = list.scrollHeight > list.clientHeight + 1;
+            const atTop = list.scrollTop <= 0.5;
+            const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 0.5;
+            upArrow.style.display = overflow && !atTop ? 'flex' : 'none';
+            downArrow.style.display = overflow && !atBottom ? 'flex' : 'none';
+        }
+        list.addEventListener('scroll', updateArrows, { passive: true });
+        window.addEventListener('resize', updateArrows);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.id = 'script-shop-bar-toggle';
+        toggle.className = 'script-shop-bar-toggle';
+        toggle.innerHTML = '<span class="script-shop-bar-chevron" aria-hidden="true">▾</span>';
+        const setBarCollapsed = (collapsed) => {
+            bar.classList.toggle('is-collapsed', collapsed);
+            toggle.setAttribute('aria-expanded', String(!collapsed));
+            const label = tr(collapsed ? 'shopBarShow' : 'shopBarHide');
+            toggle.title = label;
+            toggle.setAttribute('aria-label', label);
+            updateArrows();
+        };
+        try { setBarCollapsed(localStorage.getItem(SCRIPT_SHOP_BAR_COLLAPSED) === '1'); } catch (_) { setBarCollapsed(false); }
+        toggle.addEventListener('click', () => {
+            const collapsed = !bar.classList.contains('is-collapsed');
+            setBarCollapsed(collapsed);
+            try { localStorage.setItem(SCRIPT_SHOP_BAR_COLLAPSED, collapsed ? '1' : '0'); } catch (_) {}
+        });
+        bar.appendChild(toggle);
+        const visibilityButton = document.createElement('button');
+        visibilityButton.type = 'button';
+        visibilityButton.id = 'script-shop-bar-visibility';
+        visibilityButton.className = 'script-shop-bar-visibility';
+        visibilityButton.setAttribute('aria-pressed', 'false');
+        visibilityButton.innerHTML = '<svg class="script-shop-bar-eye" viewBox="0 0 24 24" aria-hidden="true"><g class="script-shop-bar-eye-open"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.6"></circle></g><g class="script-shop-bar-eye-closed"><path d="M3 3l18 18"></path><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.5 0 10 6 10 6a17.3 17.3 0 0 1-3.1 3.7"></path><path d="M6.3 6.3C3.8 8.1 2 12 2 12s3.5 6 10 6c1.1 0 2.1-.2 3-.5"></path><path d="M9.7 9.7a3.2 3.2 0 0 0 4.6 4.6"></path></g></svg>';
+        function setBarHidden(hidden) {
+            const isHidden = Boolean(hidden);
+            bar.classList.toggle('is-hidden', isHidden);
+            visibilityButton.setAttribute('aria-pressed', String(isHidden));
+            const label = tr(isHidden ? 'shopBarShow' : 'shopBarHide');
+            visibilityButton.title = label;
+            visibilityButton.setAttribute('aria-label', label);
+            updateArrows();
+        }
+        try { setBarHidden(localStorage.getItem(SCRIPT_SHOP_BAR_HIDDEN) === '1'); } catch (_) { setBarHidden(false); }
+        visibilityButton.addEventListener('click', () => {
+            const hidden = !bar.classList.contains('is-hidden');
+            setBarHidden(hidden);
+            try { localStorage.setItem(SCRIPT_SHOP_BAR_HIDDEN, hidden ? '1' : '0'); } catch (_) {}
+        });
+
+        // Las etiquetas se muestran como tooltip para mantener el grid compacto.
+        const addButton = (id, label, icon, handler) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.id = id;
+            button.className = 'script-shop-bar-button';
+            // El nombre ya aparece con el efecto hover (igual que las categorías
+            // del Mercado Global); el tooltip nativo se quitó para no duplicarlo.
+            button.setAttribute('aria-label', label);
+            button.innerHTML = '<span class="script-shop-bar-icon">' + icon + '</span><span class="script-shop-bar-label">' + escapeHTML(label) + '</span>';
+            button.addEventListener('click', handler);
+            list.appendChild(button);
+        };
+        addButton('script-shop-bar-market', tr('globalMarket'), SCRIPT_SHOP_MENU_ICONS.market, showGlobalMarketWindow);
+        list.appendChild(visibilityButton);
+
+        addButton('script-shop-bar-casino', tr('casino'), SCRIPT_SHOP_MENU_ICONS.casino, showPortableCasino);
+        addButton('script-shop-bar-held-machine', 'Held Machine', '<img src="/assets/items/devoted_token.png" alt="">', showHeldMachineWindow);
+         addButton('script-shop-bar-held-market', 'Held Machine · Mercado', '<img src="/assets/items/devoted_token.png" alt="">', () => showGlobalMarketWindow({ initialCategory: HELD_MACHINE_MARKET_CATEGORY }));
+        addButton('script-shop-bar-daily-kill', '⚔️ Daily Kill', '<img src="/assets/topmenu/pokeprey.png" alt="">', showDailyKillPanel);
+        addButton('script-shop-bar-stones', tr('stoneSeller'), SCRIPT_SHOP_MENU_ICONS.stones, showPortableStoneSeller);
+        addButton('script-shop-bar-balls', tr('ballShop'), SCRIPT_SHOP_MENU_ICONS.balls, showPortableBallShop);
+        addButton('script-shop-bar-items', tr('sellItems'), SCRIPT_SHOP_MENU_ICONS.sell, showHuntSellWindow);
+        // Botón «Vender Pokémon» oculto de la botonera (solo visual, a petición del usuario).
+        // La función sigue disponible: la ventana «Vender objetos y Pokémon» abre esta misma ventana.
+        // Descomenta la siguiente línea si quieres restaurar el botón en la botonera.
+        // addButton('script-shop-bar-pokemon', tr('sellNpcPokemon'), '<img src="' + escapeHTML(getPokemonIconUrl(25) || '') + '" alt="">', showHuntPokemonSellWindow);
+        // El Depósito ya no vive como botón individual en el dock: forma parte de la botonera.
+        addButton('script-shop-bar-depot', tr('depotAccess'), SCRIPT_DOCK_ICONS.depot, showPortableDepot);
+        // La botonera usa dos columnas; el ancho se reserva para mantenerlas compactas.
+        baseShopListWidth = 2 * 36 + 4;
+        list.style.width = (baseShopListWidth * currentShopBarScale) + 'px';
+        document.body.appendChild(bar);
+        requestAnimationFrame(updateArrows);
+        startDailyKillMonitor();
+        updateMarketAlertBadges();
+        updateMarketSaleDockBadge();
+        grip.addEventListener('pointerdown', event => {
+            if (event.button !== 0) return;
+            const rect = bar.getBoundingClientRect();
+            const startX = event.clientX, startY = event.clientY, originLeft = rect.left, originTop = rect.top;
+            grip.setPointerCapture?.(event.pointerId);
+            bar.style.left = rect.left + 'px';
+            bar.style.top = rect.top + 'px';
+            bar.style.bottom = 'auto';
+            bar.style.transform = 'none';
+            const move = moveEvent => {
+                if (moveEvent.pointerId !== event.pointerId) return;
+                const controlsSafeSpace = 34 * currentShopBarScale + 8;
+                const maxLeft = Math.max(8, window.innerWidth - bar.offsetWidth - controlsSafeSpace);
+                const left = Math.max(8, Math.min(maxLeft, originLeft + moveEvent.clientX - startX));
+                const top = Math.max(0, Math.min(window.innerHeight - bar.offsetHeight, originTop + moveEvent.clientY - startY));
+                bar.style.left = left + 'px';
+                bar.style.top = top + 'px';
+            };
+            const up = upEvent => {
+                if (upEvent.pointerId !== event.pointerId) return;
+                document.removeEventListener('pointermove', move);
+                document.removeEventListener('pointerup', up);
+                try { localStorage.setItem(SCRIPT_SHOP_BAR_POSITION, JSON.stringify({ left: parseFloat(bar.style.left), top: parseFloat(bar.style.top) })); } catch (_) {}
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', up);
+            event.preventDefault();
+        });
+    }
     function injectQuickTPButton() {
-        const gameDock = document.querySelector('nav.game-dock');
+        const gameDock = document.querySelector('nav.game-dock, [data-guide="game-dock"], .game-dock');
         if (gameDock) {
+            document.querySelectorAll('.script-shop-wrap, .script-shop-menu, #dock-btn-shops').forEach(element => element.remove());
+            injectIndependentShopBar();
             const mapBtn = gameDock.querySelector('button[data-guide="dock-map"]');
             let tpBtn = document.getElementById('dock-btn-quick-tp');
             if (!tpBtn) {
@@ -5393,114 +11443,32 @@
                 tpBtn.className = 'dock-btn';
                 tpBtn.type = 'button';
                 tpBtn.addEventListener('click', handleNavQuickTP);
-                if (mapBtn && mapBtn.nextSibling) gameDock.insertBefore(tpBtn, mapBtn.nextSibling);
+                /* El boton del mapa cuelga de .dock-scroll, no del dock: insertar
+                   usando su nextSibling contra gameDock lanzaba NotFoundError y el
+                   boton de Teleport Rapido nunca llegaba a existir. Se inserta en
+                   el contenedor real del boton del mapa. */
+                if (mapBtn && mapBtn.parentElement) mapBtn.parentElement.insertBefore(tpBtn, mapBtn.nextSibling);
                 else gameDock.appendChild(tpBtn);
             }
             updateNavButtonAppearance();
 
-            if (!document.getElementById('dock-btn-shops')) {
-                const shopWrap = document.createElement('span');
-                shopWrap.className = 'dock-poke-wrap script-shop-wrap';
-                const shopsButton = document.createElement('button');
-                shopsButton.id = 'dock-btn-shops';
-                shopsButton.className = 'dock-btn';
-                shopsButton.type = 'button';
-                shopsButton.textContent = '🏪';
-                shopsButton.title = tr('shops');
-
-                const menu = document.createElement('div');
-                menu.className = 'poke-menu script-shop-menu';
-                menu.setAttribute('role', 'menu');
-                menu.hidden = true;
-                const positionShopMenu = () => {
-                    if (menu.hidden) return;
-                    const phoneMode = window.matchMedia('(max-width: 720px)').matches;
-                    if (!phoneMode) {
-                        if (menu.parentElement !== shopWrap) shopWrap.appendChild(menu);
-                        menu.style.removeProperty('position');
-                        menu.style.removeProperty('left');
-                        menu.style.removeProperty('right');
-                        menu.style.removeProperty('top');
-                        menu.style.removeProperty('bottom');
-                        menu.style.removeProperty('width');
-                        menu.style.removeProperty('max-height');
-                        menu.style.removeProperty('z-index');
-                        return;
-                    }
-                    if (menu.parentElement !== document.body) document.body.appendChild(menu);
-                    const rect = shopsButton.getBoundingClientRect();
-                    const margin = 6;
-                    const width = Math.min(260, Math.max(180, window.innerWidth - margin * 2));
-                    const left = Math.max(margin, Math.min(window.innerWidth - width - margin, rect.left + rect.width / 2 - width / 2));
-                    const spaceAbove = Math.max(0, rect.top - margin * 2);
-                    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - margin * 2);
-                    const desiredHeight = Math.min(360, Math.max(120, menu.scrollHeight));
-                    const openBelow = spaceBelow >= desiredHeight || spaceBelow >= spaceAbove;
-                    menu.style.position = 'fixed';
-                    menu.style.left = `${left}px`;
-                    menu.style.right = 'auto';
-                    menu.style.width = `${width}px`;
-                    menu.style.zIndex = '2147483646';
-                    menu.style.maxHeight = `${Math.max(90, (openBelow ? spaceBelow : spaceAbove) - margin)}px`;
-                    if (openBelow) {
-                        menu.style.top = `${Math.min(window.innerHeight - margin, rect.bottom + margin)}px`;
-                        menu.style.bottom = 'auto';
-                    } else {
-                        menu.style.top = 'auto';
-                        menu.style.bottom = `${Math.min(window.innerHeight - margin, window.innerHeight - rect.top + margin)}px`;
-                    }
-                };
-                const rebuildMenu = () => {
-                    menu.innerHTML = '';
-                    const addItem = (label, handler) => {
-                        const item = document.createElement('button');
-                        item.type = 'button';
-                        item.className = 'poke-menu-item';
-                        item.setAttribute('role', 'menuitem');
-                        item.textContent = label;
-                        item.addEventListener('click', event => {
-                            event.stopPropagation();
-                            menu.hidden = true;
-                            handler();
-                        });
-                        menu.appendChild(item);
-                    };
-                    addItem(`🌐 ${tr('globalMarket')}`, showGlobalMarketWindow);
-                    addItem(`🔴 ${tr('ballShop')}`, showPortableBallShop);
-                    addItem(`💰 ${tr('sellItems')}`, showHuntSellWindow);
-                };
-                shopsButton.addEventListener('click', event => {
-                    event.stopPropagation();
-                    const willOpen = menu.hidden;
-                    document.querySelectorAll('.script-shop-menu').forEach(other => { other.hidden = true; });
-                    if (willOpen) {
-                        rebuildMenu();
-                        menu.hidden = false;
-                        requestAnimationFrame(positionShopMenu);
-                        return;
-                    }
-                    menu.hidden = !willOpen;
-                });
-                document.addEventListener('click', event => {
-                    if (!shopWrap.contains(event.target) && !menu.contains(event.target)) menu.hidden = true;
-                });
-                window.addEventListener('resize', positionShopMenu, { passive: true });
-                window.addEventListener('scroll', positionShopMenu, { passive: true });
-                shopWrap.append(shopsButton, menu);
-                tpBtn.after(shopWrap);
-            }
-
-            if (!document.getElementById('dock-btn-depot')) {
-                const depotButton = document.createElement('button');
-                depotButton.id = 'dock-btn-depot';
-                depotButton.className = 'dock-btn';
-                depotButton.type = 'button';
-                depotButton.textContent = '📦';
-                depotButton.title = 'Depot';
-                depotButton.addEventListener('click', showPortableDepot);
-                document.getElementById('dock-btn-shops')?.closest('.script-shop-wrap')?.after(depotButton);
-            }
+            // El acceso a Depósito ahora vive dentro de la botonera desplegable.
             updateMarketSaleDockBadge();
+        }
+    }
+
+    let dockRetryScheduled = false;
+    function injectDockButtonsWhenReady(attempt = 0) {
+        injectQuickTPButton();
+        const dockReady = Boolean(document.querySelector('#dock-btn-quick-tp, #dock-btn-shops'));
+        // El juego monta el dock de forma asíncrona tras el login. Reintentamos
+        // durante un intervalo corto solo hasta que los accesos estén presentes.
+        if (!dockReady && attempt < 30 && !dockRetryScheduled) {
+            dockRetryScheduled = true;
+            setTimeout(() => {
+                dockRetryScheduled = false;
+                injectDockButtonsWhenReady(attempt + 1);
+            }, 200);
         }
     }
 
@@ -5698,20 +11666,21 @@
                         </div>
                     </div>
 
-                    <div class="cfg-row script-mods-wide" style="background: #14222d; padding: 10px; border-radius: 6px; border: 1px solid #1a2d3a; margin: 0; display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;">
-                        <div class="cfg-label" style="flex:1;">
+                    <div class="cfg-row script-mods-wide script-sell-confirm" style="background: #14222d; padding: 12px; border-radius: 8px; border: 1px solid #1a2d3a; margin: 0;">
+                        <div class="cfg-label script-sell-head">
                             <b style="color: #e2e8f0; font-size: 14px;">${tr('sellConfirmation')}</b>
                             <span style="color: #a0aec0; font-size: 11px; display:block; margin-top:4px;">${tr('protectedItems')}</span>
                         </div>
                         
-                        <div id="cfg-sell-selected-list" style="flex:1; display:flex; flex-direction:column; gap:4px; max-height:120px; overflow-y:auto; padding-right:4px;">
-                        </div>
-                        
-                        <div style="flex:1; position:relative; min-width:180px;">
-                            <button type="button" id="cfg-sell-dd-btn" style="width:100%; text-align:left; background:#0c161f; color:#e2e8f0; border:1px solid #273f52; padding:6px 10px; border-radius:4px; cursor:pointer;">${tr('selectItems')}</button>
-                            <div id="cfg-sell-dropdown-menu" style="display:none; position:absolute; top:100%; right:0; width:100%; background:#14222d; border:1px solid #273f52; border-radius:4px; z-index:10; box-shadow:0 4px 6px rgba(0,0,0,0.3); margin-top:4px; padding:6px; box-sizing:border-box;">
-                                <input type="text" id="cfg-sell-search" placeholder="${tr('search')}" style="width:100%; box-sizing:border-box; background:#0c161f; color:#e2e8f0; border:1px solid #273f52; border-radius:4px; padding:6px; outline:none; margin-bottom:6px;">
-                                <div id="cfg-sell-dropdown" style="max-height:150px; overflow-y:auto;">
+                        <div class="script-sell-columns">
+                            <div class="script-sell-col">
+                                <div id="cfg-sell-selected-list" class="script-sell-selected"></div>
+                            </div>
+                            <div class="script-sell-col script-sell-picker">
+                                <input type="text" id="cfg-sell-search" class="script-sell-search" placeholder="${tr('search')}" autocomplete="off" spellcheck="false">
+                                <button type="button" id="cfg-sell-dd-btn" class="script-sell-btn">${tr('selectItems')}</button>
+                                <div id="cfg-sell-dropdown-menu" class="script-sell-menu">
+                                    <div id="cfg-sell-dropdown" class="script-sell-results"></div>
                                 </div>
                             </div>
                         </div>
@@ -5895,29 +11864,83 @@
             const searchInputEl = modsContent.querySelector('#cfg-sell-search');
             const dropdownEl = modsContent.querySelector('#cfg-sell-dropdown');
 
-            ddBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                ddMenu.style.display = ddMenu.style.display === 'none' ? 'block' : 'none';
-                if (ddMenu.style.display === 'block') {
-                    renderDropdown();
-                    searchInputEl.focus();
+            /* El catalogo puede seguir cargando: se espera, pero con tope. Un await
+               sin limite dejaria el desplegable vacio para siempre si la promesa
+               nunca llegara a resolverse. */
+            const waitForItemCatalog = (ms = 4000) => {
+                if (typeof itemDataLoadPromise === 'undefined' || !itemDataLoadPromise) return Promise.resolve();
+                return Promise.race([
+                    Promise.resolve(itemDataLoadPromise).catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, ms))
+                ]);
+            };
+
+            /* El menu se abre hacia abajo y, cuando el campo esta cerca del borde
+               inferior, los resultados caian por debajo del pliegue: se escribia y
+               no se veia nada. Aqui se voltea hacia arriba cuando no cabe abajo. */
+            const positionSellDropdown = () => {
+                if (ddMenu.style.display !== 'block') return;
+                const anchor = ddMenu.parentElement;
+                if (!anchor) return;
+                const rect = anchor.getBoundingClientRect();
+                const below = window.innerHeight - rect.bottom;
+                const above = rect.top;
+                const openUp = below < 260 && above > below;
+                ddMenu.style.top = openUp ? 'auto' : '100%';
+                ddMenu.style.bottom = openUp ? '100%' : 'auto';
+                const room = Math.max(150, (openUp ? above : below) - 16);
+                ddMenu.style.maxHeight = room + 'px';
+                if (typeof dropdownEl !== 'undefined' && dropdownEl) {
+                    dropdownEl.style.maxHeight = Math.max(90, room - 62) + 'px';
                 }
+            };
+
+            /* El campo de busqueda ahora esta siempre visible (fuera del menu), asi que
+               escribir o enfocar abre los resultados por su cuenta: no hace falta
+               pulsar antes el boton. El boton solo alterna la lista completa. */
+            const openSellDropdown = async () => {
+                await waitForItemCatalog();
+                renderDropdown();
+                ddMenu.style.display = 'block';
+                positionSellDropdown();
+            };
+            const closeSellDropdown = () => {
+                ddMenu.style.display = 'none';
+            };
+            const isSellDropdownOpen = () => ddMenu.style.display === 'block';
+
+            ddBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (isSellDropdownOpen()) { closeSellDropdown(); return; }
+                await openSellDropdown();
+                searchInputEl.focus();
             });
+            searchInputEl.addEventListener('focus', (e) => { e.stopPropagation(); if (!isSellDropdownOpen()) openSellDropdown(); });
+            searchInputEl.addEventListener('click', (e) => e.stopPropagation());
+            searchInputEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+            window.addEventListener('resize', positionSellDropdown, { passive:true });
+            window.addEventListener('scroll', positionSellDropdown, { passive:true, capture:true });
 
             if (configDropdownCloseHandler) {
                 document.removeEventListener('click', configDropdownCloseHandler);
             }
             configDropdownCloseHandler = (e) => {
-                if (!ddMenu.contains(e.target) && e.target !== ddBtn) {
-                    ddMenu.style.display = 'none';
-                }
+                if (ddMenu.contains(e.target) || ddBtn.contains(e.target) || searchInputEl.contains(e.target)) return;
+                closeSellDropdown();
             };
             document.addEventListener('click', configDropdownCloseHandler);
 
             let uniqueItems = null;
+            let uniqueItemsSourceSize = -1;
 
             function initUniqueItems() {
-                if (uniqueItems) return;
+                /* La cache se invalidaba por mera existencia, y un array vacio es
+                   truthy: si el panel se abria antes de que terminara items.json,
+                   uniqueItems se congelaba en [] y el buscador jamas mostraba nada.
+                   Ahora se invalida cuando el catalogo de origen cambia de tamano. */
+                const sourceSize = globalItemApiData.size;
+                if (uniqueItems && uniqueItemsSourceSize === sourceSize) return;
+                uniqueItemsSourceSize = sourceSize;
                 uniqueItems = [];
                 const seenNames = new Set();
                 for (const item of globalItemApiData.values()) {
@@ -5961,12 +11984,44 @@
                 }
             }
 
+            /* Resalta la parte que coincide con la busqueda sin usar innerHTML sobre
+               texto del catalogo: se parte el nombre y se envuelve solo el tramo. */
+            function buildItemResultLabel(itemName, query) {
+                const span = document.createElement('span');
+                span.style.color = '#e2e8f0';
+                if (!query) { span.textContent = itemName; return span; }
+                const index = itemName.toLowerCase().indexOf(query);
+                if (index < 0) { span.textContent = itemName; return span; }
+                span.appendChild(document.createTextNode(itemName.slice(0, index)));
+                const mark = document.createElement('b');
+                mark.textContent = itemName.slice(index, index + query.length);
+                mark.style.color = '#ffd778';
+                span.appendChild(mark);
+                span.appendChild(document.createTextNode(itemName.slice(index + query.length)));
+                return span;
+            }
+
+            let itemResultRows = [];
+            let itemResultIndex = -1;
+
+            function moveItemResult(step) {
+                if (!itemResultRows.length) return;
+                itemResultIndex = (itemResultIndex + step + itemResultRows.length) % itemResultRows.length;
+                itemResultRows.forEach((row, index) => {
+                    row.style.background = index === itemResultIndex ? '#1d3047' : 'transparent';
+                });
+                const active = itemResultRows[itemResultIndex];
+                if (active) active.scrollIntoView({ block: 'nearest' });
+            }
+
             function renderDropdown() {
                 initUniqueItems();
                 const query = searchInputEl.value.toLowerCase().trim();
                 const selectedItems = getSellConfirmItems();
                 dropdownEl.innerHTML = '';
-                
+                itemResultRows = [];
+                itemResultIndex = -1;
+
                 const filtered = query ? uniqueItems.filter(item => (item.name || item.title).toLowerCase().includes(query)) : uniqueItems;
                 const toShow = filtered.slice(0, 50);
 
@@ -5974,21 +12029,25 @@
                     dropdownEl.innerHTML = `<div style="padding:6px; color:#718096; font-size:12px; text-align:center;">${tr('noItemFound')}</div>`;
                     return;
                 }
-                
+
+                const counter = document.createElement('div');
+                counter.className = 'cfg-sell-result-count';
+                counter.textContent = query ? `${toShow.length} / ${filtered.length}` : `${uniqueItems.length}`;
+                dropdownEl.appendChild(counter);
+
                 toShow.forEach(item => {
                     const itemName = item.name || item.title;
                     const isChecked = selectedItems.includes(itemName);
                     const iconHTML = resolveItemIcon(itemName);
-                    
+
                     const row = document.createElement('label');
-                    row.style = 'display:flex; align-items:center; padding:6px 10px; cursor:pointer; border-bottom:1px solid #1a2d3a; font-size:13px;';
-                    row.addEventListener('mouseenter', () => row.style.background = '#14222d');
-                    row.addEventListener('mouseleave', () => row.style.background = 'transparent');
-                    
+                    row.className = 'cfg-sell-result-row';
+                    row.style = 'display:flex; align-items:center; gap:8px; padding:6px 10px; cursor:pointer; border-bottom:1px solid #1a2d3a; font-size:13px;';
+
                     const cb = document.createElement('input');
                     cb.type = 'checkbox';
                     cb.checked = isChecked;
-                    cb.style.marginRight = '8px';
+                    cb.style.marginRight = '0';
                     cb.addEventListener('change', () => {
                         let current = getSellConfirmItems();
                         if (cb.checked && !current.includes(itemName)) current.push(itemName);
@@ -5996,19 +12055,31 @@
                         setSellConfirmItems(current);
                         renderSelected();
                     });
-                    
-                    const nameSpan = document.createElement('span');
-                    nameSpan.textContent = itemName;
-                    nameSpan.style.color = '#e2e8f0';
-                    
+
                     row.appendChild(cb);
                     row.insertAdjacentHTML('beforeend', iconHTML);
-                    row.appendChild(nameSpan);
+                    row.appendChild(buildItemResultLabel(itemName, query));
                     dropdownEl.appendChild(row);
+                    itemResultRows.push(row);
                 });
             }
 
-            searchInputEl.addEventListener('input', renderDropdown);
+            searchInputEl.addEventListener('input', () => {
+                renderDropdown();
+                positionSellDropdown();
+            });
+            searchInputEl.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveItemResult(1); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); moveItemResult(-1); }
+                else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const row = itemResultRows[itemResultIndex < 0 ? 0 : itemResultIndex];
+                    if (row) row.click();
+                } else if (e.key === 'Escape') {
+                    ddMenu.style.display = 'none';
+                    ddBtn.focus();
+                }
+            });
             renderSelected();
         }
 
@@ -6769,6 +12840,32 @@
         });
     }
 
+    /* Aviso ligero: recuadro pequeno arriba a la derecha que se cierra solo a los
+       2 segundos. Se usa para informar de viajes automaticos sin interrumpir con
+       una ventana modal que obliga a pulsar OK. */
+    function showScriptToast(message, { isError = false, isOk = false, durationMs = 2000 } = {}) {
+        if (!document.body) return;
+        let stack = document.querySelector('.script-toast-stack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.className = 'script-toast-stack';
+            document.body.appendChild(stack);
+        }
+        /* No mas de 3 a la vez: se limpa el mas antiguo si se acumulan. */
+        while (stack.children.length >= 3) stack.firstElementChild?.remove();
+        const toast = document.createElement('div');
+        toast.className = `script-toast${isError ? ' is-error' : ''}${isOk ? ' is-ok' : ''}`;
+        toast.setAttribute('role', 'status');
+        toast.innerHTML = `<span class="script-toast-ico">${isError ? '⚠️' : isOk ? '✅' : 'ℹ️'}</span><span class="script-toast-msg">${escapeHTML(message)}</span>`;
+        stack.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('is-in'));
+        setTimeout(() => {
+            toast.classList.remove('is-in');
+            toast.classList.add('is-out');
+            setTimeout(() => toast.remove(), 220);
+        }, Math.max(600, durationMs));
+    }
+
     function showScriptNotice(message, { title = 'Aviso', isError = false } = {}) {
         return new Promise(resolve => {
             const backdrop = document.createElement('div');
@@ -6883,7 +12980,12 @@
         `;
         document.body.appendChild(backdrop);
 
-        const close = () => backdrop.remove();
+        const close = () => {
+            backdrop.remove();
+            /* Cerrar el Depot cierra el ciclo: si salimos de una hunt para venir
+               aqui, se vuelve a ella. Sin await para no congelar el cierre. */
+            returnToPendingFamilyHunt();
+        };
         backdrop.querySelector('.portable-depot-close').addEventListener('click', close);
         backdrop.addEventListener('click', event => {
             if (event.target === backdrop) close();
@@ -6898,6 +13000,8 @@
         let inventory = [];
         let familyData = null;
         let busy = false;
+        const depotItemFilters = { name:'', category:'all' };
+        const familyItemFilters = { name:'', category:'all' };
         const depotPokeFilters = { name: '', ivMin: '', ivMax: '', qualityMin: '', qualityMax: '' };
         const familyPokeFilters = { name: '', ivMin: '', ivMax: '', qualityMin: '', qualityMax: '' };
         const depotQualityTiers = [
@@ -6934,12 +13038,34 @@
             try {
                 latestFamily = null;
                 const previousFamilyData = familyData;
-                const response = await requestGameEvent('family', { type: 'family-action', ...payload }, null, 5000);
-                if (!response?.family) {
-                    familyData = previousFamilyData;
-                    throw new Error(response?.message || response?.error || 'O servidor recusou esta transferência.');
+                /* Sem socket aberto, requestGameEvent resolvia [] na hora e a
+                   transferencia nunca saia: o jogador so via a recusa generica.
+                   Aqui esperamos a reconexao e dizemos o que realmente acontece. */
+                if (!await waitForGameSocket(6000)) {
+                    throw new Error('Sem conexão com o servidor. O Depósito familiar fica indisponível enquanto o jogo reconecta — tente de novo em alguns segundos.');
                 }
-                familyData = response;
+                const errorMark = lastGameError?.at || 0;
+                const response = await requestGameEvent('family', { type: 'family-action', ...payload }, null, 5000);
+                if (response?.family) {
+                    familyData = response;
+                } else {
+                    const serverError = (lastGameError && lastGameError.at > errorMark) ? lastGameError.message : null;
+                    if (serverError) {
+                        familyData = previousFamilyData;
+                        throw new Error(serverError);
+                    }
+                    /* Sem erro e sem resposta: a acao pode ter entrado e a resposta
+                       ter-se perdido. Nao repetimos (poderia duplicar); confirmamos
+                       contra o estado real antes de avisar. */
+                    const recheck = await requestFreshGameEvent('family', 'family-get', { timeoutMs: 3000, attempts: 1 }).catch(() => null);
+                    if (recheck?.family) {
+                        familyData = recheck;
+                        render();
+                        return;
+                    }
+                    familyData = previousFamilyData;
+                    throw new Error('O servidor não respondeu a tempo. Vuelve a intentarlo en unos segundos.');
+                }
                 if (payload.action === 'item') {
                     latestInventory = null;
                     inventory = await requestFreshGameEvent('inventory', 'inv-get', { timeoutMs: 2500, attempts: 2 });
@@ -7251,6 +13377,60 @@
             return true;
         });
 
+        const getDepotItemCategory = entry => {
+            const itemId = entry?.itemId ?? entry?.id;
+            const entryName = String(entry?.name || entry?.itemName || '').trim();
+            const itemData = globalItemApiData.get(String(itemId))
+                || globalItemApiData.get(entryName.toLocaleLowerCase().trim())
+                || {};
+            const descriptors = [
+                entry?.category, entry?.kind, entry?.type, entry?.itemKind,
+                itemData?.category, itemData?.kind, itemData?.type, itemData?.itemKind
+            ].filter(Boolean).join(' ').toLocaleLowerCase();
+            const resolvedName = String(entryName || itemData?.name || itemData?.title || '').toLocaleLowerCase();
+            return /(^|[\s_-])stones?($|[\s_-])/.test(descriptors) || /\bstone\b/.test(resolvedName)
+                ? 'stones' : 'misc';
+        };
+        const filterDepotItems = (entries, filters) => {
+            const query = String(filters?.name || '').trim().toLocaleLowerCase();
+            const category = filters?.category || 'all';
+            return (Array.isArray(entries) ? entries : []).filter(entry => {
+                const itemId = entry?.itemId ?? entry?.id;
+                const itemData = globalItemApiData.get(String(itemId)) || {};
+                const name = String(entry?.name || entry?.itemName || itemData?.name || itemData?.title || `Item #${itemId ?? ''}`).toLocaleLowerCase();
+                if (query && !name.includes(query)) return false;
+                return category === 'all' || getDepotItemCategory(entry) === category;
+            });
+        };
+        const makeDepotItemFilters = filters => {
+            const controls = document.createElement('div');
+            controls.className = 'portable-depot-item-filters';
+            controls.setAttribute('aria-label', tr('depotItemFilters'));
+            controls.innerHTML = `
+                <label class="portable-depot-item-search-wrap">
+                    <span aria-hidden="true">⌕</span>
+                    <input class="portable-depot-item-search" type="search" value="${escapeHTML(filters.name)}" placeholder="${escapeHTML(tr('depotSearchItems'))}" autocomplete="off">
+                </label>
+                <div class="portable-depot-item-categories" role="group" aria-label="${escapeHTML(tr('depotItemFilters'))}">
+                    <button class="portable-depot-item-category${filters.category === 'all' ? ' on' : ''}" data-item-category="all" type="button">▦ ${escapeHTML(tr('depotFilterAll'))}</button>
+                    <button class="portable-depot-item-category${filters.category === 'stones' ? ' on' : ''}" data-item-category="stones" type="button">◆ ${escapeHTML(tr('depotFilterStones'))}</button>
+                    <button class="portable-depot-item-category${filters.category === 'misc' ? ' on' : ''}" data-item-category="misc" type="button">📦 ${escapeHTML(tr('depotFilterMisc'))}</button>
+                </div>`;
+            const search = controls.querySelector('.portable-depot-item-search');
+            search.addEventListener('input', () => {
+                filters.name = search.value;
+                render();
+                const replacement = content.querySelector('.portable-depot-item-search');
+                replacement?.focus();
+                replacement?.setSelectionRange?.(replacement.value.length, replacement.value.length);
+            });
+            controls.querySelectorAll('[data-item-category]').forEach(button => button.addEventListener('click', () => {
+                filters.category = button.dataset.itemCategory || 'all';
+                render();
+            }));
+            return controls;
+        };
+
         const makeDepotPokemonFilters = filters => {
             const controls = document.createElement('div');
             const visibleTiers = filters === familyPokeFilters ? familyVisibleTiers : depotVisibleTiers;
@@ -7416,11 +13596,12 @@
             const previousColumnScrolls = Array.from(content.querySelectorAll('section')).map(section => section.scrollTop);
             content.innerHTML = '';
             content.style.cssText = '';
-            content.classList.toggle('has-filters', activeTab === 'pokemon' || activeTab === 'family-pokemon');
+            content.classList.toggle('has-filters', ['items', 'pokemon', 'family-items', 'family-pokemon'].includes(activeTab));
             content.classList.toggle('has-family-header', activeTab === 'family-items' || activeTab === 'family-pokemon');
             if (activeTab === 'items') {
-                const bag = depotData?.inventory || [];
-                const stored = depotData?.depot || [];
+                const bag = filterDepotItems(depotData?.inventory || [], depotItemFilters);
+                const stored = filterDepotItems(depotData?.depot || [], depotItemFilters);
+                content.appendChild(makeDepotItemFilters(depotItemFilters));
                 content.append(
                     makeColumn(tr('depotBag'), bag, 'store', 'A mochila está vazia.'),
                     makeColumn(`Depot · ${depotData?.depot?.length || 0}/${depotData?.maxSlots || 0}`, stored, 'withdraw', 'O Depot está vazio.')
@@ -7442,9 +13623,12 @@
                     name: inventoryById.get(String(item.itemId))?.name || globalItemApiData.get(String(item.itemId))?.name || `Item #${item.itemId}`,
                     icon: inventoryById.get(String(item.itemId))?.icon || globalItemApiData.get(String(item.itemId))?.icon || ''
                 }));
+                const familyBag = filterDepotItems(bag, familyItemFilters);
+                const familyStored = filterDepotItems(familyData?.depot?.items || [], familyItemFilters);
+                content.appendChild(makeDepotItemFilters(familyItemFilters));
                 content.append(
-                    makeFamilyColumn(tr('depotYourBag'), bag, 'deposit', 'item'),
-                    makeFamilyColumn(tr('depotFamily'), familyData?.depot?.items || [], 'withdraw', 'item')
+                    makeFamilyColumn(tr('depotYourBag'), familyBag, 'deposit', 'item'),
+                    makeFamilyColumn(tr('depotFamily'), familyStored, 'withdraw', 'item')
                 );
             } else if (activeTab === 'family-pokemon') {
                 renderFamilyHeader();
@@ -7465,8 +13649,16 @@
         };
 
         const bindTab = tab => {
-            tab.addEventListener('click', () => {
-                activeTab = tab.dataset.tab;
+            tab.addEventListener('click', async () => {
+                const target = tab.dataset.tab;
+                /* Las pestanas familiares requieren salir de la hunt: el servidor
+                   no las permite durante una caza. Se viaja antes de cambiar de
+                   pestana para que el Depot ya cargue los datos del servidor. */
+                if (target === 'family-items' || target === 'family-pokemon') {
+                    const ready = await leaveHuntForFamilyDepot();
+                    if (!ready) return;
+                }
+                activeTab = target;
                 backdrop.querySelectorAll('.depot-tab').forEach(button => button.classList.toggle('active', button === tab));
                 render();
             });
@@ -7516,8 +13708,7 @@
                 socketReady ? requestFreshGameEvent('family', 'family-get', { timeoutMs: 3500, attempts: 2 }) : Promise.resolve(null)
             ]);
             configureFamilyTabs();
-            status.remove();
-            if (!socketReady) {
+            status.remove();            if (!socketReady) {
                 showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), 'WebSocket indisponível: Pokémon e família não puderam ser carregados.', true);
             }
             render();
@@ -7533,14 +13724,24 @@
 
         const backdrop = document.createElement('div');
         backdrop.className = 'sell-confirm-backdrop hunt-sell-backdrop';
+        const botanyLabelsEnabled = isSellBotanyLabelsEnabled();
         backdrop.innerHTML = `
-            <div class="sell-confirm-modal script-npc-sell-window script-npc-item-sell" style="width:min(900px,96vw);max-width:96vw;">
+            <div class="sell-confirm-modal script-npc-sell-window script-npc-item-sell${botanyLabelsEnabled ? ' botany-labels-on' : ''}" style="width:min(900px,96vw);max-width:96vw;">
                 <div class="sell-confirm-title">
                     <span>🛒 ${tr('sellNpcItems')}</span>
                     <button class="hunt-pokemon-open mk-bulk-btn" type="button" style="margin-left:auto;">🐾 Pokémon</button>
                     <button class="hunt-sell-close" type="button" style="margin-left:auto;background:none;border:0;color:#a0aec0;font-size:20px;cursor:pointer;">×</button>
                 </div>
                 <div class="sell-confirm-body">
+                    <div class="hunt-sell-tools">
+                        <span class="hunt-sell-tools-copy"><b>Protección de materiales</b><small>Identifica y protege materiales usados por las recetas de Botánica.</small></span>
+                        <label class="hunt-sell-botany-toggle" title="Mostrar en cada objeto las Berries que utilizan este material">
+                            <input class="hunt-sell-botany-checkbox" type="checkbox"${botanyLabelsEnabled ? ' checked' : ''}><span class="hunt-sell-switch" aria-hidden="true"></span><span>🌿 Ver Botánica</span>
+                        </label>
+                        <label class="hunt-sell-botany-toggle hunt-sell-botany-lock-toggle" title="Bloquear o desbloquear juntos todos los materiales de Botánica disponibles">
+                            <input class="hunt-sell-botany-lock-checkbox" type="checkbox" disabled><span class="hunt-sell-switch" aria-hidden="true"></span><span>🔒 Bloquear materiales</span><b class="hunt-sell-botany-count">0/0</b>
+                        </label>
+                    </div>
                     <div class="hunt-sell-status" style="color:#a0aec0;text-align:center;padding:16px;">Carregando inventário...</div>
                     <div class="hunt-sell-list"></div>
                     <div class="sell-confirm-footer" style="display:none;">
@@ -7566,6 +13767,14 @@
         const footer = backdrop.querySelector('.sell-confirm-footer');
         const submit = backdrop.querySelector('.hunt-sell-submit');
         const selectAll = backdrop.querySelector('.hunt-sell-select-all');
+        const sellModal = backdrop.querySelector('.script-npc-item-sell');
+        const botanyCheckbox = backdrop.querySelector('.hunt-sell-botany-checkbox');
+        const botanyLockCheckbox = backdrop.querySelector('.hunt-sell-botany-lock-checkbox');
+        const botanyCount = backdrop.querySelector('.hunt-sell-botany-count');
+        botanyCheckbox.addEventListener('change', () => {
+            sellModal.classList.toggle('botany-labels-on', botanyCheckbox.checked);
+            try { localStorage.setItem(STORAGE_SELL_BOTANY_LABELS, String(botanyCheckbox.checked)); } catch (_) {}
+        });
 
         try {
             const [inventory, shopData] = await Promise.all([
@@ -7599,6 +13808,7 @@
 
             status.style.display = 'none';
             footer.style.display = 'flex';
+            let syncBotanyBulkLockState = () => {};
             inventory.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
                 const protectionReason = getItemProtectionReason(item);
                 const isProtected = Boolean(protectionReason);
@@ -7614,7 +13824,11 @@
 
                 const name = document.createElement('span');
                 name.className = 'hunt-sell-info';
-                name.innerHTML = `<small class="hunt-sell-kind">OBJETO NPC</small><b class="hunt-sell-name">${escapeHTML(item.name)}</b><small class="hunt-sell-meta"><span class="npc-item-stock">📦 ${item.qty.toLocaleString('pt-BR')} disponibles</span> · <span class="hunt-sell-price">💲 ${item.npcPrice.toLocaleString('pt-BR')} c/u</span></small>`;
+                const berryLabels = getBotanyBerryLabels(item.itemId);
+                const botanyTags = buildBotanySellTags(berryLabels);
+                row.classList.toggle('has-botany-material', berryLabels.length > 0);
+                row.dataset.botanyMaterial = berryLabels.length ? 'true' : 'false';
+                name.innerHTML = `<small class="hunt-sell-kind">OBJETO NPC</small><b class="hunt-sell-name">${escapeHTML(item.name)}</b><small class="hunt-sell-meta"><span class="npc-item-stock">📦 ${item.qty.toLocaleString('pt-BR')} disponibles</span> · <span class="hunt-sell-price">💲 ${item.npcPrice.toLocaleString('pt-BR')} c/u</span></small>${botanyTags}`;
 
                 const art = document.createElement('span');
                 art.className = 'hunt-sell-art';
@@ -7630,25 +13844,81 @@
                 quantity.value = String(item.qty);
                 quantity.disabled = isProtected;
 
-                const lock = document.createElement('span');
-                lock.textContent = isProtected ? '🔒' : '🔓';
-                lock.title = protectionReason ? `Bloqueado por: ${protectionReason}. Clique para desbloquear.` : 'Clique para bloquear pelo cadeado nativo do Mark';
-                lock.setAttribute('role', 'button'); lock.tabIndex = 0;
-                lock.style.cssText = 'cursor:pointer;font-size:16px;padding:4px;';
+                const lock = document.createElement('button');
+                lock.type = 'button';
+                lock.className = 'hunt-item-lock';
+                const applyItemLockState = (locked, reason = '') => {
+                    const protectedNow = Boolean(locked);
+                    lock.textContent = protectedNow ? '🔒' : '🔓';
+                    lock.title = protectedNow
+                        ? `Bloqueado${reason ? ` por: ${reason}` : ''}. Pulsa para desbloquear.`
+                        : 'Bloquear este objeto con el candado nativo del juego';
+                    checkbox.disabled = protectedNow;
+                    quantity.disabled = protectedNow;
+                    if (protectedNow) checkbox.checked = false;
+                    row.classList.toggle('protected', protectedNow);
+                    row.dataset.locked = protectedNow ? 'true' : 'false';
+                };
+                applyItemLockState(isProtected, protectionReason);
                 lock.addEventListener('click', async event => {
                     event.preventDefault(); event.stopPropagation();
+                    lock.disabled = true;
                     try {
                         const locked = await togglePortableItemProtection(item);
-                        lock.textContent = locked ? '🔒' : '🔓';
-                        checkbox.disabled = locked;
-                        quantity.disabled = locked;
-                        if (locked) checkbox.checked = false;
+                        applyItemLockState(locked, locked ? getItemProtectionReason(item) : '');
+                        syncBotanyBulkLockState();
                         updateSaleSummary();
                     } catch (error) { showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), error.message, true); }
+                    finally { lock.disabled = false; }
                 });
+                row._pgBotanyLock = { item, applyItemLockState, lock };
                 row.append(checkbox, art, name, quantity, lock);
                 list.appendChild(row);
             });
+
+            const getBotanyLockRows = () => Array.from(list.querySelectorAll('.hunt-sell-row[data-botany-material="true"]'));
+            syncBotanyBulkLockState = () => {
+                const materialRows = getBotanyLockRows();
+                const lockedCount = materialRows.filter(row => Boolean(getItemProtectionReason(row._pgBotanyLock.item))).length;
+                botanyCount.textContent = `${lockedCount}/${materialRows.length}`;
+                botanyLockCheckbox.disabled = materialRows.length === 0;
+                botanyLockCheckbox.checked = materialRows.length > 0 && lockedCount === materialRows.length;
+                botanyLockCheckbox.indeterminate = lockedCount > 0 && lockedCount < materialRows.length;
+                botanyLockCheckbox.closest('label').title = materialRows.length
+                    ? `${lockedCount} de ${materialRows.length} materiales de Botánica están protegidos`
+                    : 'No hay materiales de Botánica vendibles en el inventario';
+            };
+            botanyLockCheckbox.addEventListener('change', async () => {
+                const desiredLocked = botanyLockCheckbox.checked;
+                const materialRows = getBotanyLockRows();
+                botanyLockCheckbox.disabled = true;
+                botanyCheckbox.disabled = true;
+                status.textContent = `${desiredLocked ? 'Bloqueando' : 'Desbloqueando'} ${materialRows.length} materiales de Botánica…`;
+                status.style.display = '';
+                let failures = 0;
+                for (const row of materialRows) {
+                    const control = row._pgBotanyLock;
+                    const currentlyLocked = Boolean(getItemProtectionReason(control.item));
+                    if (currentlyLocked === desiredLocked) continue;
+                    control.lock.disabled = true;
+                    try {
+                        const locked = await togglePortableItemProtection(control.item, desiredLocked);
+                        control.applyItemLockState(locked, locked ? getItemProtectionReason(control.item) : '');
+                    } catch (error) {
+                        failures += 1;
+                        console.warn(`No se pudo cambiar el bloqueo de ${control.item.name}:`, error);
+                    } finally {
+                        control.lock.disabled = false;
+                    }
+                }
+                botanyCheckbox.disabled = false;
+                syncBotanyBulkLockState();
+                updateSaleSummary();
+                showWindowMessage(sellModal, failures
+                    ? `Se actualizaron los materiales, pero ${failures} no pudieron cambiarse.`
+                    : `${materialRows.length} materiales de Botánica fueron ${desiredLocked ? 'protegidos' : 'desbloqueados'}.`, failures > 0);
+            });
+            syncBotanyBulkLockState();
 
             const updateSaleSummary = () => {
                 let total = 0;
@@ -7718,6 +13988,7 @@
                             checkbox.checked = false;
                             row.querySelector('.npc-item-stock').textContent = `📦 ${remaining.toLocaleString('pt-BR')} disponibles`;
                         });
+                        syncBotanyBulkLockState();
                         updateSaleSummary();
                         showWindowMessage(backdrop.querySelector('.sell-confirm-modal'), `Venda concluída: +💲${Number(result.goldGained || 0).toLocaleString('pt-BR')}`);
                         submit.disabled = false;
@@ -7758,6 +14029,11 @@
                 <div class="sell-confirm-title">
                     <span>🐾 ${tr('sellNpcPokemon')}</span>
                     <button class="hunt-items-open mk-bulk-btn" type="button" style="margin-left:auto;">🎒 Itens</button>
+                    <button class="script-market-autosell-btn" type="button" title="Auto-venta del deposito" aria-label="Auto-venta del deposito" style="margin-left:6px;">
+                        <svg class="script-market-autosell-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
+                        <span class="script-market-autosell-label">auto venta</span>
+                        <span class="script-market-autosell-dot" aria-hidden="true"></span>
+                    </button>
                     <button class="hunt-sell-close" type="button" style="margin-left:auto;background:none;border:0;color:#a0aec0;font-size:20px;cursor:pointer;">×</button>
                 </div>
                 <div class="sell-confirm-body">
@@ -7800,6 +14076,14 @@
 
         const close = () => backdrop.remove();
         backdrop.querySelector('.hunt-sell-close').addEventListener('click', close);
+
+        /* Auto-venta del deposito. El boton vive en ESTA ventana, que es la de
+           vender Pokemon, y el menu se abre desde aqui. Refrescar el boton se
+           limita a este backdrop para no confundirse si hay otra ventana igual. */
+        backdrop.querySelector('.script-market-autosell-btn')?.addEventListener('click', () => {
+            wireMarketAutoSellConfig(openMarketAutoSellConfig(), () => refrescarMarketAutoSellButton(backdrop));
+        });
+        refrescarMarketAutoSellButton(backdrop);
         backdrop.querySelector('.hunt-sell-cancel').addEventListener('click', close);
         backdrop.querySelector('.hunt-items-open').addEventListener('click', () => {
             close();
@@ -8063,6 +14347,103 @@
         return normalizeGameItemIcon(itemData?.icon || itemData?.image || itemData?.sprite || '');
     }
 
+    const HELD_MACHINE_MARKET_CATEGORY = 'Held Machine';
+    const HELD_MACHINE_FALLBACK_FAMILIES = Object.freeze([
+        'X-Attack', 'X-Defense', 'X-Critical', 'X-Vitality',
+        'X-Experience', 'X-Lucky', 'X-Boost', 'X-Block'
+    ]);
+    const HELD_MACHINE_TIER_LABELS = Object.freeze({ 1:'I', 2:'II', 3:'III' });
+    let heldMachineMarketRulesCache = null;
+    let heldMachineMarketRulesPromise = null;
+
+    function normalizeHeldMachineMarketIcon(value) {
+        const icon = String(value || '').trim();
+        if (!icon) return '';
+        if (/^(?:https?:)?\//i.test(icon)) return icon;
+        if (/^assets\//i.test(icon)) return `/${icon}`;
+        return normalizeGameItemIcon(icon);
+    }
+
+    function getHeldMachineMarketTier(value, icon = '') {
+        const numericTier = Number(value);
+        if (Number.isFinite(numericTier) && numericTier > 0) return Math.floor(numericTier);
+        const romanTier = { I:1, II:2, III:3 }[String(value || '').trim().toUpperCase()];
+        if (romanTier) return romanTier;
+        const match = String(icon || '').match(/_t(\d+)(?:\.[a-z0-9]+)?$/i);
+        return match ? Number(match[1]) : 0;
+    }
+
+    function buildHeldMachineMarketFallbackRules() {
+        return HELD_MACHINE_FALLBACK_FAMILIES.flatMap(name => [1, 2, 3].map(tier => ({
+            name,
+            tier,
+            tierLabel: HELD_MACHINE_TIER_LABELS[tier] || String(tier),
+            icon: `/assets/items/held_${name.toLowerCase().replace(/^x-/, 'x_')}_t${tier}.png`,
+            refIds: []
+        })));
+    }
+
+    function createHeldMachineMarketRule(item, offer = {}) {
+        const name = String(item?.name || item?.title || '').trim();
+        const icon = normalizeHeldMachineMarketIcon(item?.icon || item?.image || item?.sprite);
+        const tier = getHeldMachineMarketTier(item?.tier ?? item?.tierNumber, icon);
+        if (!name || !tier) return null;
+        const refId = item?.refId ?? item?.itemId ?? item?.id;
+        return {
+            name,
+            tier,
+            tierLabel: String(item?.tierLabel || HELD_MACHINE_TIER_LABELS[tier] || tier),
+            icon,
+            refIds: refId == null ? [] : [String(refId)],
+            offerKeys: offer?.key ? [String(offer.key)] : []
+        };
+    }
+
+    async function loadHeldMachineMarketRules(force = false) {
+        if (!force && heldMachineMarketRulesCache?.length) return heldMachineMarketRulesCache;
+        if (!force && heldMachineMarketRulesPromise) return heldMachineMarketRulesPromise;
+        heldMachineMarketRulesPromise = gameApiRequest('/api/game/held-machine').then(machine => {
+            const rules = [];
+            const seen = new Set();
+            (Array.isArray(machine?.offers) ? machine.offers : []).forEach(offer => {
+                (Array.isArray(offer?.pool) ? offer.pool : []).forEach(item => {
+                    const rule = createHeldMachineMarketRule(item, offer);
+                    if (!rule) return;
+                    const key = `${rule.name}|${rule.tier}|${rule.icon}`;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    rules.push(rule);
+                });
+            });
+            const mergedRules = new Map(buildHeldMachineMarketFallbackRules().map(rule => [`${rule.name}|${rule.tier}`, rule]));
+            rules.forEach(rule => mergedRules.set(`${rule.name}|${rule.tier}`, rule));
+            heldMachineMarketRulesCache = [...mergedRules.values()];
+            return heldMachineMarketRulesCache;
+        }).catch(() => {
+            heldMachineMarketRulesCache = buildHeldMachineMarketFallbackRules();
+            return heldMachineMarketRulesCache;
+        }).finally(() => { heldMachineMarketRulesPromise = null; });
+        return heldMachineMarketRulesPromise;
+    }
+
+    function getHeldMachineMarketRule(entry) {
+        const rules = heldMachineMarketRulesCache?.length ? heldMachineMarketRulesCache : buildHeldMachineMarketFallbackRules();
+        const ref = entry?.item || entry?.product || {};
+        const name = String(entry?.name || entry?.title || entry?.itemName || ref.name || ref.title || '').trim();
+        const icon = normalizeHeldMachineMarketIcon(entry?.icon || entry?.iconUrl || entry?.image || entry?.sprite || ref.icon || ref.image || ref.sprite);
+        const tier = getHeldMachineMarketTier(entry?.heldTier ?? entry?.tierNumber ?? entry?.tier ?? ref?.heldTier ?? ref?.tierNumber ?? ref?.tier, icon);
+        const refId = getMarketEntryRefId(entry);
+        const normalizedName = name.toLocaleLowerCase();
+        return rules.find(rule => refId != null && rule.refIds.includes(String(refId)))
+            || rules.find(rule => icon && rule.icon === icon)
+            || rules.find(rule => normalizedName === rule.name.toLocaleLowerCase() && (!tier || String(rule.tier) === String(tier)))
+            || null;
+    }
+
+    function isHeldMachineMarketEntry(entry) {
+        return Boolean(getHeldMachineMarketRule(entry));
+    }
+
     const MARKET_QUALITY_TIER_DEFINITIONS = Object.freeze([
         { id:'weak', label:'Fraca', min:0, max:1.0, color:'#64748b', aliases:['fraca','fragil','debil','weak','poor'] },
         { id:'common', label:'Comum', min:1.0, max:1.1, color:'#35d05b', aliases:['comum','comun','common'] },
@@ -8173,6 +14554,66 @@
         ].filter(([, value]) => value != null && Number.isFinite(Number(value)))
             .map(([label, value, type]) => `<span class="market-stat market-stat-${type}">${label} <b>${escapeHTML(value)}</b></span>`)
             .join('');
+    }
+
+    const MARKET_POKEMON_TYPE_ALIASES = Object.freeze({
+        normal:'normal', fire:'fire', fuego:'fire', water:'water', agua:'water', electric:'electric', electrico:'electric', eletrico:'electric',
+        grass:'grass', planta:'grass', ice:'ice', hielo:'ice', gelo:'ice', fighting:'fighting', lucha:'fighting', lutador:'fighting',
+        poison:'poison', veneno:'poison', ground:'ground', tierra:'ground', solo:'ground', flying:'flying', volador:'flying', voador:'flying',
+        psychic:'psychic', psiquico:'psychic', psiquica:'psychic', bug:'bug', bicho:'bug', inseto:'bug', rock:'rock', roca:'rock', pedra:'rock',
+        ghost:'ghost', fantasma:'ghost', dragon:'dragon', dark:'dark', siniestro:'dark', sombrio:'dark', steel:'steel', acero:'steel', aco:'steel',
+        fairy:'fairy', hada:'fairy', fada:'fairy'
+    });
+
+    function normalizeMarketPokemonType(value) {
+        const raw = typeof value === 'object' && value
+            ? (value.type?.name ?? value.name ?? value.type ?? value.label ?? '')
+            : value;
+        const normalized = String(raw || '').trim().toLocaleLowerCase().normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]+/g, '');
+        return MARKET_POKEMON_TYPE_ALIASES[normalized] || normalized;
+    }
+
+    function getMarketPokemonTypes(entry) {
+        const ref = entry?.pokemon || entry?.item || entry?.product || {};
+        const directTypes = [
+            ...(Array.isArray(entry?.types) ? entry.types : []), entry?.type1, entry?.type2, entry?.type_1, entry?.type_2,
+            ...(Array.isArray(ref?.types) ? ref.types : []), ref?.type1, ref?.type2, ref?.type_1, ref?.type_2
+        ].filter(Boolean);
+        const rawName = entry?.name || entry?.pokemonName || entry?.title || ref?.name || ref?.pokemonName || ref?.title || '';
+        const cleanName = normalizePokemonName(cleanMarketIvPokemonName(rawName));
+        let catalogCreature = null;
+        if (!directTypes.length) {
+            catalogCreature = cleanName ? globalCreatureApiData.get(cleanName) : null;
+            const speciesId = Number(entry?.speciesId ?? entry?.pokeId ?? entry?.pokemonId ?? ref?.speciesId ?? ref?.pokeId ?? ref?.pokemonId);
+            if (!catalogCreature && Number.isFinite(speciesId)) {
+                catalogCreature = [...new Set(globalCreatureApiData.values())].find(creature =>
+                    Number(creature?.speciesId ?? creature?.pokeId ?? creature?.pokemonId ?? creature?.id) === speciesId) || null;
+            }
+        }
+        const fallbackTypes = directTypes.length ? [] : [
+            ...(Array.isArray(catalogCreature?.types) ? catalogCreature.types : []), catalogCreature?.type1, catalogCreature?.type2,
+            catalogCreature?.type_1, catalogCreature?.type_2, ...(POKEMON_TYPES[cleanName] || [])
+        ].filter(Boolean);
+        const seen = new Set();
+        return [...directTypes, ...fallbackTypes].reduce((types, value) => {
+            const key = normalizeMarketPokemonType(value);
+            if (!key || seen.has(key) || types.length >= 2) return types;
+            seen.add(key);
+            const raw = typeof value === 'object' && value
+                ? (value.type?.name ?? value.name ?? value.type ?? value.label ?? key)
+                : value;
+            types.push({ key, label:String(raw || key).trim() });
+            return types;
+        }, []);
+    }
+
+    function getMarketPokemonTypesHTML(entry) {
+        const types = getMarketPokemonTypes(entry);
+        if (!types.length) return '';
+        return `<span class="market-pokemon-types" aria-label="Tipos: ${escapeHTML(types.map(type => type.label).join(', '))}">${types
+            .map(type => `<span class="market-pokemon-type" data-pokemon-type="${escapeHTML(type.key)}">${escapeHTML(type.label)}</span>`)
+            .join('')}</span>`;
     }
 
     const STORAGE_MARKET_IV_BASE_STATS = 'script_market_iv_base_stats_v1';
@@ -9087,7 +15528,7 @@
         }
     }
 
-    function showGlobalMarketWindow() {
+    function showGlobalMarketWindow(options = {}) {
         markMarketSalesRead();
         const previousMarketBackdrop = document.querySelector('.script-market-backdrop');
         if (previousMarketBackdrop?._marketCategoryIconTimer) clearInterval(previousMarketBackdrop._marketCategoryIconTimer);
@@ -9128,7 +15569,7 @@
                     <!-- Alertas retiradas en 10.1.0: se conserva el texto legado
                          dentro de un comentario para compatibilidad de mantenimiento,
                          pero el navegador no crea ningún control ni panel en el DOM.
-                    <div class="market-alert-heading"><span>🔔 ${tr('alertCreate')} <small class="market-alert-account-context">👤 —</small><small class="market-item-auto-status"></small></span><span style="display:flex;align-items:center;gap:5px;"><span class="market-alert-kind-tabs"><button class="market-alert-kind-tab on" data-alert-kind="pokemon" type="button">Pokémon</button><button class="market-alert-kind-tab" data-alert-kind="item" type="button">Objetos</button></span><label class="market-alert-auto-buy"><input class="market-alert-auto-buy-input" type="checkbox"> Auto. Pokémon</label><label class="market-alert-auto-buy"><input class="market-item-alert-auto-buy-input" type="checkbox"> Auto. objetos</label><button class="market-alert-paste" type="button">📋 ${tr('alertPasteFilters')}</button><button class="market-telegram-toggle" type="button">✈ ${tr('telegram')}</button><button class="market-alert-rules-toggle" type="button">📋 ${tr('alertActiveRules')} <b class="market-alert-rules-count">0</b></button></span></div>
+                    <div class="market-alert-heading"><span>🔔 ${tr('alertCreate')} <small class="market-alert-account-context">👤 —</small><small class="market-item-auto-status"></small></span><span style="display:flex;align-items:center;gap:5px;"><span class="market-alert-kind-tabs"><button class="market-alert-kind-tab on" data-alert-kind="pokemon" type="button">Pokémon</button><button class="market-alert-kind-tab" data-alert-kind="item" type="button">Objetos</button></span><button class="market-alert-paste" type="button">📋 ${tr('alertPasteFilters')}</button><button class="market-telegram-toggle" type="button">✈ ${tr('telegram')}</button><button class="market-alert-rules-toggle" type="button">📋 ${tr('alertActiveRules')} <b class="market-alert-rules-count">0</b></button></span></div>
                     <div class="market-alert-tiers"><span class="market-sell-tier-label">${tr('depotTierFilter')}</span><span class="market-sell-tier-actions"><button class="market-sell-tier-action market-alert-tier-all" type="button">${tr('depotAllTiers')}</button><button class="market-sell-tier-action market-alert-tier-none" type="button">${tr('depotNoTiers')}</button></span><span class="market-sell-tier-buttons market-alert-tier-buttons"></span></div>
                     <div class="market-alert-form market-alert-pokemon-form">
                         <input class="market-alert-name" type="search" list="market-alert-pokemon-names" autocomplete="off" placeholder="${tr('alertNamePlaceholder')}" title="${tr('alertName')}">
@@ -9161,6 +15602,7 @@
                     <select class="market-category" style="background:#071018;color:#e2e8f0;border:1px solid #273f52;border-radius:5px;padding:6px 9px;">
                         <option value="All">${tr('all')}</option>
                         <option value="Items" selected>${tr('items')}</option>
+                         <option value="Held Machine">${tr('marketHeldMachine')}</option>
                         <option value="Stones">${tr('stones')}</option>
                         <option value="Poke Balls">${tr('pokeBalls')}</option>
                         <option value="Diamonds">${tr('diamonds')}</option>
@@ -9180,6 +15622,12 @@
                     <label style="display:flex;align-items:center;gap:5px;color:#a0aec0;font-size:12px;"><input class="market-show-gold" type="checkbox" checked> 💲 ${tr('gold')}</label>
                     <label style="display:flex;align-items:center;gap:5px;color:#a0aec0;font-size:12px;"><input class="market-show-diamonds" type="checkbox" checked> 💎 ${tr('diamonds')}</label>
                 </div>
+                <div class="market-held-filters" aria-label="${tr('marketHeldMachine')}">
+                    <span class="market-held-filter-label">🎰 ${tr('marketHeldMachine')}</span>
+                    <select class="market-held-item-filter" title="${tr('marketHeldAllItems')}"><option value="">${tr('marketHeldAllItems')}</option></select>
+                    <select class="market-held-tier-filter" title="${tr('marketHeldTier')}"><option value="">${tr('marketHeldAllTiers')}</option><option value="1">Tier I</option><option value="2">Tier II</option><option value="3">Tier III</option></select>
+                    <input class="market-held-quantity-min" type="number" min="1" step="1" placeholder="${tr('marketHeldQuantityMin')}">
+                </div>
                 <div class="market-pokemon-filters" style="display:none;gap:6px;padding:7px 12px 0;flex-wrap:wrap;">
                     <label style="display:flex;align-items:center;gap:5px;color:#a0aec0;font-size:12px;"><input class="market-shiny-only" type="checkbox"> ${tr('shinyOnly')}</label>
                     <input class="market-iv-min" type="number" min="0" max="192" placeholder="${tr('minIv')}" style="width:72px;background:#071018;color:#e2e8f0;border:1px solid #273f52;border-radius:5px;padding:6px;">
@@ -9197,7 +15645,8 @@
                 </div>
                 <div class="market-sell-controls" style="display:none;padding:10px 12px 0;gap:7px;flex-wrap:wrap;">
                     <select class="market-sell-kind"><option value="item">Itens</option><option value="pokemon">Pokémon</option></select>
-                    <input class="market-sell-search" type="search" placeholder="Buscar para vender...">
+                    <label class="market-sell-botany-filter" title="${tr('marketBotanyOnly')}"><input class="market-sell-botany-only" type="checkbox"><span>${tr('marketBotanyItems')}</span></label>
+                     <input class="market-sell-search" type="search" placeholder="Buscar para vender...">
                     <input class="market-sell-iv-min" type="number" min="0" max="192" placeholder="IV mín.">
                     <input class="market-sell-quality-min" type="number" min="0" step="0.01" placeholder="Qualidade mín.">
                     <select class="market-sell-type"><option value="">Todos os tipos</option></select>
@@ -9266,6 +15715,7 @@
         categoryRail.innerHTML = [
             ['All', '<span class="market-category-all-grid"><i></i><i></i><i></i><i></i></span>', tr('all'), 'all'],
             ['Items', '<img class="market-category-sprite" src="/assets/market/tab_sell.png" alt="">', tr('items'), 'items'],
+             ['Held Machine', '<img class="market-category-sprite" src="/assets/items/devoted_token.png" alt="">', tr('marketHeldMachine'), 'held-machine'],
             ['Stones', '<span class="market-category-stone-fallback">◆</span>', tr('stones'), 'stones'],
             ['Poke Balls', '<span class="market-category-ball-fallback"></span>', tr('pokeBalls'), 'balls'],
             ['Diamonds', '<img class="market-category-sprite" src="/assets/market/diamonds.png" alt="">', tr('diamonds'), 'diamonds'],
@@ -9350,15 +15800,27 @@
         const marketAlertRulesOverlay = backdrop.querySelector('.market-alert-rules-panel');
         if (marketWindow && marketAlertRulesOverlay) marketWindow.appendChild(marketAlertRulesOverlay);
 
-        let activeCategory = 'Items';
+        let activeCategory = options.initialCategory === HELD_MACHINE_MARKET_CATEGORY ? HELD_MACHINE_MARKET_CATEGORY : 'Items';
         let marketMode = 'buy';
+        /* Cuando llega sellPokemonId el market se abre directo en la pestaña de
+           venta. Sin esto abriría en "comprar" y el usuario tendría que buscarla.
+           El modo NO se fuerza aqui a proposito: la pestaña activa, los controles
+           que se ven y la lista que se carga los pone el manejador de la
+           pestaña, que ya lo hace bien, y al final de la apertura se pulsa esa
+           pestaña. Forzar solo la variable dejaria la ventana a medio cambiar. */
+        const requestedSellPokemonId = options.sellPokemonId != null ? String(options.sellPokemonId) : '';
+        const syncMarketTabs = () => {
+            backdrop.querySelectorAll('.market-tab').forEach(tab => {
+                tab.classList.toggle('on', tab.dataset.mode === marketMode);
+            });
+        };
         let currentListings = [];
         let currentMyListings = [];
         let currentMarketPayload = null;
         let requestCatalogCache = [];
         let sellEntries = [];
         let selectedSellEntry = null;
-        let renderLimit = 100;
+        let renderLimit = SCRIPT_MARKET_PAGE_SIZE;
         let diamondPdRate = null;
         let sellReferenceRequestId = 0;
         let activeMarketFavoriteKey = '';
@@ -9383,6 +15845,7 @@
         const balanceDiamonds = backdrop.querySelector('.market-balance-diamonds');
         const search = backdrop.querySelector('.market-search');
         const categorySelect = backdrop.querySelector('.market-category');
+         categorySelect.value = activeCategory;
         const sortSelect = backdrop.querySelector('.market-sort');
         const itemRarityFilter = backdrop.querySelector('.market-item-rarity-filter');
         const showGold = backdrop.querySelector('.market-show-gold');
@@ -9399,6 +15862,43 @@
         const buyQualityTiers = backdrop.querySelector('.market-buy-quality-tiers');
         const buyQualityTierButtons = backdrop.querySelector('.market-buy-tier-buttons');
         const buyControls = backdrop.querySelector('.market-buy-controls');
+         const heldFilters = backdrop.querySelector('.market-held-filters');
+         const heldItemFilter = backdrop.querySelector('.market-held-item-filter');
+         const heldTierFilter = backdrop.querySelector('.market-held-tier-filter');
+         const heldQuantityMin = backdrop.querySelector('.market-held-quantity-min');
+        const pendingListingFilter = marketPendingListingFilter;
+        marketPendingListingFilter = null;
+        if (pendingListingFilter) {
+            const pendingRef = pendingListingFilter.pokemon || pendingListingFilter.item || pendingListingFilter.product || {};
+            const pendingName = String(pendingListingFilter.name || pendingListingFilter.pokemonName || pendingListingFilter.itemName || pendingListingFilter.title || pendingRef.name || pendingRef.title || '')
+                .replace(/\s+(?:lv|lvl|level|nivel)\.?\s*\d+.*$/i, '').trim();
+            const pendingIsPokemon = isMarketPokemonListing(pendingListingFilter);
+            activeCategory = pendingIsPokemon ? 'Pokemon' : 'Items';
+            categorySelect.value = activeCategory;
+            search.value = pendingName;
+            itemRarityFilter.value = '';
+            activeMarketFavoriteKey = '';
+            marketMode = 'buy';
+            const pendingCurrency = getMarketEntryCurrency(pendingListingFilter);
+            showGold.checked = pendingCurrency !== 'DIAMONDS';
+            showDiamonds.checked = pendingCurrency !== 'GOLD';
+            const pendingIv = Number(pendingListingFilter.ivTotal ?? pendingRef.ivTotal ?? pendingListingFilter.iv ?? pendingRef.iv ?? -1);
+            const pendingLevel = Number(pendingListingFilter.level ?? pendingRef.level ?? pendingListingFilter.pokemonLevel ?? pendingRef.pokemonLevel ?? -1);
+            const pendingQuality = Number(pendingListingFilter.quality ?? pendingRef.quality ?? -1);
+            ivMin.value = pendingIv >= 0 ? String(pendingIv) : '';
+            ivMax.value = '';
+            levelMin.value = pendingLevel >= 0 ? String(pendingLevel) : '';
+            levelMax.value = '';
+            qualityMin.value = pendingQuality >= 0 ? String(pendingQuality) : '';
+            qualityMax.value = '';
+            buyVisibleQualityTiers.clear();
+            const pendingTier = getMarketPokemonQualityTheme(pendingQuality)?.label;
+            if (pendingTier) buyVisibleQualityTiers.add(pendingTier);
+            typeSelect.value = pendingListingFilter.type1 || pendingListingFilter.type2 || pendingRef.type1 || pendingRef.type2 || '';
+            buyControls.style.display = 'flex';
+            pokemonFilters.style.display = pendingIsPokemon ? 'flex' : 'none';
+            buyQualityTiers.classList.toggle('visible', pendingIsPokemon);
+        }
         const favoritesBar = backdrop.querySelector('.market-favorites-bar');
         const favoritesList = backdrop.querySelector('.market-favorites-list');
         const favoriteScrollPrev = backdrop.querySelector('.market-favorites-prev');
@@ -9436,8 +15936,7 @@
         const itemAlertNames = backdrop.querySelector('#market-alert-item-names');
         const alertTierButtons = backdrop.querySelector('.market-alert-tier-buttons');
         const alertRules = backdrop.querySelector('.market-alert-rules');
-        const alertAutoBuy = backdrop.querySelector('.market-alert-auto-buy-input');
-        const itemAlertAutoBuy = backdrop.querySelector('.market-item-alert-auto-buy-input');
+
         const alertPaste = backdrop.querySelector('.market-alert-paste');
         let marketAlertClipboardCache = String(localStorage.getItem(STORAGE_MARKET_ALERT_CLIPBOARD) || '');
         const alertRulesToggle = backdrop.querySelector('.market-alert-rules-toggle');
@@ -9468,26 +15967,13 @@
         let alertCreationKind = 'pokemon';
         let alertRulesKind = 'pokemon';
         let editingMarketAlert = null;
-        if (!MARKET_ALERTS_REMOVED) {
-            itemAlertAutoBuy.checked = isMarketItemAlertAutoBuyEnabled();
-            const storedItemAutoStatus = getMarketItemAlertAutoBuyStatus();
-            if (storedItemAutoStatus) {
-                const time = new Date(storedItemAutoStatus.at).toLocaleTimeString(getGameLanguage() === 'es' ? 'es-VE' : 'en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-                itemAlertAutoStatus.textContent = `Auto objetos: ${storedItemAutoStatus.state}${storedItemAutoStatus.message ? ` · ${storedItemAutoStatus.message}` : ''} · ${time}`;
-            } else {
-                itemAlertAutoStatus.textContent = `Auto objetos: ${itemAlertAutoBuy.checked ? 'activa' : 'desactivada'}`;
-            }
-            telegramToken.value = telegramSettings.token;
-            telegramChatId.value = telegramSettings.chatId;
-            telegramEnabled.checked = telegramSettings.enabled;
-            alertAutoBuy.checked = isMarketAlertAutoBuyEnabled();
-        }
         const sellControls = backdrop.querySelector('.market-sell-controls');
         const sellKind = backdrop.querySelector('.market-sell-kind');
         const sellSearch = backdrop.querySelector('.market-sell-search');
         const sellIvMin = backdrop.querySelector('.market-sell-iv-min');
         const sellQualityMin = backdrop.querySelector('.market-sell-quality-min');
         const sellType = backdrop.querySelector('.market-sell-type');
+         const sellBotanyOnly = backdrop.querySelector('.market-sell-botany-only');
         const sellQualityTiers = backdrop.querySelector('.market-sell-only-quality-tiers');
         const sellQualityTierButtons = backdrop.querySelector('.market-sell-only-tier-buttons');
         const mineQualityTiers = backdrop.querySelector('.market-mine-quality-tiers');
@@ -9501,6 +15987,7 @@
         const sellNet = backdrop.querySelector('.market-sell-net');
         const sellReference = backdrop.querySelector('.market-sell-reference');
         const sellSubmit = backdrop.querySelector('.market-sell-submit');
+
         const sellEditor = backdrop.querySelector('.market-sell-editor');
         const sellEditorArt = backdrop.querySelector('.market-sell-editor-art');
         const sellEditorName = backdrop.querySelector('.market-sell-editor-name');
@@ -9529,6 +16016,7 @@
         const viewButtons = Array.from(backdrop.querySelectorAll('.market-view-btn'));
         const close = () => {
             stopCategoryIconRotation();
+
             backdrop.remove();
         };
         const bindMarketIvCard = (row, entry) => {
@@ -9682,6 +16170,19 @@
                 button.setAttribute('aria-pressed', String(active));
             });
         };
+        const populateHeldMarketFilters = () => {
+            const rules = heldMachineMarketRulesCache?.length ? heldMachineMarketRulesCache : buildHeldMachineMarketFallbackRules();
+            const families = [...new Set(rules.map(rule => rule.name))].sort((a, b) => a.localeCompare(b));
+            const selected = heldItemFilter.value;
+            heldItemFilter.innerHTML = `<option value="">${tr('marketHeldAllItems')}</option>${families.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('')}`;
+            if (families.includes(selected)) heldItemFilter.value = selected;
+        };
+        const updateHeldMarketFilters = () => {
+            const visible = activeCategory === HELD_MACHINE_MARKET_CATEGORY && ['buy', 'mine'].includes(marketMode) && backdrop.classList.contains('market-filters-open');
+            heldFilters.hidden = !visible;
+            heldFilters.style.display = visible ? 'flex' : 'none';
+        };
+        populateHeldMarketFilters();
         categoryRail.querySelectorAll('.market-category-rail-btn').forEach(button => button.addEventListener('click', () => {
             const category = button.dataset.category;
             if (!category || categorySelect.value === category) return;
@@ -9693,11 +16194,21 @@
             backdrop.classList.toggle('market-filters-open', enabled);
             filtersToggle.setAttribute('aria-expanded', String(enabled));
             filtersToggle.classList.toggle('on', enabled);
+            updateHeldMarketFilters();
         };
+        /* Leer scrollWidth/clientWidth fuerza un layout sincronico. Antes se hacia en
+           CADA evento de scroll (y un scroll suave dispara decenas por segundo):
+           el navegador lo atribuyo como 206 ms de reflow forzado al abrir el panel.
+           Ahora el ancho total se mide una sola vez y el scroll solo lee scrollLeft,
+           que no invalida el layout, de modo que las flechas siguen respondiendo. */
+        let favoriteScrollMaximum = 0;
         const updateMarketFavoriteArrows = () => {
-            const maximum = Math.max(0, favoritesList.scrollWidth - favoritesList.clientWidth);
             favoriteScrollPrev.disabled = favoritesList.scrollLeft <= 1;
-            favoriteScrollNext.disabled = favoritesList.scrollLeft >= maximum - 1;
+            favoriteScrollNext.disabled = favoritesList.scrollLeft >= favoriteScrollMaximum - 1;
+        };
+        const measureMarketFavorites = () => {
+            favoriteScrollMaximum = Math.max(0, favoritesList.scrollWidth - favoritesList.clientWidth);
+            updateMarketFavoriteArrows();
         };
         const scrollMarketFavorites = direction => {
             const distance = Math.max(180, Math.floor(favoritesList.clientWidth * .72));
@@ -9729,7 +16240,7 @@
                         shinyOnly.checked = false;
                         [ivMin, ivMax, levelMin, levelMax, qualityMin, qualityMax].forEach(control => { control.value = ''; });
                         typeSelect.value = '';
-                        renderLimit = 100;
+                        renderLimit = SCRIPT_MARKET_PAGE_SIZE;
                         renderMarketFavorites();
                         load();
                         return;
@@ -9739,7 +16250,7 @@
                     categorySelect.value = activeCategory;
                     sortSelect.value = 'price-asc';
                     search.value = favorite.name;
-                    renderLimit = 100;
+                    renderLimit = SCRIPT_MARKET_PAGE_SIZE;
                     renderMarketFavorites();
                     load();
                 });
@@ -9747,13 +16258,14 @@
             });
             requestAnimationFrame(() => {
                 favoritesList.querySelector('.market-favorite-chip.on')?.scrollIntoView({ block:'nearest', inline:'nearest' });
-                updateMarketFavoriteArrows();
+                measureMarketFavorites();
             });
         };
         filtersToggle.addEventListener('click', () => setMarketFiltersOpen(!backdrop.classList.contains('market-filters-open')));
         favoriteScrollPrev.addEventListener('click', () => scrollMarketFavorites(-1));
         favoriteScrollNext.addEventListener('click', () => scrollMarketFavorites(1));
         favoritesList.addEventListener('scroll', updateMarketFavoriteArrows, { passive:true });
+        window.addEventListener('resize', measureMarketFavorites, { passive:true });
         const renderSellQualityTierButtons = () => {
             sellQualityTierButtons.innerHTML = '';
             sellQualityTierDefinitions.forEach(tier => {
@@ -10091,7 +16603,7 @@
                 const tierTags = tierIds.length
                     ? tierIds.map(id => MARKET_QUALITY_TIER_DEFINITIONS.find(definition => definition.id === id)?.label).filter(Boolean)
                     : (itemMode ? [] : ['Todos los tiers']);
-                const autoEnabled = itemMode ? isMarketItemAlertAutoBuyEnabled() : isMarketAlertAutoBuyEnabled();
+
                 const tags = [...tierTags, ...(autoEnabled ? ['⚡ Compra automática'] : [])];
                 rule.innerHTML = `<span class="market-alert-rule-icon">${icon}</span><div class="market-alert-rule-content"><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><small>${escapeHTML(details)}</small><span class="market-alert-rule-tags">${tags.map(tag => `<span class="market-alert-tag${tag.startsWith('⚡') ? ' is-auto' : ''}">${escapeHTML(tag)}</span>`).join('')}</span></div>`;
                 const actions = document.createElement('div');
@@ -10479,6 +16991,7 @@
         const getListingCategory = entry => {
             const ref = entry?.item || entry?.pokemon || entry?.product || {};
             const kind = getMarketEntryKind(entry);
+            if (isHeldMachineMarketEntry(entry)) return HELD_MACHINE_MARKET_CATEGORY;
             if (kind === 'pokemon' || entry?.speciesId != null || ref?.speciesId != null || entry?.pokemon) return 'Pokemon';
             if (/diamond/.test(kind)) return 'Diamonds';
             if (kind === 'ball' || kind === 'pokeball' || kind === 'poke-ball' || kind === 'poke_ball') return 'Poke Balls';
@@ -10497,6 +17010,13 @@
                 const name = entry.name || entry.title || entry.itemName || entry.pokemonName || ref.name || ref.title || '';
                 if (query && !String(name).toLocaleLowerCase(locale()).includes(query)) return false;
                 if (activeCategory !== 'All' && getListingCategory(entry) !== activeCategory) return false;
+                 if (activeCategory === HELD_MACHINE_MARKET_CATEGORY) {
+                     const heldRule = getHeldMachineMarketRule(entry);
+                     if (!heldRule) return false;
+                     if (heldItemFilter.value && heldRule.name !== heldItemFilter.value) return false;
+                     if (heldTierFilter.value && String(heldRule.tier) !== heldTierFilter.value) return false;
+                     if (heldQuantityMin.value !== '' && Number(entry.quantity ?? entry.qty ?? entry.amount ?? 1) < Number(heldQuantityMin.value)) return false;
+                 }
                 const currency = getMarketEntryCurrency(entry);
                 if (currency === 'GOLD' && !showGold.checked) return false;
                 if (currency === 'DIAMONDS' && !showDiamonds.checked) return false;
@@ -10564,10 +17084,11 @@
                 const kindLabel = isPokemon ? 'POKÉMON' : category === 'Poke Balls' ? 'POKÉ BALL' : category === 'Diamonds' ? 'MONEDA' : category === 'Stones' ? 'STONE' : 'OBJETO / DROP';
                 const details = isPokemon ? [ivTotal != null ? `${tr('ivTotal')}: ${ivTotal}/192` : '', quality != null ? `Q: ${Number(quality).toFixed(2)}` : ''].filter(Boolean).join(' · ') : '';
                 const statsHTML = isPokemon ? getMarketPokemonStatsHTML(stats) : '';
+                const typesHTML = isPokemon ? getMarketPokemonTypesHTML(entry) : '';
                 const badge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(name)}">` : `<span>${fallbackIcon}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel} · ${tr('marketMyListings')}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${badge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel} · ${tr('marketMyListings')}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${typesHTML}${badge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     <div class="market-buy-footer">
                         ${isPokemon ? '' : `<div class="market-quantity market-data-box"><small class="market-data-label">${tr('quantity')}</small><b>${quantity.toLocaleString(locale())}</b></div>`}
@@ -10605,8 +17126,8 @@
                 more.type = 'button';
                 more.className = 'mk-bulk-btn';
                 more.style.cssText = 'margin:5px auto;padding:8px 18px;';
-                more.textContent = `${tr('loadMore')} (+${Math.min(100, filtered.length - visible.length)})`;
-                more.addEventListener('click', () => { renderLimit += 100; renderMyListings(); });
+                more.textContent = `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
+                more.addEventListener('click', () => { renderLimit += SCRIPT_MARKET_PAGE_SIZE; renderMyListings(); });
                 list.appendChild(more);
             }
         };
@@ -10894,12 +17415,16 @@
             }
             const query = sellSearch.value.trim().toLocaleLowerCase();
             const isPokemon = sellKind.value === 'pokemon';
+            const botanyOnly = sellBotanyOnly.checked && !isPokemon;
+            const botanyFilterLabel = sellBotanyOnly.closest('.market-sell-botany-filter');
+            if (botanyFilterLabel) botanyFilterLabel.hidden = isPokemon;
             sellIvMin.style.display = isPokemon ? '' : 'none';
             sellQualityMin.style.display = isPokemon ? '' : 'none';
             sellType.style.display = isPokemon ? '' : 'none';
             sellQty.style.display = isPokemon ? 'none' : '';
             sellQualityTiers.classList.toggle('visible', marketMode === 'sell' && isPokemon);
             const filtered = sellEntries.filter(entry => entry.kind === sellKind.value)
+                .filter(entry => !botanyOnly || getBotanyBerryLabels(entry.refId).length > 0)
                 .filter(entry => !query || entry.name.toLocaleLowerCase().includes(query))
                 .filter(entry => !isPokemon || sellVisibleQualityTiers.has(getMarketPokemonQualityTheme(entry.quality)?.label || 'Fraca'))
                 .filter(entry => !isPokemon || sellIvMin.value === '' || Number(entry.ivTotal) >= Number(sellIvMin.value))
@@ -10933,9 +17458,10 @@
                 const tierBadge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : '';
                 const itemRarityBadge = itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
                 const statsHTML = isPokemon ? getMarketPokemonStatsHTML(entry.stats) : '';
+                const typesHTML = isPokemon ? getMarketPokemonTypesHTML(entry) : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(entry.name)}">` : `<span>${isPokemon ? '◉' : isDiamond ? '💎' : '📦'}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(entry.name)}</b><small class="market-meta">${escapeHTML(details)}</small>${tierBadge}${itemRarityBadge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(entry.name)}</b><small class="market-meta">${escapeHTML(details)}</small>${typesHTML}${tierBadge}${itemRarityBadge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     ${isPokemon ? '' : `<div class="market-quantity">${tr('amount')}<b>${Number(entry.quantity || 0).toLocaleString(locale())} ${tr('availableUnits')}</b></div>`}`;
                 row.querySelector('img')?.addEventListener('error', event => {
@@ -10980,6 +17506,40 @@
             });
         };
 
+        /* Abre el editor de venta del Pokemon indicado y deja el precio vacio.
+           showSellEditor no toca el precio, y su valor persiste entre
+           aperturas, asi que hay que limpiarlo a mano: si no, el usuario
+           encontraria un precio de la sesion anterior y podria publicar sin
+           querer.
+
+           El orden importa: primero se abre el editor, despues se vacia el
+           precio y despues se dispara su input, que es lo que vuelve a calcular
+           si el boton de publicar puede pulsarse. Al reves, el boton se
+           quedaria habilitado con el precio vacio. */
+        const openSellEditorForPokemon = async pokeId => {
+            const idOf = entry => String(entry?.id ?? entry?.capturedId ?? entry?.pokeId ?? '');
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const found = sellEntries.find(entry => idOf(entry) === pokeId);
+                if (found) {
+                    selectedSellEntry = found;
+                    showSellEditor(found);
+                    sellPrice.value = '';
+                    sellPrice.dispatchEvent(new Event('input', { bubbles: true }));
+                    sellPrice.focus();
+                    const row = sellEditor.closest('.market-sell-list, .script-market-sell, div') || sellEditor;
+                    row?.scrollIntoView({ block: 'nearest' });
+                    sellEditor.classList.add('is-flash');
+                    setTimeout(() => sellEditor.classList.remove('is-flash'), 900);
+                    return true;
+                }
+                /* El guardado acaba de ocurrir: puede que el socket todavia no
+                   lo refleje. Se reintenta un poco antes de rendirse. */
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            status.textContent = tr('marketSellPokemonNotFound');
+            return false;
+        };
+
         const loadSell = async () => {
             status.textContent = tr('loading');
             try {
@@ -11022,7 +17582,13 @@
                 sellEditor.hidden = true;
                 clearSellReference();
                 sellSubmit.disabled = true;
+                /* Cuando la venta viene del cassino lo que se quiere vender es un
+                   Pokemon, asi que el filtro tiene que acompanar. Sin esto el
+                   selector se queda en Itens y la lista de abajo ensena objetos,
+                   con lo que parece que el market no recibio nada. */
+                if (requestedSellPokemonId) sellKind.value = 'pokemon';
                 renderSell();
+                if (requestedSellPokemonId) await openSellEditorForPokemon(requestedSellPokemonId);
             } catch (error) {
                 status.textContent = `Não foi possível carregar seus itens e Pokémon: ${error.message}`;
             }
@@ -11030,6 +17596,7 @@
 
         const render = () => {
             const query = search.value.trim().toLocaleLowerCase();
+            const heldCategory = activeCategory === HELD_MACHINE_MARKET_CATEGORY;
             const rarityFilterActive = activeCategory !== 'Pokemon' && activeCategory !== 'Diamonds';
             const alertMode = marketMode === 'alerts';
             const sourceListings = alertMode
@@ -11046,7 +17613,14 @@
                 const entryCurrency = normalizeMarketCurrency(entry.currency || entry.currencyType || ref.currency || ref.currencyType);
                 if (entryCurrency === 'GOLD' && !showGold.checked) return false;
                 if (entryCurrency === 'DIAMONDS' && !showDiamonds.checked) return false;
-                if (rarityFilterActive && itemRarityFilter.value && getMarketItemRarityTheme(entry).key !== itemRarityFilter.value) return false;
+                if (heldCategory) {
+                     const heldRule = getHeldMachineMarketRule(entry);
+                     if (!heldRule) return false;
+                     if (heldItemFilter.value && heldRule.name !== heldItemFilter.value) return false;
+                     if (heldTierFilter.value && String(heldRule.tier) !== heldTierFilter.value) return false;
+                     if (heldQuantityMin.value !== '' && Number(entry.quantity ?? entry.qty ?? entry.amount ?? 1) < Number(heldQuantityMin.value)) return false;
+                 }
+                 if (rarityFilterActive && itemRarityFilter.value && getMarketItemRarityTheme(entry).key !== itemRarityFilter.value) return false;
                 if (activeCategory === 'Pokemon') {
                     const iv = Number(entry.ivTotal ?? -1);
                     const level = Number(entry.level ?? -1);
@@ -11074,6 +17648,7 @@
             };
             if (!alertMode && sorters[sortSelect.value]) filtered = [...filtered].sort(sorters[sortSelect.value]);
             const visible = filtered.slice(0, renderLimit);
+
             list.innerHTML = '';
             const categoryLabel = alertMode ? tr('marketAlerts') : marketMode === 'featured'
                 ? tr('marketFeatured')
@@ -11092,13 +17667,16 @@
                 const stats = entry.stats || ref.stats || {};
                 const entryKind = getMarketEntryKind(entry);
                 const isPokemonListing = isMarketPokemonEntry(entry);
-                const isItemListing = !isPokemonListing && entryKind !== 'diamond';
+                const heldRule = heldCategory ? getHeldMachineMarketRule(entry) : null;
+                 const isItemListing = !isPokemonListing && entryKind !== 'diamond';
                 const statsHTML = isPokemonListing ? getMarketPokemonStatsHTML(stats) : '';
                 const row = document.createElement('div');
                 row.className = `market-buy-row market-listing-row${isPokemonListing ? ' market-pokemon-listing' : ''}`;
+
                 if (marketMode === 'featured' && !entry._scriptFeaturedAvailable) row.classList.add('market-featured-unavailable');
                 const qualityTheme = isPokemonListing ? getMarketPokemonQualityTheme(quality) : null;
                 const itemTheme = isItemListing ? getMarketItemRarityTheme(entry) : null;
+                 const heldTierBadge = heldRule ? `<small class="market-held-tier-badge tier-${heldRule.tier}">Tier ${escapeHTML(heldRule.tierLabel)}</small>` : '';
                 if (qualityTheme) {
                     row.classList.add('market-pokemon-quality');
                     row.style.setProperty('--market-tier-color', qualityTheme.color);
@@ -11120,7 +17698,8 @@
                     ? `≈ ${converted.icon} ${formatMarketValue(converted.value, converted.currency)}`
                     : '—';
                 const image = getMarketEntryImage(entry);
-                const kindLabel = isPokemonListing ? 'POKÉMON'
+                const kindLabel = heldRule ? `HELD MACHINE · TIER ${escapeHTML(heldRule.tierLabel)}`
+                     : isPokemonListing ? 'POKÉMON'
                     : entryKind === 'ball' ? 'POKÉ BALL'
                     : entryKind === 'diamond' ? 'MONEDA'
                     : activeCategory === 'Stones' ? 'STONE'
@@ -11128,9 +17707,10 @@
                 const fallbackIcon = isPokemonListing ? '◉' : entryKind === 'diamond' ? '💎' : '📦';
                 const tierBadge = qualityTheme ? `<small class="market-quality-tier">${qualityTheme.label}</small>` : '';
                 const itemRarityBadge = itemTheme ? `<small class="market-item-rarity-badge">${escapeHTML(itemTheme.label)}</small>` : '';
+                const typesHTML = isPokemonListing ? getMarketPokemonTypesHTML(entry) : '';
                 row.innerHTML = `
                     <div class="market-art">${image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(name)}">` : `<span>${fallbackIcon}</span>`}</div>
-                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${alertAccount ? `<small class="market-meta market-alert-account">${escapeHTML(alertAccount)}</small>` : ''}${tierBadge}${itemRarityBadge}</div>
+                    <div class="market-main"><small class="market-kind-label">${kindLabel}</small><b class="market-item-name">${escapeHTML(name)}</b>${details ? `<small class="market-meta">${escapeHTML(details)}</small>` : ''}${alertAccount ? `<small class="market-meta market-alert-account">${escapeHTML(alertAccount)}</small>` : ''}${typesHTML}${tierBadge}${itemRarityBadge}${heldTierBadge}</div>
                     ${statsHTML ? `<small class="market-stats market-card-stats">${statsHTML}</small>` : ''}
                     <div class="market-buy-footer">
                         ${isPokemonListing ? '' : `<div class="market-quantity market-data-box"><small class="market-data-label">${tr('quantity')}</small><b>${quantity.toLocaleString(locale())}</b></div>`}
@@ -11258,9 +17838,9 @@
                 more.type = 'button';
                 more.className = 'mk-bulk-btn';
                 more.style.cssText = 'margin:5px auto;padding:8px 18px;';
-                more.textContent = `${tr('loadMore')} (+${Math.min(100, filtered.length - visible.length)})`;
+                more.textContent = `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
                 more.addEventListener('click', () => {
-                    renderLimit += 100;
+                    renderLimit += SCRIPT_MARKET_PAGE_SIZE;
                     render();
                 });
                 list.appendChild(more);
@@ -11271,10 +17851,14 @@
             status.textContent = tr('loading');
             list.innerHTML = '';
             try {
+                if (activeCategory === HELD_MACHINE_MARKET_CATEGORY && ['buy', 'mine'].includes(marketMode)) {
+                    await loadHeldMachineMarketRules();
+                    populateHeldMarketFilters();
+                }
                 const requestedCategory = marketMode === 'requests'
                     ? (requestFilterCategory.value || 'All')
                     : marketMode === 'history' || marketMode === 'mine' ? 'All'
-                        : marketMode === 'featured' ? 'Pokemon' : marketMode === 'alerts' ? 'All' : activeCategory;
+                        : marketMode === 'featured' ? 'Pokemon' : marketMode === 'alerts' ? 'All' : activeCategory === HELD_MACHINE_MARKET_CATEGORY ? 'All' : activeCategory;
                 const categoryRequest = gameApiRequest(`/api/game/market?category=${encodeURIComponent(requestedCategory)}`);
                 const diamondRequest = requestedCategory === 'Diamonds'
                     ? categoryRequest
@@ -11330,8 +17914,10 @@
                 pokemonFilters.style.display = (marketMode === 'buy' || marketMode === 'mine' || marketMode === 'featured') && activeCategory === 'Pokemon' ? 'flex' : 'none';
                 buyQualityTiers.classList.toggle('visible', (marketMode === 'buy' || marketMode === 'featured') && activeCategory === 'Pokemon');
                 mineQualityTiers.classList.toggle('visible', marketMode === 'mine' && (activeCategory === 'All' || activeCategory === 'Pokemon'));
-                renderLimit = 100;
-                populateRequestCatalog();
+                renderLimit = SCRIPT_MARKET_PAGE_SIZE;
+                populateHeldMarketFilters();
+                 updateHeldMarketFilters();
+                 populateRequestCatalog();
                 if (marketMode === 'requests') renderRequests();
                 else if (marketMode === 'history') renderHistory();
                 else if (marketMode === 'mine') renderMyListings();
@@ -11360,7 +17946,10 @@
             }
         });
         viewButtons.forEach(button => button.addEventListener('click', () => applyMarketView(button.dataset.view, marketMode)));
-        backdrop.querySelector('.market-refresh').addEventListener('click', () => marketMode === 'sell' ? loadSell() : load());
+        backdrop.querySelector('.market-refresh').addEventListener('click', async () => {
+            if (activeCategory === HELD_MACHINE_MARKET_CATEGORY && ['buy', 'mine'].includes(marketMode)) await loadHeldMachineMarketRules(true);
+            if (marketMode === 'sell') loadSell(); else load();
+        });
         backdrop.querySelectorAll('.market-tab').forEach(tab => tab.addEventListener('click', () => {
             const nextMarketMode = tab.dataset.mode;
             if (marketMode === 'featured' && nextMarketMode !== 'featured') deactivateFeaturedFilters();
@@ -11374,11 +17963,12 @@
                 categorySelect.value = 'All';
                 itemRarityFilter.value = '';
             }
-            backdrop.querySelectorAll('.market-tab').forEach(button => button.classList.toggle('on', button === tab));
+            syncMarketTabs();
             buyControls.style.display = marketMode === 'buy' || marketMode === 'mine' || marketMode === 'featured' ? 'flex' : 'none';
             alertControls.classList.toggle('visible', marketMode === 'alerts');
             itemRarityFilter.style.display = (marketMode === 'buy' || marketMode === 'mine') && activeCategory !== 'Pokemon' && activeCategory !== 'Diamonds' ? '' : 'none';
             pokemonFilters.style.display = (marketMode === 'buy' || marketMode === 'mine' || marketMode === 'featured') && activeCategory === 'Pokemon' ? 'flex' : 'none';
+            updateHeldMarketFilters();
             sellControls.style.display = marketMode === 'sell' ? 'flex' : 'none';
             sellQualityTiers.classList.toggle('visible', marketMode === 'sell' && sellKind.value === 'pokemon');
             buyQualityTiers.classList.toggle('visible', (marketMode === 'buy' || marketMode === 'featured') && activeCategory === 'Pokemon');
@@ -11390,7 +17980,8 @@
                 sellEditor.hidden = true;
                 sellReference.style.display = 'none';
             }
-            if (marketMode === 'sell') loadSell(); else load();
+            if (marketMode === 'sell') loadSell();
+            else load();
         }));
         [requestQty, requestPrice].forEach(control => control.addEventListener('input', updateRequestForm));
         requestSearch.addEventListener('focus', () => renderRequestCatalogOptions(requestSearch.value));
@@ -11476,305 +18067,6 @@
         });
         // Compatibilidad inerte: no se registran acciones, compras automáticas,
         // Telegram ni editores asociados a la antigua pestaña de Alertas.
-        if (!MARKET_ALERTS_REMOVED) {
-        backdrop.querySelector('.market-alert-tier-all').addEventListener('click', () => {
-            sellQualityTierDefinitions.forEach(tier => alertVisibleQualityTiers.add(tier.label));
-            renderAlertTierButtons();
-        });
-        backdrop.querySelector('.market-alert-tier-none').addEventListener('click', () => {
-            alertVisibleQualityTiers.clear();
-            renderAlertTierButtons();
-        });
-        alertRulesToggle.addEventListener('click', () => {
-            telegramPanel.hidden = true;
-            alertTransferPanel.hidden = true;
-            alertRulesPanel.hidden = !alertRulesPanel.hidden;
-            if (!alertRulesPanel.hidden) renderAlertRules();
-        });
-        alertRulesClose.addEventListener('click', () => { alertRulesPanel.hidden = true; });
-        alertClearAll.addEventListener('click', clearAllMarketAlerts);
-        alertEditCancel.addEventListener('click', resetMarketAlertEditor);
-        itemAlertEditCancel.addEventListener('click', resetMarketAlertEditor);
-        alertRulesPanel.addEventListener('click', event => {
-            if (event.target === alertRulesPanel) alertRulesPanel.hidden = true;
-        });
-        const closeAlertTransfer = () => { alertTransferPanel.hidden = true; };
-        alertTransferPanel.querySelectorAll('.market-alert-transfer-close').forEach(button => button.addEventListener('click', closeAlertTransfer));
-        const openAlertTransfer = (mode, value = '') => {
-            marketAlertTransferMode = mode;
-            const exporting = mode === 'export';
-            alertTransferTitle.textContent = exporting ? 'Exportar alertas' : 'Importar alertas';
-            alertTransferHelp.textContent = exporting
-                ? 'Selecciona todos los datos y usa Ctrl+C. Luego podrás pegarlos con Ctrl+V en otra cuenta.'
-                : 'Pega aquí los datos exportados desde otra cuenta y confirma la importación.';
-            alertTransferData.readOnly = exporting;
-            alertTransferData.value = value;
-            alertTransferConfirm.textContent = exporting ? 'Copiar datos' : tr('alertImport');
-            alertTransferPanel.hidden = false;
-            requestAnimationFrame(() => {
-                alertTransferData.focus();
-                if (exporting) alertTransferData.select();
-            });
-        };
-        const importMarketAlerts = (imported, importedItems = []) => {
-            if (!imported?.length && !importedItems?.length) throw new Error(tr('alertImportInvalid'));
-            const existing = getMarketAlerts();
-            const known = new Set(existing.map(marketAlertSignature));
-            const additions = (imported || []).filter(filters => {
-                const signature = marketAlertSignature(filters);
-                if (known.has(signature)) return false;
-                known.add(signature);
-                return true;
-            }).slice(0, Math.max(0, 50 - existing.length)).map(filters => ({
-                ...filters,
-                id:newMarketAlertId(),
-                createdAt:Date.now()
-            }));
-            if (additions.length) saveMarketAlerts([...existing, ...additions]);
-            additions.forEach(alert => seedMarketAlertFromListings(alert, currentListings));
-            const existingItems = getMarketItemAlerts();
-            const knownItems = new Set(existingItems.map(marketItemAlertFilterData).map(data => JSON.stringify(data)));
-            const itemAdditions = (importedItems || []).filter(filters => {
-                const signature = JSON.stringify(marketItemAlertFilterData(filters));
-                if (knownItems.has(signature)) return false;
-                knownItems.add(signature);
-                return true;
-            }).slice(0, Math.max(0, 50 - existingItems.length)).map(filters => ({ ...filters, id:newMarketAlertId(), createdAt:Date.now() }));
-            if (itemAdditions.length) saveMarketItemAlerts([...existingItems, ...itemAdditions]);
-            itemAdditions.forEach(alert => seedMarketItemAlertFromListings(alert, currentListings));
-            if (!additions.length && !itemAdditions.length) throw new Error(tr('alertImportInvalid'));
-            renderAlertRules();
-            if (marketMode === 'alerts') render();
-            return additions.length + itemAdditions.length;
-        };
-        alertExport.addEventListener('click', async () => {
-            const alerts = getMarketAlerts();
-            if (!alerts.length && !getMarketItemAlerts().length) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertNoRules'), true);
-                return;
-            }
-            try {
-                const exportData = serializeMarketAlertExport(alerts);
-                await copyMarketAlertExport(exportData);
-                openAlertTransfer('export', exportData);
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertExported'));
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('alertImportInvalid'), true);
-            }
-        });
-        alertImport.addEventListener('click', async () => {
-            try {
-                const clipboardText = await readMarketAlertFilters();
-                openAlertTransfer('import', parseMarketAlertExport(clipboardText).length || parseMarketItemAlertExport(clipboardText).length ? clipboardText : '');
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('alertImportInvalid'), true);
-            }
-        });
-        alertTransferConfirm.addEventListener('click', async () => {
-            if (marketAlertTransferMode === 'export') {
-                try {
-                    await copyMarketAlertExport(alertTransferData.value);
-                    alertTransferData.focus();
-                    alertTransferData.select();
-                    showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertExported'));
-                } catch (error) {
-                    showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('alertImportInvalid'), true);
-                }
-                return;
-            }
-            try {
-                const count = importMarketAlerts(parseMarketAlertExport(alertTransferData.value), parseMarketItemAlertExport(alertTransferData.value));
-                closeAlertTransfer();
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertImported').replace('{count}', String(count)));
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('alertImportInvalid'), true);
-            }
-        });
-        alertPaste.addEventListener('click', async () => {
-            try {
-                const clipboardText = await readMarketAlertFilters();
-                const savedText = String(localStorage.getItem(STORAGE_MARKET_ALERT_CLIPBOARD) || '');
-                let filters = [marketAlertClipboardCache, savedText, clipboardText]
-                    .map(parseMarketAlertFilters)
-                    .find(Boolean);
-                if (!filters) throw new Error(tr('alertFiltersInvalid'));
-                applyMarketAlertFilters(filters);
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertFiltersPasted'));
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('alertFiltersInvalid'), true);
-            }
-        });
-        telegramToggle.addEventListener('click', () => {
-            alertRulesPanel.hidden = true;
-            const opening = telegramPanel.hidden || telegramPanel.style.display === 'none';
-            telegramPanel.hidden = !opening;
-            telegramPanel.style.display = opening ? 'grid' : 'none';
-        });
-        const closeTelegramPanel = () => {
-            telegramPanel.hidden = true;
-            telegramPanel.style.display = 'none';
-        };
-        telegramClose.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            closeTelegramPanel();
-        });
-        telegramClose.addEventListener('pointerdown', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            closeTelegramPanel();
-        });
-        const persistTelegramSettings = () => {
-            const settings = { enabled:telegramEnabled.checked, token:telegramToken.value, chatId:telegramChatId.value };
-            saveMarketTelegramSettings(settings);
-            return settings;
-        };
-        telegramSave.addEventListener('click', () => {
-            persistTelegramSettings();
-            closeTelegramPanel();
-            showWindowMessage(backdrop.querySelector('.script-market-window'), tr('telegramSaved'));
-        });
-        telegramTest.addEventListener('click', async () => {
-            const settings = persistTelegramSettings();
-            if (!settings.enabled || !settings.token || !settings.chatId) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), 'Activa Telegram e introduce el token y Chat ID.', true);
-                return;
-            }
-            telegramTest.disabled = true;
-            try {
-                const playerName = await getCurrentMarketAlertPlayerName();
-                await telegramApiRequest('sendMessage', { chat_id:settings.chatId, text:`✅ ${tr('telegramTestMessage')}\n👤 Cuenta de juego: ${playerName}` });
-                showWindowMessage(backdrop.querySelector('.script-market-window'), tr('telegramTestMessage'));
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message, true);
-            } finally {
-                telegramTest.disabled = false;
-            }
-        });
-        backdrop.addEventListener('click', event => {
-            if (event.target.closest('.market-telegram-close')) {
-                event.preventDefault();
-                event.stopPropagation();
-                closeTelegramPanel();
-            }
-        });
-        backdrop.addEventListener('keydown', event => {
-            if (event.key !== 'Escape') return;
-            const ivCalculator = backdrop.querySelector('.market-iv-calculator.is-open');
-            if (ivCalculator) {
-                event.preventDefault();
-                event.stopPropagation();
-                ivCalculator._closeMarketIv?.();
-            } else if (!telegramPanel.hidden) closeTelegramPanel();
-            else if (!alertRulesPanel.hidden) alertRulesPanel.hidden = true;
-        });
-        alertKindTabs.forEach(tab => tab.addEventListener('click', () => {
-            const nextKind = tab.dataset.alertKind === 'item' ? 'item' : 'pokemon';
-            if (editingMarketAlert && editingMarketAlert.kind !== nextKind) resetMarketAlertEditor();
-            setAlertCreationKind(nextKind);
-        }));
-        alertRulesTabs.forEach(tab => tab.addEventListener('click', () => {
-            alertRulesKind = tab.dataset.alertRuleKind === 'item' ? 'item' : 'pokemon';
-            renderAlertRules();
-        }));
-        alertName.addEventListener('focus', refreshAlertPokemonNames);
-        itemAlertName.addEventListener('focus', refreshMarketItemAlertNames);
-        [alertPriceMin, alertPriceMax].forEach(input => input.addEventListener('input', updateAlertPriceDisplays));
-        alertCurrency.addEventListener('change', updateAlertPriceDisplays);
-        [itemAlertPriceMin, itemAlertPriceMax].forEach(input => input.addEventListener('input', updateItemAlertPriceDisplays));
-        itemAlertCurrency.addEventListener('change', updateItemAlertPriceDisplays);
-        alertAutoBuy.addEventListener('change', () => {
-            localStorage.setItem(STORAGE_MARKET_ALERT_AUTO_BUY, String(alertAutoBuy.checked));
-        });
-        itemAlertAutoBuy.addEventListener('change', () => {
-            localStorage.setItem(STORAGE_MARKET_ITEM_ALERT_AUTO_BUY, String(itemAlertAutoBuy.checked));
-            setMarketItemAlertAutoBuyStatus(itemAlertAutoBuy.checked ? 'activa' : 'desactivada');
-        });
-        itemAlertCreate.addEventListener('click', async () => {
-            const readValue = input => input.value === '' ? '' : Math.max(0, Number(input.value));
-            const editing = editingMarketAlert?.kind === 'item' ? editingMarketAlert : null;
-            const alert = {
-                id:editing?.id || newMarketAlertId(), createdAt:editing ? (getMarketItemAlerts().find(item => item.id === editing.id)?.createdAt || Date.now()) : Date.now(), name:itemAlertName.value.trim(), currency:itemAlertCurrency.value,
-                priceMin:readValue(itemAlertPriceMin), priceMax:readValue(itemAlertPriceMax), quantityMin:readValue(itemAlertQuantityMin)
-            };
-            if (alert.priceMin !== '' && alert.priceMax !== '' && alert.priceMin > alert.priceMax) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), 'El precio mínimo no puede ser mayor que el máximo.', true);
-                return;
-            }
-            itemAlertCreate.disabled = true;
-            try {
-                const listings = getMarketListings(await gameApiRequest('/api/game/market?category=All'));
-                const existing = getMarketItemAlerts();
-                saveMarketItemAlerts(editing
-                    ? existing.map(item => item.id === alert.id ? alert : item)
-                    : [...existing, alert]);
-                if (editing) {
-                    const seen = getMarketItemAlertSeenKeys();
-                    [...seen].filter(key => key.startsWith(`${alert.id}:`)).forEach(key => seen.delete(key));
-                    saveMarketItemAlertSeenKeys(seen);
-                }
-                seedMarketItemAlertFromListings(alert, listings);
-                marketItemAlertMonitorReady = true;
-                resetMarketAlertEditor();
-                renderAlertRules();
-                showWindowMessage(backdrop.querySelector('.script-market-window'), editing ? 'Alerta de objeto actualizada.' : 'Alerta de objeto creada.');
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('loadFailed'), true);
-            } finally {
-                itemAlertCreate.disabled = false;
-            }
-        });
-        alertCreate.addEventListener('click', async () => {
-            const readValue = input => input.value === '' ? '' : Math.max(0, Number(input.value));
-            const editing = editingMarketAlert?.kind === 'pokemon' ? editingMarketAlert : null;
-            const alert = {
-                id:editing?.id || newMarketAlertId(),
-                createdAt:editing ? (getMarketAlerts().find(item => item.id === editing.id)?.createdAt || Date.now()) : Date.now(),
-                name:alertName.value.trim(),
-                currency:alertCurrency.value,
-                priceMin:readValue(alertPriceMin), priceMax:readValue(alertPriceMax),
-                shiny:alertShiny.checked,
-                ivMin:readValue(alertIvMin), ivMax:readValue(alertIvMax),
-                levelMin:readValue(alertLevelMin), levelMax:readValue(alertLevelMax),
-                type:alertType.value,
-                tiers:[...alertVisibleQualityTiers]
-                    .map(tier => MARKET_QUALITY_TIER_DEFINITIONS.find(definition => definition.id === normalizeMarketTier(tier))?.label)
-                    .filter(Boolean)
-            };
-            const invalidRange = (alert.priceMin !== '' && alert.priceMax !== '' && alert.priceMin > alert.priceMax)
-                || (alert.ivMin !== '' && alert.ivMax !== '' && alert.ivMin > alert.ivMax)
-                || (alert.levelMin !== '' && alert.levelMax !== '' && alert.levelMin > alert.levelMax);
-            if (invalidRange) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), 'El valor mínimo no puede ser mayor que el máximo.', true);
-                return;
-            }
-            alertCreate.disabled = true;
-            try {
-                const payload = await gameApiRequest('/api/game/market?category=Pokemon');
-                const liveListings = getMarketListings(payload);
-                const existing = getMarketAlerts();
-                saveMarketAlerts(editing
-                    ? existing.map(item => item.id === alert.id ? alert : item)
-                    : [...existing, alert]);
-                if (editing) {
-                    const seen = getMarketAlertSeenKeys();
-                    [...seen].filter(key => key.startsWith(`${alert.id}:`)).forEach(key => seen.delete(key));
-                    saveMarketAlertSeenKeys(seen);
-                }
-                seedMarketAlertFromListings(alert, liveListings);
-                marketAlertMonitorReady = true;
-                currentListings = liveListings;
-                resetMarketAlertEditor();
-                renderAlertRules();
-                render();
-                showWindowMessage(backdrop.querySelector('.script-market-window'), editing ? 'Alerta actualizada.' : tr('alertSaved'));
-            } catch (error) {
-                showWindowMessage(backdrop.querySelector('.script-market-window'), error.message || tr('loadFailed'), true);
-            } finally {
-                alertCreate.disabled = false;
-            }
-        });
-        }
         backdrop.querySelector('.market-sell-tier-none').addEventListener('click', () => {
             if (marketMode !== 'sell') return;
             sellVisibleQualityTiers.clear();
@@ -11797,7 +18089,7 @@
             renderMineQualityTierButtons();
             renderMyListings();
         });
-        [sellKind, sellSearch, sellIvMin, sellQualityMin, sellType].forEach(control => control.addEventListener('input', () => {
+        [sellKind, sellSearch, sellIvMin, sellQualityMin, sellType, sellBotanyOnly].forEach(control => control.addEventListener('input', () => {
             selectedSellEntry = null;
             sellEditor.hidden = true;
             clearSellReference();
@@ -11847,8 +18139,9 @@
             activeMarketFavoriteKey = '';
             activeCategory = categorySelect.value;
             updateMarketCategoryRail();
+            updateHeldMarketFilters();
             itemRarityFilter.value = '';
-            renderLimit = 100;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (activeCategory !== 'Pokemon' && ['iv-desc', 'power-desc', 'level-desc', 'quality-desc'].includes(sortSelect.value)) {
                 sortSelect.value = 'recent';
             }
@@ -11860,7 +18153,12 @@
             renderMarketFavorites();
         });
         [search, sortSelect, itemRarityFilter, showGold, showDiamonds, shinyOnly, ivMin, ivMax, levelMin, levelMax, qualityMin, qualityMax, typeSelect].forEach(control => control.addEventListener('input', () => {
-            renderLimit = 100;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
+            if (marketMode === 'mine') renderMyListings();
+            else render();
+        }));
+        [heldItemFilter, heldTierFilter, heldQuantityMin].forEach(control => control.addEventListener('input', () => {
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (marketMode === 'mine') renderMyListings();
             else render();
         }));
@@ -11868,6 +18166,15 @@
         renderBuyQualityTierButtons();
         renderSellQualityTierButtons();
         renderMineQualityTierButtons();
+        /* Si venia del boton de market, se pulsa la pestaña de venta y se
+           devuelve: el manejador se encarga de todo lo demas. Es el mismo
+           camino que usa el modo autobuy en el ACTIVE, y a proposito: forzar solo
+           marketMode dejaria la pestaña marcada en comprar, los controles de
+           comprar a la vista y la lista de compra cargada. */
+        if (requestedSellPokemonId) {
+            backdrop.querySelector('.market-tab[data-mode="sell"]')?.click();
+            return;
+        }
         load();
     }
 
@@ -12849,27 +19156,6 @@
         return ivText ? Number(ivText.replace(',', '.')) : null;
     }
 
-    let huntAnalyzerRenderRefreshPending = false;
-    function refreshHuntAnalyzerGameRender() {
-        if (huntAnalyzerRenderRefreshPending || document.hidden) return;
-        if (!document.querySelector('.ha-window:not(.ha-compare-modal)')) return;
-        huntAnalyzerRenderRefreshPending = true;
-        setTimeout(() => {
-            try {
-                const event = new Event('visibilitychange');
-                Object.defineProperty(event, 'piwQolRenderRefresh', { value: true });
-                document.dispatchEvent(event);
-            } finally {
-                huntAnalyzerRenderRefreshPending = false;
-            }
-        }, 80);
-    }
-
-    document.addEventListener('visibilitychange', event => {
-        if (!event.piwQolRenderRefresh && !document.hidden) refreshHuntAnalyzerGameRender();
-    });
-    window.addEventListener('focus', refreshHuntAnalyzerGameRender);
-
     function showCompareModal() {
         const curr = currentHuntSnapshot || { defeated: 0, timeText: '0s', balance: 0, balHour: 0, xpHour: 0, killsHour: 0, xpGained: 0, locName: 'Nenhuma' };
         const last = lastHuntSnapshot || huntHistory[0] || { defeated: 0, timeText: '0s', balance: 0, balHour: 0, xpHour: 0, killsHour: 0, xpGained: 0, locName: 'Nenhuma' };
@@ -12989,7 +19275,6 @@
     function trackHuntAnalyzer() {
         const haWindow = document.querySelector('.ha-window:not(.ha-compare-modal)');
         if (!haWindow) return;
-        refreshHuntAnalyzerGameRender();
 
         const getCardVal = (idx) => {
             const card = haWindow.querySelectorAll('.ha-card b')[idx];
@@ -13245,41 +19530,90 @@
     }
 
     let domCheckTimeout = null;
+    let lastDomCheckAt = 0;
+    let domEnhancementsInitialized = false;
+    function runDOMEnhancement(name, callback) {
+        try {
+            const result = callback();
+            if (result && typeof result.catch === 'function') {
+                result.catch(error => console.error(`[Better Market and More] Falló la mejora: ${name}`, error));
+            }
+            return result;
+        } catch (error) {
+            // Las mejoras son independientes: un cambio puntual en la UI del
+            // juego no debe impedir que se inyecten todas las demás.
+            console.error(`[Better Market and More] Falló la mejora: ${name}`, error);
+            return undefined;
+        }
+    }
     const observer = new MutationObserver(() => {
         if (domCheckTimeout) return;
+        // El juego cambia el DOM con mucha frecuencia durante una hunt.
+        // Limitar los escaneos evita saturar el hilo principal.
+        const delay = Math.max(150, 700 - (Date.now() - lastDomCheckAt));
         domCheckTimeout = setTimeout(() => {
             domCheckTimeout = null;
+            lastDomCheckAt = Date.now();
             
-            injectQuickTPButton();
-            if (document.querySelector('.cfg-window')) injectConfigTab();
-            applyChatState();
-            injectHuntShopLauncher();
-            if (findNativeMarkWindow() && isMarkEnhancementsActive()) injectShopEnhancements();
-            if (document.querySelector('.ball-window')) injectHuntBallEnhancements(document.querySelector('.ball-window'));
-            if (document.querySelector('.dex-window')) injectDexEnhancements();
-            if (document.querySelector('.ha-window:not(.ha-compare-modal)')) trackHuntAnalyzer();
-            if (document.querySelector('.inv-window')) enhanceInventoryWindow();
-            enhanceCaptureLog();
-            applyBetterWindowScales();
+            runDOMEnhancement('botones del dock', injectDockButtonsWhenReady);
+            /* Recuperacion: si se cerro la ventana (o la pestana) con el Depot
+               familiar abierto, el personaje quedo en la ciudad. Se devuelve a la
+               hunt de la que se salio, una sola vez por recarga. */
+            if (!pendingFamilyHuntRecoveryStarted) {
+                pendingFamilyHuntRecoveryStarted = true;
+                if (getPendingFamilyHunt() && !isPlayerReallyInHunt()) {
+                    setTimeout(() => { returnToPendingFamilyHunt(); }, 3500);
+                }
+            }
+            if (document.querySelector('.cfg-window')) runDOMEnhancement('configuración', injectConfigTab);
+            runDOMEnhancement('chat', applyChatState);
+            runDOMEnhancement('accesos de hunt', injectHuntShopLauncher);
+            if (findNativeMarkWindow() && isMarkEnhancementsActive()) runDOMEnhancement('Mark', injectShopEnhancements);
+            if (document.querySelector('.ball-window')) runDOMEnhancement('tienda de Poké Balls', () => injectHuntBallEnhancements(document.querySelector('.ball-window')));
+            if (document.querySelector('.dex-window')) runDOMEnhancement('Pokédex', injectDexEnhancements);
+            if (document.querySelector('.ha-window:not(.ha-compare-modal)')) runDOMEnhancement('Hunt Analyzer', trackHuntAnalyzer);
+            if (document.querySelector('.inv-window')) runDOMEnhancement('inventario', enhanceInventoryWindow);
+            runDOMEnhancement('registro de capturas', enhanceCaptureLog);
+            runDOMEnhancement('escala de ventanas', applyBetterWindowScales);
 
             const mapWindow = document.querySelector('.map-window');
             if (mapWindow) {
                 if (renderTimeout) clearTimeout(renderTimeout);
                 renderTimeout = setTimeout(buildSimpleList, 200);
             }
-        }, 150);
+        }, delay);
     });
 
     function initializeDOMEnhancements() {
-        applyMapScriptState();
+        // Tampermonkey puede ejecutar el script justo antes de que el juego
+        // monte su body. Esperamos ese nodo para no abortar el arranque.
+        if (!document.head || !document.body) {
+            setTimeout(initializeDOMEnhancements, 50);
+            return;
+        }
+        if (domEnhancementsInitialized) return;
+        domEnhancementsInitialized = true;
+
+        document.documentElement.dataset.betterMarketAndMore = 'initialized-10.20.4-no-autobuy';
         observer.observe(document.body, { childList: true, subtree: true });
-        applyBetterWindowScales();
-        updateMarketSaleDockBadge();
+        runDOMEnhancement('botones iniciales del dock', injectDockButtonsWhenReady);
+        runDOMEnhancement('estado del mapa', applyMapScriptState);
+        runDOMEnhancement('escala inicial de ventanas', applyBetterWindowScales);
+        runDOMEnhancement('indicador de ventas', updateMarketSaleDockBadge);
         document.querySelectorAll('.market-alert-dock-badge,.market-alert-toast').forEach(element => element.remove());
         if (!marketSaleMonitorInterval) {
             setTimeout(pollCompletedMarketSales, 3500);
             marketSaleMonitorInterval = setInterval(pollCompletedMarketSales, 15000);
         }
+        /* La auto-venta del deposito se dispara con las capturas, no con un
+           temporizador que procese lo que encuentre. startMarketAutoSellCaptureWatch
+           ya se protege de arrancar dos veces. */
+        startMarketAutoSellCaptureWatch();
+        /* El panel de sesion arranca siempre, tambien con la auto-venta apagada:
+           su unico trabajo cuando esta apagada es esconderse, y hacerlo al
+           encenderla exigiria engancharse a un interruptor que no emite eventos.
+           El propio start se protege de arrancar dos veces. */
+        runDOMEnhancement('panel de sesion de auto-venta', startMarketAutoSellPanel);
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initializeDOMEnhancements, { once: true });

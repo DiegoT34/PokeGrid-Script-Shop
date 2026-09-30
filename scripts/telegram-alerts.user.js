@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PokeGrid Telegram Alerts
 // @namespace    pokegrid.telegram-alerts
-// @version      1.12.1
-// @description  Poké Ball real, número de captura, deduplicación robusta, selección de Shiny Cards y Alertas de Stock de Poké Balls.
+// @version      1.14.0
+// @description  Alertas de juego y consultas bajo demanda del Market mediante comandos y botones interactivos de Telegram.
 // @author       PokeGrid
 // @match        https://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -25,6 +25,12 @@
   const SCRIPT_BOOT_TIME = Date.now();
   const GAME_ORIGIN = 'https://poke.idleworld.online';
   const GAME_ASSET_ROOT = `${GAME_ORIGIN}/game/asset-packs`;
+  const GAME_MARKET_URL = '/api/game/market?category=All';
+  const TELEGRAM_COMMAND_POLL_MS = 2_750;
+  const TELEGRAM_COMMAND_LEASE_MS = 30_000;
+  const TELEGRAM_COMMAND_LEASE_KEY = 'pokegrid:telegram-alerts:command-host:v1';
+  const TELEGRAM_COMMAND_OFFSET_PREFIX = 'pokegrid:telegram-alerts:update-offset:v1:';
+  const TELEGRAM_MARKET_FAVORITES_KEY = 'pokegrid:telegram-alerts:market-favorites:v1';
   const account = GM.info?.script?.account || { index: -1, label: 'Cuenta' };
   const accountLabel = String(account.label || `Cuenta ${Number(account.index) + 1}`);
   const imageCache = new Map();
@@ -55,6 +61,14 @@
   let panel = null;
   let statusElement = null;
   let deliveryQueue = Promise.resolve();
+  let telegramCommandPollBusy = false;
+  let telegramCommandToken = '';
+  let telegramCommandOffset = 0;
+  let telegramCommandsRegisteredFor = '';
+  const telegramPendingMarketSearch = new Set();
+  let telegramMarketFavorites = null;
+  let telegramMarketFavoritesPromise = null;
+  const telegramCommandInstanceId = `${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
 
   // === NUEVO: Control para no repetir la alerta de stock en cada ciclo ===
   const lowStockNotified = new Map(); 
@@ -1867,6 +1881,7 @@
 
       updateButtonState();
       applyUIConfig();
+      pollTelegramBotCommands();
     } catch (error) {
       setStatus(
         `No se pudo leer la configuración guardada: ${error.message}`,
@@ -3968,6 +3983,38 @@
         font-size: 9px;
       }
 
+      .pgtg-market-command-card {
+        display: grid;
+        grid-template-columns: minmax(105px, auto) minmax(0, 1fr);
+        gap: 6px 10px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid #24556b;
+        border-radius: 8px;
+        background: #071722;
+      }
+
+      .pgtg-market-command-card > b {
+        grid-column: 1 / -1;
+        color: #6fdcf3;
+        font-size: 10px;
+      }
+
+      .pgtg-market-command-card code {
+        padding: 5px 7px;
+        border: 1px solid #2a6e88;
+        border-radius: 5px;
+        background: #0b2a39;
+        color: #7ce7ff;
+        font: 800 9px/1.2 Consolas, monospace;
+      }
+
+      .pgtg-market-command-card small {
+        color: #86a7b5;
+        font-size: 8px;
+        line-height: 1.35;
+      }
+
       .pgtg-filter-card {
         border-color: #1e5368;
       }
@@ -4447,6 +4494,13 @@
 
         <button
           class="pgtg-tab"
+          data-target="tab-market-bot"
+        >
+          MARKET EN TELEGRAM
+        </button>
+
+        <button
+          class="pgtg-tab"
           data-target="tab-alerts"
         >
           ALERTAS
@@ -4553,6 +4607,38 @@
             </p>
           </div>
 
+        </div>
+
+        <div
+          id="tab-market-bot"
+          class="pgtg-tab-content"
+        >
+          <div class="pgtg-section">
+            <strong>
+              <span class="pgtg-step">M</span>
+              Consultas del Market desde Telegram
+            </strong>
+
+            <p class="pgtg-section-intro">
+              El bot consulta el Market únicamente cuando envías un comando o pulsas un botón. No necesitas abrir el Mercado Global y no se mantienen lecturas periódicas de precios.
+            </p>
+
+            <div class="pgtg-market-command-card">
+              <b>🤖 Comandos disponibles</b>
+              <code>/market</code>
+              <small>Abre el menú interactivo con búsqueda y categorías.</small>
+              <code>/precio Water Stone</code>
+              <small>Consulta directamente un objeto por su nombre.</small>
+              <code>/favoritos</code>
+              <small>Abre tus objetos guardados para consultarlos con un toque.</small>
+              <code>/ayuda</code>
+              <small>Muestra nuevamente las funciones disponibles.</small>
+            </div>
+
+            <p class="pgtg-help">
+              Por seguridad, el bot solo responde a los Chat ID guardados como destinatarios. La instancia principal del launcher procesa los comandos para evitar respuestas duplicadas.
+            </p>
+          </div>
         </div>
 
         <div
@@ -6090,6 +6176,1137 @@
       ).href;
     } catch {
       return '';
+    }
+  }
+
+  // ============================================================
+  // MARKET BAJO DEMANDA DESDE TELEGRAM
+  // ============================================================
+
+  function gameSessionTokens() {
+    try {
+      return JSON.parse(
+        sessionStorage.getItem('pokeweb:tokens') ||
+        'null'
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshGameAccessToken() {
+    const tokens = gameSessionTokens();
+    if (!tokens?.refreshToken) return '';
+
+    const response = await fetch(
+      '/api/auth/refresh',
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          refreshToken: tokens.refreshToken
+        })
+      }
+    );
+
+    if (!response.ok) return '';
+    const refreshed = await response
+      .json()
+      .catch(() => ({}));
+
+    if (!refreshed?.accessToken) return '';
+    sessionStorage.setItem(
+      'pokeweb:tokens',
+      JSON.stringify(refreshed)
+    );
+    return refreshed.accessToken;
+  }
+
+  async function gameApiGet(path) {
+    const send = (token) => fetch(
+      path,
+      {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: token
+          ? { Authorization: `Bearer ${token}` }
+          : {}
+      }
+    );
+
+    let response = await send(
+      gameSessionTokens()?.accessToken
+    );
+
+    if (response.status === 401) {
+      const token = await refreshGameAccessToken();
+      if (token) response = await send(token);
+    }
+
+    const body = await response
+      .json()
+      .catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        body?.message ||
+        body?.error ||
+        `HTTP ${response.status}`
+      );
+    }
+
+    return body;
+  }
+
+  function marketListingsFromPayload(
+    payload,
+    depth = 0,
+    visited = new WeakSet()
+  ) {
+    if (Array.isArray(payload)) return payload;
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      depth > 6 ||
+      visited.has(payload)
+    ) return [];
+
+    visited.add(payload);
+    for (const key of [
+      'listings',
+      'items',
+      'results',
+      'offers',
+      'data'
+    ]) {
+      if (Array.isArray(payload[key])) {
+        return payload[key];
+      }
+      const nested = marketListingsFromPayload(
+        payload[key],
+        depth + 1,
+        visited
+      );
+      if (nested.length) return nested;
+    }
+    return [];
+  }
+
+  function marketListingRefId(entry) {
+    const ref = entry?.item || entry?.product || {};
+    return entry?.refId ??
+      entry?.itemId ??
+      entry?.ballId ??
+      ref.refId ??
+      ref.id ??
+      ref.itemId ??
+      null;
+  }
+
+  function marketListingCurrency(entry) {
+    const ref = entry?.item || entry?.product || {};
+    const value = clean(
+      entry?.currency ||
+      entry?.currencyType ||
+      ref.currency ||
+      ref.currencyType ||
+      'GOLD'
+    ).toUpperCase();
+    return /DIAM|^DD$/.test(value)
+      ? 'DIAMONDS'
+      : 'GOLD';
+  }
+
+  function marketListingPrice(entry) {
+    return Number(
+      entry?.price ??
+      entry?.unitPrice ??
+      entry?.totalPrice ??
+      entry?.value ??
+      0
+    );
+  }
+
+  function marketListingQuantity(entry) {
+    const quantity = Number(
+      entry?.quantity ??
+      entry?.qty ??
+      entry?.amount ??
+      entry?.stock ??
+      1
+    );
+    return Number.isFinite(quantity) && quantity > 0
+      ? Math.floor(quantity)
+      : 1;
+  }
+
+  function isActiveMarketItemListing(entry) {
+    const ref = entry?.item || entry?.product || {};
+    const kind = clean(
+      entry?.kind ||
+      entry?.itemKind ||
+      ref.kind
+    ).toLowerCase();
+    const pokemon = Boolean(
+      entry?.pokemon ||
+      entry?.pokemonId != null ||
+      entry?.speciesId != null ||
+      /pokemon|pokémon|creature/.test(kind)
+    );
+    const inactive = Boolean(
+      entry?.bought ||
+      entry?.sold ||
+      entry?.cancelled ||
+      entry?.canceled ||
+      entry?.active === false ||
+      entry?.offerOnly
+    );
+    return !pokemon &&
+      !inactive &&
+      marketListingPrice(entry) > 0;
+  }
+
+  function marketPriceSummary(listings, currency) {
+    const rows = listings.filter(
+      (entry) =>
+        marketListingCurrency(entry) === currency
+    );
+    if (!rows.length) return null;
+
+    const lowest = Math.min(
+      ...rows.map(marketListingPrice)
+    );
+    const atLowest = rows.filter(
+      (entry) =>
+        marketListingPrice(entry) === lowest
+    );
+    return {
+      price: lowest,
+      quantity: atLowest.reduce(
+        (sum, entry) =>
+          sum + marketListingQuantity(entry),
+        0
+      ),
+      listings: atLowest.length,
+      totalQuantity: rows.reduce(
+        (sum, entry) =>
+          sum + marketListingQuantity(entry),
+        0
+      )
+    };
+  }
+
+  function telegramMarketNumber(value) {
+    return Math.max(0, Number(value) || 0)
+      .toLocaleString('es-ES');
+  }
+
+  function telegramMarketCallback(action) {
+    return `pgtg:m:${action}`;
+  }
+
+  function normalizeTelegramMarketFavorites(value) {
+    let rows = value;
+    if (typeof rows === 'string') {
+      try { rows = JSON.parse(rows); }
+      catch { rows = []; }
+    }
+    return [...new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map(Number)
+        .filter((id) =>
+          Number.isFinite(id) && id > 0
+        )
+    )].slice(0, 60);
+  }
+
+  async function getTelegramMarketFavorites() {
+    if (telegramMarketFavorites) {
+      return [...telegramMarketFavorites];
+    }
+    if (!telegramMarketFavoritesPromise) {
+      telegramMarketFavoritesPromise = (async () => {
+        let stored = null;
+        try {
+          if (typeof GM_getValue !== 'undefined') {
+            stored = await GM_getValue(
+              TELEGRAM_MARKET_FAVORITES_KEY,
+              null
+            );
+          } else if (typeof GM !== 'undefined' && GM.getValue) {
+            stored = await GM.getValue(
+              TELEGRAM_MARKET_FAVORITES_KEY,
+              null
+            );
+          }
+        } catch {}
+        if (stored == null) {
+          stored = localStorage.getItem(
+            TELEGRAM_MARKET_FAVORITES_KEY
+          );
+        }
+        telegramMarketFavorites = normalizeTelegramMarketFavorites(stored);
+        return telegramMarketFavorites;
+      })().finally(() => {
+        telegramMarketFavoritesPromise = null;
+      });
+    }
+    return [...(await telegramMarketFavoritesPromise)];
+  }
+
+  async function saveTelegramMarketFavorites(ids) {
+    telegramMarketFavorites = normalizeTelegramMarketFavorites(ids);
+    localStorage.setItem(
+      TELEGRAM_MARKET_FAVORITES_KEY,
+      JSON.stringify(telegramMarketFavorites)
+    );
+    try {
+      if (typeof GM_setValue !== 'undefined') {
+        await GM_setValue(
+          TELEGRAM_MARKET_FAVORITES_KEY,
+          telegramMarketFavorites
+        );
+      } else if (typeof GM !== 'undefined' && GM.setValue) {
+        await GM.setValue(
+          TELEGRAM_MARKET_FAVORITES_KEY,
+          telegramMarketFavorites
+        );
+      }
+    } catch {}
+    return [...telegramMarketFavorites];
+  }
+
+  async function telegramMarketItemIsFavorite(itemId) {
+    return (await getTelegramMarketFavorites())
+      .includes(Number(itemId));
+  }
+
+  async function toggleTelegramMarketFavorite(itemId) {
+    const id = Number(itemId);
+    const favorites = await getTelegramMarketFavorites();
+    const enabled = !favorites.includes(id);
+    const next = enabled
+      ? [id, ...favorites]
+      : favorites.filter((value) => value !== id);
+    await saveTelegramMarketFavorites(next);
+    return enabled;
+  }
+
+  function telegramMarketHomeKeyboard() {
+    return {
+      inline_keyboard: [
+        [{
+          text: '⭐ Favoritos',
+          callback_data: telegramMarketCallback('favorites:0')
+        }],
+        [{
+          text: '🔎 Buscar objeto',
+          callback_data: telegramMarketCallback('search')
+        }],
+        [
+          { text: '🪨 Stones', callback_data: telegramMarketCallback('cat:stone:0') },
+          { text: '🫐 Berries', callback_data: telegramMarketCallback('cat:berry:0') }
+        ],
+        [
+          { text: '💿 TMs', callback_data: telegramMarketCallback('cat:tm:0') },
+          { text: '🧪 Curas', callback_data: telegramMarketCallback('cat:heal:0') }
+        ],
+        [
+          { text: '🎴 Cards', callback_data: telegramMarketCallback('cat:card:0') },
+          { text: '📦 Drops / Misc', callback_data: telegramMarketCallback('cat:loot:0') }
+        ]
+      ]
+    };
+  }
+
+  async function telegramBotCall(method, payload = {}) {
+    if (!config.token) {
+      throw new Error('El bot no está configurado.');
+    }
+    const response = await requestJson(
+      `https://api.telegram.org/bot${config.token}/${method}`,
+      payload
+    );
+    return response?.result;
+  }
+
+  async function sendTelegramMarketMessage(
+    chatId,
+    {
+      text,
+      photo = '',
+      replyMarkup = null
+    }
+  ) {
+    const common = {
+      chat_id: String(chatId),
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup || undefined
+    };
+
+    if (photo) {
+      try {
+        const animated = /\.gif(?:\?|$)/i.test(photo);
+        return await telegramBotCall(
+          animated ? 'sendAnimation' : 'sendPhoto',
+          {
+            ...common,
+            [animated ? 'animation' : 'photo']: photo,
+            caption: String(text || '').slice(0, 1000)
+          }
+        );
+      } catch (error) {
+        console.debug(
+          '[PokeGrid Telegram] El sprite del objeto no pudo enviarse; se usará texto.',
+          error?.message || error
+        );
+      }
+    }
+
+    return telegramBotCall(
+      'sendMessage',
+      {
+        ...common,
+        text: String(text || '').slice(0, 3900),
+        disable_web_page_preview: true
+      }
+    );
+  }
+
+  function authorizedTelegramChat(chatId) {
+    const id = String(chatId ?? '');
+    return parseRecipients().some(
+      (recipient) =>
+        String(recipient.chatId) === id
+    );
+  }
+
+  function marketCategoryKey(item) {
+    const category = normalized(item?.category);
+    const name = normalized(item?.name);
+    if (category === 'stone') return 'stone';
+    if (category === 'berry') return 'berry';
+    if (category === 'tm') return 'tm';
+    if (
+      category === 'heal' ||
+      category === 'revive' ||
+      /potion|revive|medicine|cura/.test(name)
+    ) return 'heal';
+    if (category === 'card') return 'card';
+    return 'loot';
+  }
+
+  async function findMarketCatalogItems(query) {
+    const wanted = normalized(query);
+    if (!wanted) return [];
+    const rows = await itemCatalog();
+    return rows
+      .map((item) => {
+        const name = normalized(item?.name);
+        const exact = name === wanted;
+        const starts = name.startsWith(wanted);
+        const contains = name.includes(wanted);
+        const tokenMatch = wanted
+          .split(/\s+/)
+          .filter(Boolean)
+          .every((token) => name.includes(token));
+        return {
+          item,
+          score: exact ? 0 : starts ? 1 : contains ? 2 : tokenMatch ? 3 : 99
+        };
+      })
+      .filter((row) => row.score < 99)
+      .sort((a, b) =>
+        a.score - b.score ||
+        clean(a.item.name).length - clean(b.item.name).length ||
+        clean(a.item.name).localeCompare(clean(b.item.name))
+      )
+      .map((row) => row.item);
+  }
+
+  function marketItemChoiceKeyboard(items, footer = true) {
+    const rows = items.slice(0, 10).map(
+      (item) => [{
+        text: `📦 ${clean(item.name)}`.slice(0, 58),
+        callback_data: telegramMarketCallback(`item:${Number(item.id ?? item.itemId)}`)
+      }]
+    );
+    if (footer) {
+      rows.push([
+        { text: '🔎 Buscar', callback_data: telegramMarketCallback('search') },
+        { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+      ]);
+    }
+    return { inline_keyboard: rows };
+  }
+
+  async function showTelegramMarketHome(chatId) {
+    telegramPendingMarketSearch.delete(String(chatId));
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: [
+          '🏪 <b>Market de Poke Idle World</b>',
+          '',
+          'Busca un objeto por nombre o explora una categoría. El precio se leerá únicamente cuando selecciones el objeto.',
+          '',
+          'También puedes usar:',
+          '<code>/precio Water Stone</code>'
+        ].join('\n'),
+        replyMarkup: telegramMarketHomeKeyboard()
+      }
+    );
+  }
+
+  async function promptTelegramMarketSearch(chatId) {
+    telegramPendingMarketSearch.add(String(chatId));
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: [
+          '🔎 <b>Buscar en el Market</b>',
+          '',
+          'Escribe ahora el nombre del objeto que quieres consultar.',
+          'Ejemplo: <code>Water Stone</code>'
+        ].join('\n'),
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: '✖ Cancelar', callback_data: telegramMarketCallback('cancel') },
+            { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+          ]]
+        }
+      }
+    );
+  }
+
+  async function showTelegramMarketCategory(
+    chatId,
+    category,
+    requestedPage = 0
+  ) {
+    const labels = {
+      stone: '🪨 Stones',
+      berry: '🫐 Berries',
+      tm: '💿 TMs',
+      heal: '🧪 Curas',
+      card: '🎴 Cards',
+      loot: '📦 Drops / Misc'
+    };
+    const catalog = (await itemCatalog())
+      .filter((item) =>
+        marketCategoryKey(item) === category
+      )
+      .sort((a, b) =>
+        clean(a.name).localeCompare(clean(b.name))
+      );
+    const pageSize = 8;
+    const pageCount = Math.max(
+      1,
+      Math.ceil(catalog.length / pageSize)
+    );
+    const page = Math.max(
+      0,
+      Math.min(pageCount - 1, Number(requestedPage) || 0)
+    );
+    const items = catalog.slice(
+      page * pageSize,
+      page * pageSize + pageSize
+    );
+    const keyboard = marketItemChoiceKeyboard(
+      items,
+      false
+    ).inline_keyboard;
+    const navigation = [];
+    if (page > 0) {
+      navigation.push({
+        text: '◀ Anterior',
+        callback_data: telegramMarketCallback(`cat:${category}:${page - 1}`)
+      });
+    }
+    navigation.push({
+      text: `${page + 1}/${pageCount}`,
+      callback_data: telegramMarketCallback('noop')
+    });
+    if (page + 1 < pageCount) {
+      navigation.push({
+        text: 'Siguiente ▶',
+        callback_data: telegramMarketCallback(`cat:${category}:${page + 1}`)
+      });
+    }
+    keyboard.push(navigation);
+    keyboard.push([
+      { text: '🔎 Buscar', callback_data: telegramMarketCallback('search') },
+      { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+    ]);
+
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: `<b>${labels[category] || 'Objetos'}</b>\nSelecciona un objeto para consultar su precio actual.`,
+        replyMarkup: { inline_keyboard: keyboard }
+      }
+    );
+  }
+
+  async function showTelegramMarketFavorites(
+    chatId,
+    requestedPage = 0
+  ) {
+    const favoriteIds = await getTelegramMarketFavorites();
+    const catalog = await itemCatalog();
+    const byId = new Map(
+      catalog.map((item) => [
+        Number(item?.id ?? item?.itemId),
+        item
+      ])
+    );
+    const favorites = favoriteIds
+      .map((id) => byId.get(Number(id)))
+      .filter(Boolean);
+
+    if (favorites.length !== favoriteIds.length) {
+      await saveTelegramMarketFavorites(
+        favorites.map((item) =>
+          Number(item?.id ?? item?.itemId)
+        )
+      );
+    }
+
+    if (!favorites.length) {
+      return sendTelegramMarketMessage(
+        chatId,
+        {
+          text: [
+            '⭐ <b>Favoritos del Market</b>',
+            '',
+            'Todavía no has guardado objetos.',
+            'Consulta uno y pulsa <b>Agregar a favoritos</b> para crear un acceso rápido.'
+          ].join('\n'),
+          replyMarkup: {
+            inline_keyboard: [[
+              { text: '🔎 Buscar objeto', callback_data: telegramMarketCallback('search') },
+              { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+            ]]
+          }
+        }
+      );
+    }
+
+    const pageSize = 8;
+    const pageCount = Math.max(
+      1,
+      Math.ceil(favorites.length / pageSize)
+    );
+    const page = Math.max(
+      0,
+      Math.min(pageCount - 1, Number(requestedPage) || 0)
+    );
+    const visible = favorites.slice(
+      page * pageSize,
+      page * pageSize + pageSize
+    );
+    const keyboard = visible.map((item) => [{
+      text: `⭐ ${clean(item.name)}`.slice(0, 58),
+      callback_data: telegramMarketCallback(`item:${Number(item.id ?? item.itemId)}`)
+    }]);
+    const navigation = [];
+    if (page > 0) {
+      navigation.push({
+        text: '◀ Anterior',
+        callback_data: telegramMarketCallback(`favorites:${page - 1}`)
+      });
+    }
+    navigation.push({
+      text: `${page + 1}/${pageCount}`,
+      callback_data: telegramMarketCallback('noop')
+    });
+    if (page + 1 < pageCount) {
+      navigation.push({
+        text: 'Siguiente ▶',
+        callback_data: telegramMarketCallback(`favorites:${page + 1}`)
+      });
+    }
+    keyboard.push(navigation);
+    keyboard.push([
+      { text: '🔎 Buscar', callback_data: telegramMarketCallback('search') },
+      { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+    ]);
+
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: `⭐ <b>Favoritos del Market</b>\n${favorites.length} acceso(s) rápido(s) guardado(s).`,
+        replyMarkup: { inline_keyboard: keyboard }
+      }
+    );
+  }
+
+  function telegramMarketResultKeyboard(
+    itemId,
+    isFavorite
+  ) {
+    return {
+      inline_keyboard: [
+        [{
+          text: '🔄 Actualizar precio',
+          callback_data: telegramMarketCallback(`item:${itemId}`)
+        }],
+        [{
+          text: isFavorite ? '★ Quitar de favoritos' : '☆ Agregar a favoritos',
+          callback_data: telegramMarketCallback(`favorite:${itemId}`)
+        }],
+        [
+          { text: '⭐ Favoritos', callback_data: telegramMarketCallback('favorites:0') },
+          { text: '🔎 Otro objeto', callback_data: telegramMarketCallback('search') }
+        ],
+        [{ text: '🏪 Menú del Market', callback_data: telegramMarketCallback('home') }]
+      ]
+    };
+  }
+
+  async function sendTelegramMarketItemResult(
+    chatId,
+    item
+  ) {
+    const itemId = Number(item?.id ?? item?.itemId);
+    if (!Number.isFinite(itemId)) {
+      throw new Error('El objeto no tiene un ID válido.');
+    }
+
+    // Esta es la única lectura del Market: se ejecuta por comando o callback.
+    const payload = await gameApiGet(GAME_MARKET_URL);
+    const listings = marketListingsFromPayload(payload)
+      .filter(isActiveMarketItemListing)
+      .filter((entry) =>
+        Number(marketListingRefId(entry)) === itemId
+      );
+    const gold = marketPriceSummary(listings, 'GOLD');
+    const diamonds = marketPriceSummary(listings, 'DIAMONDS');
+    const timestamp = new Intl.DateTimeFormat(
+      'es-ES',
+      {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }
+    ).format(new Date());
+    const currencyLine = (icon, label, data) =>
+      data
+        ? `${icon} <b>${label}:</b> ${telegramMarketNumber(data.price)} c/u\n   📦 <b>${telegramMarketNumber(data.quantity)}</b> unidades al precio mínimo · ${data.listings} anuncio(s)`
+        : `${icon} <b>${label}:</b> Sin anuncios activos`;
+    const text = [
+      '🏷️ <b>Consulta del Market</b>',
+      '',
+      `📦 <b>${escapeHtml(clean(item.name) || `Item #${itemId}`)}</b>`,
+      `🆔 ID: <code>${itemId}</code>`,
+      '',
+      currencyLine('💲', 'Pokédolares', gold),
+      '',
+      currencyLine('💎', 'Diamantes', diamonds),
+      '',
+      listings.length
+        ? `📊 Total listado: <b>${telegramMarketNumber(listings.reduce((sum, entry) => sum + marketListingQuantity(entry), 0))}</b> unidades`
+        : 'ℹ️ Este objeto no está listado actualmente.',
+      `🕒 Consultado a las ${timestamp}`
+    ].join('\n');
+    const photo = absoluteStockIcon(
+      item.iconUrl ||
+      item.icon ||
+      item.image ||
+      item.sprite
+    );
+    const isFavorite = await telegramMarketItemIsFavorite(itemId);
+
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text,
+        photo,
+        replyMarkup: telegramMarketResultKeyboard(
+          itemId,
+          isFavorite
+        )
+      }
+    );
+  }
+
+  async function resolveAndSendTelegramMarketItem(
+    chatId,
+    query
+  ) {
+    telegramPendingMarketSearch.delete(String(chatId));
+    const matches = await findMarketCatalogItems(query);
+
+    if (!matches.length) {
+      return sendTelegramMarketMessage(
+        chatId,
+        {
+          text: `❌ No encontré ningún objeto llamado <b>${escapeHtml(clean(query))}</b>.\nPrueba con otra parte del nombre.`,
+          replyMarkup: {
+            inline_keyboard: [[
+              { text: '🔎 Intentar de nuevo', callback_data: telegramMarketCallback('search') },
+              { text: '🏪 Menú', callback_data: telegramMarketCallback('home') }
+            ]]
+          }
+        }
+      );
+    }
+
+    const exact = matches.find(
+      (item) =>
+        normalized(item.name) === normalized(query)
+    );
+    if (exact || matches.length === 1) {
+      return sendTelegramMarketItemResult(
+        chatId,
+        exact || matches[0]
+      );
+    }
+
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: `🔎 Encontré varios resultados para <b>${escapeHtml(clean(query))}</b>. Elige el objeto correcto:`,
+        replyMarkup: marketItemChoiceKeyboard(matches)
+      }
+    );
+  }
+
+  async function telegramItemById(itemId) {
+    const catalog = await itemCatalog();
+    return catalog.find(
+      (item) =>
+        Number(item?.id ?? item?.itemId) === Number(itemId)
+    ) || null;
+  }
+
+  async function handleTelegramMarketCallback(query) {
+    const chatId = String(query?.message?.chat?.id ?? '');
+    if (!authorizedTelegramChat(chatId)) {
+      await telegramBotCall(
+        'answerCallbackQuery',
+        {
+          callback_query_id: query.id,
+          text: 'Chat no autorizado.',
+          show_alert: true
+        }
+      ).catch(() => null);
+      return;
+    }
+
+    const action = clean(query.data).slice('pgtg:m:'.length);
+    if (action === 'noop') {
+      await telegramBotCall('answerCallbackQuery', {
+        callback_query_id: query.id
+      }).catch(() => null);
+      return;
+    }
+
+    if (action.startsWith('favorite:')) {
+      const itemId = Number(action.slice('favorite:'.length));
+      const item = await telegramItemById(itemId);
+      if (!item) {
+        throw new Error('El objeto seleccionado ya no existe en el catálogo.');
+      }
+      const enabled = await toggleTelegramMarketFavorite(itemId);
+      await telegramBotCall(
+        'answerCallbackQuery',
+        {
+          callback_query_id: query.id,
+          text: enabled
+            ? `${clean(item.name)} agregado a favoritos.`
+            : `${clean(item.name)} quitado de favoritos.`
+        }
+      ).catch(() => null);
+      await telegramBotCall(
+        'editMessageReplyMarkup',
+        {
+          chat_id: chatId,
+          message_id: query.message?.message_id,
+          reply_markup: telegramMarketResultKeyboard(
+            itemId,
+            enabled
+          )
+        }
+      ).catch(() => null);
+      return;
+    }
+
+    await telegramBotCall(
+      'answerCallbackQuery',
+      {
+        callback_query_id: query.id,
+        text: action.startsWith('item:')
+          ? 'Consultando el Market…'
+          : 'Abriendo…'
+      }
+    ).catch(() => null);
+
+    if (action === 'home') return showTelegramMarketHome(chatId);
+    if (action === 'search') return promptTelegramMarketSearch(chatId);
+    if (action.startsWith('favorites:')) {
+      return showTelegramMarketFavorites(
+        chatId,
+        Number(action.split(':')[1]) || 0
+      );
+    }
+    if (action === 'cancel') {
+      telegramPendingMarketSearch.delete(chatId);
+      return showTelegramMarketHome(chatId);
+    }
+    if (action.startsWith('cat:')) {
+      const [, category, page] = action.split(':');
+      return showTelegramMarketCategory(
+        chatId,
+        category,
+        Number(page) || 0
+      );
+    }
+    if (action.startsWith('item:')) {
+      const item = await telegramItemById(
+        Number(action.slice(5))
+      );
+      if (!item) {
+        throw new Error('El objeto seleccionado ya no existe en el catálogo.');
+      }
+      return sendTelegramMarketItemResult(chatId, item);
+    }
+  }
+
+  async function sendTelegramBotHelp(chatId) {
+    return sendTelegramMarketMessage(
+      chatId,
+      {
+        text: [
+          '🤖 <b>PokeGrid Telegram Alerts</b>',
+          '',
+          '<b>Market bajo demanda</b>',
+          '• <code>/market</code> — menú interactivo',
+          '• <code>/precio nombre</code> — precio directo',
+          '• <code>/favoritos</code> — accesos rápidos guardados',
+          '• <code>/cancelar</code> — cancelar búsqueda',
+          '',
+          'Los precios solo se consultan cuando solicitas un objeto.'
+        ].join('\n'),
+        replyMarkup: telegramMarketHomeKeyboard()
+      }
+    );
+  }
+
+  async function handleTelegramCommandMessage(message) {
+    const chatId = String(message?.chat?.id ?? '');
+    if (!authorizedTelegramChat(chatId)) return;
+    const text = clean(message?.text);
+    if (!text) return;
+
+    const command = text.match(
+      /^\/([a-záéíóúñ]+)(?:@[a-z0-9_]+)?(?:\s+([\s\S]+))?$/i
+    );
+    if (!command) {
+      if (telegramPendingMarketSearch.has(chatId)) {
+        await resolveAndSendTelegramMarketItem(
+          chatId,
+          text
+        );
+      }
+      return;
+    }
+
+    const name = normalized(command[1]);
+    const argument = clean(command[2]);
+    if (name === 'start' || name === 'ayuda' || name === 'help') {
+      await sendTelegramBotHelp(chatId);
+      return;
+    }
+    if (name === 'cancelar' || name === 'cancel') {
+      telegramPendingMarketSearch.delete(chatId);
+      await showTelegramMarketHome(chatId);
+      return;
+    }
+    if (name === 'market' || name === 'mercado') {
+      if (argument) {
+        await resolveAndSendTelegramMarketItem(chatId, argument);
+      } else {
+        await showTelegramMarketHome(chatId);
+      }
+      return;
+    }
+    if (name === 'favoritos' || name === 'favorites') {
+      await showTelegramMarketFavorites(chatId, 0);
+      return;
+    }
+    if (name === 'precio' || name === 'price') {
+      if (argument) {
+        await resolveAndSendTelegramMarketItem(chatId, argument);
+      } else {
+        await promptTelegramMarketSearch(chatId);
+      }
+    }
+  }
+
+  function telegramCommandOffsetKey() {
+    const botId = clean(config.token).split(':')[0] || 'none';
+    return `${TELEGRAM_COMMAND_OFFSET_PREFIX}${botId}`;
+  }
+
+  function isTelegramCommandPrimaryAccount() {
+    const index = Number(account?.index);
+    return !Number.isFinite(index) || index <= 0;
+  }
+
+  function claimTelegramCommandLease() {
+    if (!isTelegramCommandPrimaryAccount()) return false;
+    const now = Date.now();
+    try {
+      const lease = JSON.parse(
+        localStorage.getItem(TELEGRAM_COMMAND_LEASE_KEY) ||
+        'null'
+      );
+      if (
+        lease?.owner &&
+        lease.owner !== telegramCommandInstanceId &&
+        Number(lease.until) > now
+      ) return false;
+
+      localStorage.setItem(
+        TELEGRAM_COMMAND_LEASE_KEY,
+        JSON.stringify({
+          owner: telegramCommandInstanceId,
+          until: now + TELEGRAM_COMMAND_LEASE_MS
+        })
+      );
+      const confirmed = JSON.parse(
+        localStorage.getItem(TELEGRAM_COMMAND_LEASE_KEY) ||
+        'null'
+      );
+      return confirmed?.owner === telegramCommandInstanceId;
+    } catch {
+      return true;
+    }
+  }
+
+  async function registerTelegramBotCommands() {
+    if (
+      !hasCredentials() ||
+      telegramCommandsRegisteredFor === config.token
+    ) return;
+
+    await telegramBotCall(
+      'setMyCommands',
+      {
+        commands: [
+          { command: 'market', description: 'Abrir el Market interactivo' },
+          { command: 'precio', description: 'Consultar precio de un objeto' },
+          { command: 'favoritos', description: 'Abrir favoritos del Market' },
+          { command: 'ayuda', description: 'Ver comandos de PokeGrid' },
+          { command: 'cancelar', description: 'Cancelar la búsqueda actual' }
+        ]
+      }
+    );
+    telegramCommandsRegisteredFor = config.token;
+  }
+
+  async function pollTelegramBotCommands() {
+    if (
+      telegramCommandPollBusy ||
+      !hasCredentials() ||
+      !claimTelegramCommandLease()
+    ) return;
+
+    telegramCommandPollBusy = true;
+    try {
+      if (telegramCommandToken !== config.token) {
+        telegramCommandToken = config.token;
+        const stored = localStorage.getItem(
+          telegramCommandOffsetKey()
+        );
+        telegramCommandOffset = stored === null
+          ? -1
+          : Math.max(0, Number(stored) || 0);
+      }
+
+      await registerTelegramBotCommands()
+        .catch((error) =>
+          console.debug(
+            '[PokeGrid Telegram] No se pudieron registrar los comandos todavía.',
+            error?.message || error
+          )
+        );
+
+      const updates = await telegramBotCall(
+        'getUpdates',
+        {
+          offset: telegramCommandOffset,
+          limit: 25,
+          timeout: 20,
+          allowed_updates: [
+            'message',
+            'callback_query'
+          ]
+        }
+      );
+
+      for (const update of [...(updates || [])]
+        .sort((a, b) =>
+          Number(a.update_id) - Number(b.update_id)
+        )) {
+        try {
+          if (
+            update.callback_query?.data
+              ?.startsWith('pgtg:m:')
+          ) {
+            await handleTelegramMarketCallback(
+              update.callback_query
+            );
+          } else if (update.message) {
+            await handleTelegramCommandMessage(
+              update.message
+            );
+          }
+        } catch (error) {
+          const chatId = String(
+            update.callback_query?.message?.chat?.id ??
+            update.message?.chat?.id ??
+            ''
+          );
+          if (authorizedTelegramChat(chatId)) {
+            await sendTelegramMarketMessage(
+              chatId,
+              {
+                text: `⚠️ <b>No se pudo completar la consulta</b>\n${escapeHtml(error?.message || 'Error desconocido')}`,
+                replyMarkup: telegramMarketHomeKeyboard()
+              }
+            ).catch(() => null);
+          }
+          console.warn(
+            '[PokeGrid Telegram] Error procesando el comando.',
+            error
+          );
+        } finally {
+          telegramCommandOffset = Math.max(
+            telegramCommandOffset,
+            Number(update.update_id || 0) + 1
+          );
+        }
+      }
+
+      if (telegramCommandOffset >= 0) {
+        localStorage.setItem(
+          telegramCommandOffsetKey(),
+          String(telegramCommandOffset)
+        );
+      }
+    } catch (error) {
+      console.debug(
+        '[PokeGrid Telegram] Receptor de comandos aplazado.',
+        error?.message || error
+      );
+    } finally {
+      telegramCommandPollBusy = false;
     }
   }
 
@@ -8314,6 +9531,14 @@
       CONFIG_REFRESH_MS
     );
 
+    // Solo consulta actualizaciones del bot. Los precios del Market
+    // se solicitan exclusivamente al recibir un comando o callback.
+    pollTelegramBotCommands();
+    window.setInterval(
+      pollTelegramBotCommands,
+      TELEGRAM_COMMAND_POLL_MS
+    );
+
     // Lectura continua de Poké Balls y pociones.
     watchConsumableStockDOM();
     checkConsumableStock();
@@ -8337,6 +9562,16 @@
         test:
           () =>
             testBotFromPanel(),
+
+        pollCommands:
+          () =>
+            pollTelegramBotCommands(),
+
+        findMarketItem:
+          async (query) => {
+            const matches = await findMarketCatalogItems(query);
+            return matches[0] || null;
+          },
 
         previewPokemonImage:
           (
