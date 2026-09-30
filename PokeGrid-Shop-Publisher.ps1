@@ -98,11 +98,23 @@ function New-Label([string]$text, [float]$size = 9, [Drawing.Color]$color = $pal
 }
 
 function Style-Input($control, [switch]$ReadOnly) {
-  $control.BackColor = $(if ($ReadOnly) { $palette.SurfaceSoft } else { Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.14 })
+  # Un campo de entrada es una capa MAS opaca que la tarjeta que lo contiene:
+  # si comparte su cristal, el texto se pierde contra el texto de al lado.
+  $control.BackColor = $(if ($ReadOnly) { Get-GlassColor 'Surface.Soft' 0.55 } else { Get-GlassColor 'Surface.Soft' 0.75 })
   $control.ForeColor = $(if ($ReadOnly) { Get-ThemeColor 'Text.Secondary' } else { $palette.Text })
   $control.Font = [Drawing.Font]::new('Segoe UI', 9.25)
   $control.Margin = [Windows.Forms.Padding]::new(0, 2, 0, 0)
   if ($control -is [Windows.Forms.TextBox]) { $control.BorderStyle = 'FixedSingle'; $control.ReadOnly = [bool]$ReadOnly }
+  # Un ComboBox pinta su fondo con los estilos visuales del sistema salvo que
+  # DrawMode sea OwnerDrawFixed, y entonces sale con el gris de Windows en lugar
+  # del color del tema. UseVisualStyleBackColor solo existe en Button.
+  if ($control -is [Windows.Forms.ComboBox]) {
+    $control.FlatStyle = 'Flat'
+    $control.DrawMode = 'OwnerDrawFixed'
+    $control.ItemHeight = 18
+    $control.BackColor = $control.BackColor
+    $control.ForeColor = $control.ForeColor
+  }
   return $control
 }
 
@@ -164,8 +176,14 @@ function New-SectionHeader([string]$number, [string]$title, [string]$subtitle) {
 
 function New-Card([int]$height) {
   $panel = [Windows.Forms.Panel]::new()
-  $panel.Height = $height; $panel.BackColor = $palette.Surface; $panel.BorderStyle = 'FixedSingle'
-  $panel.Padding = [Windows.Forms.Padding]::new(12); $panel.Margin = [Windows.Forms.Padding]::new(0, 0, 0, 13)
+  $panel.Height = $height
+  # Cristal: el color de la superficie mezclado contra el fondo de la ventana.
+  # Sin borde de sistema, porque el canto redondeado lo pone Apply-RoundedRegions.
+  $panel.BackColor = Get-GlassColor 'Surface.Base' 0.14
+  $panel.BorderStyle = 'None'
+  $panel.Padding = [Windows.Forms.Padding]::new(14)
+  $panel.Margin = [Windows.Forms.Padding]::new(0, 0, 0, 15)
+  $panel.Tag = 'card'
   return $panel
 }
 
@@ -489,14 +507,14 @@ $appSubtitle=New-Label 'Publica userscripts y nuevas versiones del launcher desd
 $statusChip=New-Label '  PREPARADO  ' 7.5 $palette.Primary ([Drawing.FontStyle]::Bold);$statusChip.Dock='Fill';$statusChip.TextAlign='MiddleCenter';$statusChip.BackColor=Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor 'Rest.Primary.Base') 0.22;$statusChip.Margin=[Windows.Forms.Padding]::new(10,7,0,7)
 $header.Controls.Add($appTitle,0,0);$header.Controls.Add($appSubtitle,0,1);$header.Controls.Add($statusChip,1,0);$header.SetRowSpan($statusChip,2)
 
-$footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.22;$footer.ColumnCount=4
+$footer=[Windows.Forms.TableLayoutPanel]::new();$footer.Dock='Bottom';$footer.Height=38;$footer.Padding=[Windows.Forms.Padding]::new(17,3,17,3);$footer.BackColor=Get-GlassColor 'Surface.Soft' 0.45;$footer.ColumnCount=4
 $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',18))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',330))|Out-Null;$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',90))|Out-Null
 $statusDot=New-Label '●' 9 $palette.Primary ([Drawing.FontStyle]::Bold);$statusDot.Dock='Fill';$statusLabel=New-Label 'Preparando interfaz…' 8 $palette.Primary;$statusLabel.Dock='Fill'
 $repoFooter=New-Label ("Repositorio: "+$repoRoot) 7.5 $palette.Dim;$repoFooter.Dock='Fill';$repoFooter.TextAlign='MiddleRight';$repoFooter.AutoEllipsis=$true
 $versionFooter=New-Label 'v1.3.1' 7.5 $palette.Dim ([Drawing.FontStyle]::Bold);$versionFooter.Dock='Fill';$versionFooter.TextAlign='MiddleRight'
 $footer.Controls.Add($statusDot,0,0);$footer.Controls.Add($statusLabel,1,0);$footer.Controls.Add($repoFooter,2,0);$footer.Controls.Add($versionFooter,3,0)
 
-$sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Get-ThemeColor 'Surface.Soft'
+$sidebar=[Windows.Forms.Panel]::new();$sidebar.Dock='Left';$sidebar.Width=224;$sidebar.Padding=[Windows.Forms.Padding]::new(14);$sidebar.BackColor=Get-GlassColor 'Surface.Soft' 0.35
 $sideBrand=New-Label '◈  POKEGRID' 11 $palette.Primary ([Drawing.FontStyle]::Bold);$sideBrand.Dock='Top';$sideBrand.Height=42
 $sideIntro=New-Label 'Flujo de publicación' 8 $palette.Muted ([Drawing.FontStyle]::Bold);$sideIntro.Dock='Top';$sideIntro.Height=24
 $stepsPanel=[Windows.Forms.FlowLayoutPanel]::new();$stepsPanel.Dock='Top';$stepsPanel.Height=200;$stepsPanel.FlowDirection='TopDown';$stepsPanel.WrapContents=$false
@@ -519,7 +537,7 @@ $sideLinks=[Windows.Forms.FlowLayoutPanel]::new();$sideLinks.Dock='Bottom';$side
 $openRepoButton=New-Button '↗ Abrir repositorio' 'ghost';$openRepoButton.Size=[Drawing.Size]::new(188,36);$openRepoButton.Margin=[Windows.Forms.Padding]::new(0,0,0,5);$catalogButton=New-Button '↗ Ver catálogo online' 'ghost';$catalogButton.Size=[Drawing.Size]::new(188,36);$catalogButton.Margin=[Windows.Forms.Padding]::new(0);$sideLinks.Controls.AddRange(@($openRepoButton,$catalogButton))
 $sidebar.Controls.Add($previewPanel);$sidebar.Controls.Add($stepsPanel);$sidebar.Controls.Add($sideIntro);$sidebar.Controls.Add($sideBrand);$sidebar.Controls.Add($sideLinks)
 
-$contentStack=[Windows.Forms.FlowLayoutPanel]::new();$contentStack.Dock='Fill';$contentStack.FlowDirection='TopDown';$contentStack.WrapContents=$false;$contentStack.AutoScroll=$true;$contentStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$contentStack.BackColor=$palette.Background
+$contentStack=[Windows.Forms.FlowLayoutPanel]::new();$contentStack.Dock='Fill';$contentStack.FlowDirection='TopDown';$contentStack.WrapContents=$false;$contentStack.AutoScroll=$true;$contentStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$contentStack.BackColor=[Drawing.Color]::Transparent
 
 $sourceCard=New-Card 222;$sourceLayout=[Windows.Forms.TableLayoutPanel]::new();$sourceLayout.Dock='Fill';$sourceLayout.ColumnCount=1;$sourceLayout.RowCount=4
 foreach($height in @(55,45,65)){ $sourceLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null };$sourceLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',100))|Out-Null
@@ -556,7 +574,7 @@ $logBox=New-TextBox -Multiline -ReadOnly;$logBox.BackColor=Blend-Color (Get-Them
 $contentStack.Controls.AddRange(@($sourceCard,$publicationCard,$actionCard))
 
 # Pestaña del launcher: repositorio, versión, validación y publicación asistida.
-$launcherStack=[Windows.Forms.FlowLayoutPanel]::new();$launcherStack.Dock='Fill';$launcherStack.FlowDirection='TopDown';$launcherStack.WrapContents=$false;$launcherStack.AutoScroll=$true;$launcherStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$launcherStack.BackColor=$palette.Background
+$launcherStack=[Windows.Forms.FlowLayoutPanel]::new();$launcherStack.Dock='Fill';$launcherStack.FlowDirection='TopDown';$launcherStack.WrapContents=$false;$launcherStack.AutoScroll=$true;$launcherStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$launcherStack.BackColor=[Drawing.Color]::Transparent
 
 $launcherRepoCard=New-Card 174;$launcherRepoLayout=[Windows.Forms.TableLayoutPanel]::new();$launcherRepoLayout.Dock='Fill';$launcherRepoLayout.ColumnCount=1;$launcherRepoLayout.RowCount=3
 $launcherRepoLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',55))|Out-Null;$launcherRepoLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',50))|Out-Null;$launcherRepoLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Percent',100))|Out-Null
@@ -593,7 +611,7 @@ $launcherLogBox=New-TextBox -Multiline -ReadOnly;$launcherLogBox.BackColor=Blend
 $launcherStack.Controls.AddRange(@($launcherRepoCard,$launcherReleaseCard,$launcherActionCard))
 
 # Catálogo remoto: consulta visual y retirada segura de publicaciones.
-$catalogStack=[Windows.Forms.FlowLayoutPanel]::new();$catalogStack.Dock='Fill';$catalogStack.FlowDirection='TopDown';$catalogStack.WrapContents=$false;$catalogStack.AutoScroll=$true;$catalogStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$catalogStack.BackColor=$palette.Background
+$catalogStack=[Windows.Forms.FlowLayoutPanel]::new();$catalogStack.Dock='Fill';$catalogStack.FlowDirection='TopDown';$catalogStack.WrapContents=$false;$catalogStack.AutoScroll=$true;$catalogStack.Padding=[Windows.Forms.Padding]::new(18,18,18,20);$catalogStack.BackColor=[Drawing.Color]::Transparent
 $catalogSummaryCard=New-Card 202;$catalogSummaryLayout=[Windows.Forms.TableLayoutPanel]::new();$catalogSummaryLayout.Dock='Fill';$catalogSummaryLayout.ColumnCount=1;$catalogSummaryLayout.RowCount=4
 foreach($height in @(55,58,48,20)){$catalogSummaryLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null}
 $catalogSummaryLayout.Controls.Add((New-SectionHeader '01' 'Catálogo publicado' 'Consulta los userscripts visibles en GitHub y administra su disponibilidad en la Shop.'),0,0)

@@ -306,10 +306,34 @@ function Set-ButtonRole($button, [string]$role) {
   return $style
 }
 
+function Get-GlassColor([string]$token, [double]$opacity = 0.14) {
+  # El cristal es una mezcla del token contra el fondo de la ventana. WinForms no
+  # pinta paneles con alfa por pixel, asi que esto NO es transparencia real: es
+  # un color opaco que aparenta estar a esa fraccion de capa. La tridimensionalidad
+  # la aporta el borde claro, no la mezcla.
+  return (Blend-Color (Get-ThemeColor 'Base') (Get-ThemeColor $token) $opacity)
+}
+
+function New-CardShadow([int]$width, [int]$height) {
+  # PLANE tiene Shadow.Depth 0 y no gasta panel de sombra.
+  if ([int]$script:theme.Shadow.Depth -le 0) { return $null }
+  $shadow = [Windows.Forms.Panel]::new()
+  $shadow.Size = [Drawing.Size]::new($width, $height)
+  $shadow.Location = [Drawing.Point]::new(0, [int]$script:theme.Shadow.Y)
+  $shadow.BackColor = Get-GlassColor 'Surface.Soft' 0.55
+  $shadow.Region = New-RoundedRegion $width $height ([int]$script:theme.Radius)
+  return $shadow
+}
+
 function Apply-RoundedRegions($control) {
   # Se recorre el arbol entero porque el tamano de un boton no se conoce hasta
   # despues de que el contenedor lo ha colocado.
   if ($control -is [Windows.Forms.Button]) {
+    $control.Region = New-RoundedRegion $control.Width $control.Height ([int]$script:theme.Radius)
+  }
+  # Las tarjetas llevan Tag='card' y comparten las esquinas de los botones: es
+  # el mismo radio del tema, para que toda la interfaz tenga una sola medida.
+  if ($control -is [Windows.Forms.Panel] -and $control.Tag -eq 'card') {
     $control.Region = New-RoundedRegion $control.Width $control.Height ([int]$script:theme.Radius)
   }
   foreach ($child in $control.Controls) { Apply-RoundedRegions $child }
