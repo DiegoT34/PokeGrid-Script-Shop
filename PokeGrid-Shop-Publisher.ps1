@@ -57,6 +57,9 @@ function Color([string]$hex) { [Drawing.ColorTranslator]::FromHtml($hex) }
 $themePath = Join-Path $PSScriptRoot 'tools\theme.ps1'
 if (-not (Test-Path -LiteralPath $themePath -PathType Leaf)) { throw 'No se encontró tools\theme.ps1.' }
 . $themePath
+$uiPath = Join-Path $PSScriptRoot 'tools\ui.ps1'
+if (-not (Test-Path -LiteralPath $uiPath -PathType Leaf)) { throw 'No se encontró tools\ui.ps1.' }
+. $uiPath
 $script:theme = Get-PokeGridTheme (Read-PokeGridThemeKey)
 
 # $palette se mantiene como proxy para no tocar los usos ya escritos: cada clave
@@ -257,7 +260,7 @@ function Log([string]$message, [string]$kind = 'info') {
 }
 
 function Refresh-Preview {
-  $previewIcon.Text = $(if ($iconBox.Text.Trim()) { $iconBox.Text.Trim() } else { '🧩' })
+  $previewIcon.Image = (New-IconPictureBox $(if ($iconBox.Text.Trim()) { $iconBox.Text.Trim() } else { 'script' }) 26).Image
   $previewName.Text = $(if ($nameValue.Text.Trim()) { $nameValue.Text.Trim() } else { 'Nombre del script' })
   $previewMeta.Text = $(if ($versionValue.Text.Trim()) { "v$($versionValue.Text)  •  $($categoryBox.Text)" } else { 'Selecciona un userscript' })
   $previewId.Text = $(if ($idBox.Text.Trim()) { $idBox.Text.Trim() } else { 'id-estable' })
@@ -271,7 +274,7 @@ function Clear-PublicationFields {
   $script:loaded = $null; $script:existing = $null; $script:publicationMode = 'New'
   $idBox.ReadOnly = $false
   @($pathBox,$nameValue,$namespaceValue,$versionValue,$idBox,$authorBox,$tagsBox,$summaryBox,$descriptionBox,$permissionsBox,$changelogBox) | ForEach-Object { $_.Clear() }
-  $categoryBox.Text = 'Utilidades'; $iconBox.Text = '🧩'; $minLauncherBox.Text = '0.22.1'; $featuredBox.Checked = $false
+  $categoryBox.Text = 'Utilidades'; $iconBox.Text = 'script'; $minLauncherBox.Text = '0.22.1'; $featuredBox.Checked = $false
   $sourceHint.Text = 'Arrastra un archivo aquí o utiliza Examinar.'
   Refresh-Preview; Log 'Formulario limpio. Selecciona un userscript para comenzar.'
 }
@@ -289,7 +292,7 @@ function Load-SelectedScript {
     $script:loaded = Read-Script $pathBox.Text; $script:existing = $null; $script:publicationMode = 'New'
     $idBox.ReadOnly = $false
     @($idBox,$authorBox,$tagsBox,$summaryBox,$descriptionBox,$permissionsBox,$changelogBox) | ForEach-Object { $_.Clear() }
-    $categoryBox.Text='Utilidades';$iconBox.Text='🧩';$minLauncherBox.Text = '0.22.1';$featuredBox.Checked=$false
+    $categoryBox.Text='Utilidades';$iconBox.Text='script';$minLauncherBox.Text = '0.22.1';$featuredBox.Checked=$false
     $nameValue.Text=$script:loaded.Name; $namespaceValue.Text=$script:loaded.Namespace; $versionValue.Text=$script:loaded.Version
     $catalogPath=Join-Path $repoRoot 'catalog.json'; $entry=$null; $catalog=[pscustomobject]@{scripts=@()}
     if(Test-Path -LiteralPath $catalogPath){
@@ -376,7 +379,7 @@ function Show-CatalogEntry($entry){
     $catalogDetailIcon.Text='◌';$catalogDetailName.Text='Selecciona una publicación';$catalogDetailMeta.Text='La información completa aparecerá aquí.'
     $catalogDetailGames.Text='—';$catalogDetailDescription.Text='';$catalogDetailId.Text='';$catalogDetailHash.Text='';return
   }
-  $catalogDetailIcon.Text=$(if([string]$entry.icon){[string]$entry.icon}else{'🧩'})
+  $catalogDetailIcon.Image = (New-IconPictureBox $(if([string]$entry.icon){[string]$entry.icon}else{'script'}) 32).Image
   $catalogDetailName.Text=[string]$entry.name
   $catalogDetailMeta.Text="v$($entry.version)  •  $($entry.category)  •  $($entry.author)"
   $catalogDetailGames.Text=$(if(@($entry.games).Count){@($entry.games)-join '  •  '}else{'Juego no declarado'})
@@ -413,7 +416,7 @@ function Render-CatalogManagement {
   })
   $catalogGrid.Rows.Clear()
   foreach($entry in $rows){
-    $index=$catalogGrid.Rows.Add($(if([string]$entry.icon){[string]$entry.icon}else{'🧩'}),[string]$entry.name,"v$($entry.version)",$(if(@($entry.games).Count){@($entry.games)-join ', '}else{'Sin etiqueta'}),[string]$entry.category)
+    $index=$catalogGrid.Rows.Add($(if([string]$entry.icon){[string]$entry.icon}else{'script'}),[string]$entry.name,"v$($entry.version)",$(if(@($entry.games).Count){@($entry.games)-join ', '}else{'Sin etiqueta'}),[string]$entry.category)
     $catalogGrid.Rows[$index].Tag=$entry
   }
   $catalogCountValue.Text=[string]@($script:catalogEntries).Count
@@ -527,7 +530,7 @@ foreach($step in @(@('01','Selecciona el script','Lee y valida los metadatos.'),
 }
 $previewPanel=[Windows.Forms.Panel]::new();$previewPanel.Dock='Top';$previewPanel.Height=126;$previewPanel.BackColor=Get-GlassColor 'Surface.Raised' 0.30;$previewPanel.Padding=[Windows.Forms.Padding]::new(12)
 $modeLabel=New-Label 'SCRIPT NUEVO' 7.7 $palette.Primary ([Drawing.FontStyle]::Bold);$modeLabel.Dock='Top';$modeLabel.Height=22
-$previewIcon=New-Label '🧩' 22 $palette.Text;$previewIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',22);$previewIcon.Dock='Left';$previewIcon.Width=54;$previewIcon.TextAlign='MiddleCenter'
+$previewIcon=New-IconPictureBox 'script' 26;$previewIcon.Dock='Left';$previewIcon.Width=48;$previewIcon.Tag='icon-slot'
 $previewCopy=[Windows.Forms.Panel]::new();$previewCopy.Dock='Fill';$previewCopy.Padding=[Windows.Forms.Padding]::new(8,6,0,0)
 $previewName=New-Label 'Nombre del script' 9.5 $palette.Text ([Drawing.FontStyle]::Bold);$previewName.Dock='Top';$previewName.Height=30;$previewName.AutoEllipsis=$true
 $previewMeta=New-Label 'Selecciona un userscript' 7.7 $palette.Muted;$previewMeta.Dock='Top';$previewMeta.Height=23
@@ -553,7 +556,7 @@ $sourceHint=New-Label 'Arrastra un archivo aquí o utiliza Examinar. Tamaño má
 $publicationCard=New-Card 493;$publicationLayout=[Windows.Forms.TableLayoutPanel]::new();$publicationLayout.Dock='Fill';$publicationLayout.ColumnCount=1;$publicationLayout.RowCount=6
 foreach($height in @(55,66,66,126,89,45)){ $publicationLayout.RowStyles.Add([Windows.Forms.RowStyle]::new('Absolute',$height))|Out-Null };$publicationLayout.Controls.Add((New-SectionHeader '02' 'Completa la ficha de la Shop' 'Esta información será visible para todos los usuarios del launcher.'),0,0)
 $identityGrid=[Windows.Forms.TableLayoutPanel]::new();$identityGrid.Dock='Fill';$identityGrid.ColumnCount=4;foreach($width in @(32,27,13,28)){ $identityGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',$width))|Out-Null }
-$idBox=New-TextBox;$categoryBox=[Windows.Forms.ComboBox]::new();Style-Input $categoryBox|Out-Null;$categoryBox.DropDownStyle='DropDown';[void]$categoryBox.Items.AddRange(@('Market','Crianza','Calculadoras','Interfaz','Comunicación','Notificaciones','Utilidades'));$categoryBox.Text='Utilidades';$iconBox=New-TextBox;$iconBox.Font=[Drawing.Font]::new('Segoe UI Emoji',10);$iconBox.Text='🧩';$minLauncherBox=New-TextBox;$minLauncherBox.Text = '0.22.1'
+$idBox=New-TextBox;$categoryBox=[Windows.Forms.ComboBox]::new();Style-Input $categoryBox|Out-Null;$categoryBox.DropDownStyle='DropDown';[void]$categoryBox.Items.AddRange(@('Market','Crianza','Calculadoras','Interfaz','Comunicación','Notificaciones','Utilidades'));$categoryBox.Text='Utilidades';$iconBox=New-TextBox;$iconBox.Font=[Drawing.Font]::new('Segoe UI Emoji',10);$iconBox.Text='script';$minLauncherBox=New-TextBox;$minLauncherBox.Text = '0.22.1'
 $identityGrid.Controls.Add((New-Field 'ID ESTABLE' $idBox 'Conserva exactamente el mismo ID en cada actualización.'),0,0);$identityGrid.Controls.Add((New-Field 'CATEGORÍA' $categoryBox),1,0);$identityGrid.Controls.Add((New-Field 'ICONO' $iconBox 'Emoji que aparecerá en la tarjeta.'),2,0);$identityGrid.Controls.Add((New-Field 'LAUNCHER MÍNIMO' $minLauncherBox),3,0);$publicationLayout.Controls.Add($identityGrid,0,1)
 $summaryGrid=[Windows.Forms.TableLayoutPanel]::new();$summaryGrid.Dock='Fill';$summaryGrid.ColumnCount=3;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',24))|Out-Null;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',35))|Out-Null;$summaryGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',41))|Out-Null
 $authorBox=New-TextBox;$tagsBox=New-TextBox;$summaryBox=New-TextBox;$summaryGrid.Controls.Add((New-Field 'AUTOR' $authorBox),0,0);$summaryGrid.Controls.Add((New-Field 'ETIQUETAS' $tagsBox 'Sepáralas mediante comas.'),1,0);$summaryGrid.Controls.Add((New-Field 'RESUMEN PARA LA TARJETA' $summaryBox),2,0);$publicationLayout.Controls.Add($summaryGrid,0,2)
@@ -636,7 +639,7 @@ $categoryColumn=[Windows.Forms.DataGridViewTextBoxColumn]::new();$categoryColumn
 foreach($column in @($iconColumn,$nameColumn,$versionColumn,$gameColumn,$categoryColumn)){[void]$catalogGrid.Columns.Add($column)};$catalogListPanel.Controls.Add($catalogGrid,0,1)
 
 $catalogDetailPanel=[Windows.Forms.Panel]::new();$catalogDetailPanel.Dock='Fill';$catalogDetailPanel.BackColor=$palette.SurfaceRaised;$catalogDetailPanel.BorderStyle='FixedSingle';$catalogDetailPanel.Padding=[Windows.Forms.Padding]::new(16);$catalogDetailPanel.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
-$catalogDetailIcon=New-Label '◌' 22 $palette.Primary;$catalogDetailIcon.Font=[Drawing.Font]::new('Segoe UI Emoji',26);$catalogDetailIcon.Dock='Top';$catalogDetailIcon.Height=55;$catalogDetailIcon.TextAlign='MiddleLeft'
+$catalogDetailIcon=New-IconPictureBox 'script' 32;$catalogDetailIcon.Dock='Top';$catalogDetailIcon.Height=50
 $catalogDetailName=New-Label 'Selecciona una publicación' 13.5 $palette.Text ([Drawing.FontStyle]::Bold);$catalogDetailName.Dock='Top';$catalogDetailName.Height=38;$catalogDetailName.AutoEllipsis=$true
 $catalogDetailMeta=New-Label 'La información completa aparecerá aquí.' 9.5 $palette.Muted;$catalogDetailMeta.Dock='Top';$catalogDetailMeta.Height=28;$catalogDetailMeta.AutoEllipsis=$true
 $catalogDetailGames=New-Label '—' 9.5 $palette.Primary ([Drawing.FontStyle]::Bold);$catalogDetailGames.Dock='Top';$catalogDetailGames.Height=32;$catalogDetailGames.AutoEllipsis=$true
@@ -644,15 +647,15 @@ $catalogDetailDescription=New-TextBox -Multiline -ReadOnly;$catalogDetailDescrip
 $catalogDetailId=New-Label '' 7.7 $palette.Muted;$catalogDetailId.Dock='Top';$catalogDetailId.Height=26;$catalogDetailId.AutoEllipsis=$true
 $catalogDetailHash=New-Label '' 7.7 $palette.Dim;$catalogDetailHash.Dock='Top';$catalogDetailHash.Height=25;$catalogDetailHash.AutoEllipsis=$true
 $catalogActions=[Windows.Forms.TableLayoutPanel]::new();$catalogActions.Dock='Top';$catalogActions.Height=48;$catalogActions.ColumnCount=2;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',42))|Out-Null;$catalogActions.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',58))|Out-Null
-$catalogOpenScriptButton=New-Button '↗ Ver archivo' 'ghost';$catalogOpenScriptButton.Dock='Fill';$catalogOpenScriptButton.Enabled=$false;$catalogDeleteButton=New-Button '🗑 Retirar de la Shop' 'accent';$catalogDeleteButton.Dock='Fill';$catalogDeleteButton.Enabled=$false;$catalogActions.Controls.Add($catalogOpenScriptButton,0,0);$catalogActions.Controls.Add($catalogDeleteButton,1,0)
+$catalogOpenScriptButton=New-Button '↗ Ver archivo' 'ghost';$catalogOpenScriptButton.Dock='Fill';$catalogOpenScriptButton.Enabled=$false;$catalogDeleteButton=New-Button 'rocket Retirar de la Shop' 'accent';$catalogDeleteButton.Dock='Fill';$catalogDeleteButton.Enabled=$false;$catalogActions.Controls.Add($catalogOpenScriptButton,0,0);$catalogActions.Controls.Add($catalogDeleteButton,1,0)
 $catalogLogBox=New-TextBox -Multiline -ReadOnly;$catalogLogBox.Dock='Fill';$catalogLogBox.BackColor=Blend-Color (Get-ThemeColor 'Base') ([Drawing.Color]::Black) 0.25;$catalogLogBox.Font=[Drawing.Font]::new('Cascadia Mono',8);$catalogLogBox.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
 $catalogDetailPanel.Controls.Add($catalogLogBox);$catalogDetailPanel.Controls.Add($catalogActions);$catalogDetailPanel.Controls.Add($catalogDetailHash);$catalogDetailPanel.Controls.Add($catalogDetailId);$catalogDetailPanel.Controls.Add($catalogDetailDescription);$catalogDetailPanel.Controls.Add($catalogDetailGames);$catalogDetailPanel.Controls.Add($catalogDetailMeta);$catalogDetailPanel.Controls.Add($catalogDetailName);$catalogDetailPanel.Controls.Add($catalogDetailIcon)
 $catalogSplit.Controls.Add($catalogListPanel,0,0);$catalogSplit.Controls.Add($catalogDetailPanel,1,0);$catalogBodyCard.Controls.Add($catalogSplit);$catalogStack.Controls.AddRange(@($catalogSummaryCard,$catalogBodyCard))
 
 $tabs=[Windows.Forms.TabControl]::new();$tabs.Dock='Fill';$tabs.Appearance='FlatButtons';$tabs.SizeMode='Fixed';$tabs.ItemSize=[Drawing.Size]::new(190,34);$tabs.Font=Get-TextStyle 'body';$tabs.Padding=[Drawing.Point]::new(14,5)
-$shopPage=[Windows.Forms.TabPage]::new('  🧩  Shop de scripts  ');$shopPage.BackColor=$palette.Background;$shopPage.Padding=[Windows.Forms.Padding]::new(0)
+$shopPage=[Windows.Forms.TabPage]::new('  script  Shop de scripts  ');$shopPage.BackColor=$palette.Background;$shopPage.Padding=[Windows.Forms.Padding]::new(0)
 $catalogPage=[Windows.Forms.TabPage]::new('  ☁  Catálogo publicado  ');$catalogPage.BackColor=$palette.Background;$catalogPage.Padding=[Windows.Forms.Padding]::new(0)
-$launcherPage=[Windows.Forms.TabPage]::new('  🚀  Versiones del launcher  ');$launcherPage.BackColor=$palette.Background;$launcherPage.Padding=[Windows.Forms.Padding]::new(0)
+$launcherPage=[Windows.Forms.TabPage]::new('  rocket  Versiones del launcher  ');$launcherPage.BackColor=$palette.Background;$launcherPage.Padding=[Windows.Forms.Padding]::new(0)
 $shopPage.Controls.Add($contentStack);$shopPage.Controls.Add($sidebar);$catalogPage.Controls.Add($catalogStack);$launcherPage.Controls.Add($launcherStack);$tabs.TabPages.AddRange(@($shopPage,$catalogPage,$launcherPage))
 $tabs.SelectedTab=$(if($InitialTab -eq 'Launcher'){$launcherPage}elseif($InitialTab -eq 'Catalog'){$catalogPage}else{$shopPage})
 $form.Controls.Add($tabs);$form.Controls.Add($footer);$form.Controls.Add($header)
@@ -799,7 +802,7 @@ if($SmokeTest){
   if((Get-UniqueScriptId ([pscustomobject]@{scripts=@([pscustomobject]@{id='script-completamente-nuevo'})}) 'Script completamente nuevo') -ne 'script-completamente-nuevo-2'){throw 'La generación segura de ID para scripts nuevos no funciona.'}
   $largeWidth=$sourceCard.Width;$form.ClientSize=[Drawing.Size]::new(900,680);[Windows.Forms.Application]::DoEvents();Apply-ResponsiveLayout
   if($sidebar.Visible -or $sourceCard.Width -ge $largeWidth -or $sourceCard.Width -lt 700 -or $catalogSummaryCard.Width -lt 700 -or $launcherRepoCard.Width -lt 700){throw "La respuesta compacta del layout no funciona. Shop=$($sourceCard.Width), Catalog=$($catalogSummaryCard.Width), Launcher=$($launcherRepoCard.Width), Large=$largeWidth"}
-  $script:catalogEntries=@([pscustomobject]@{id='smoke';name='Script Smoke';version='1.0.0';category='Utilidades';author='PokeGrid';icon='🧩';games=@('Juego Smoke');tags=@('test');featured=$true;description='Prueba';publishedAt='2026-01-01';sha256=('a'*64)})
+  $script:catalogEntries=@([pscustomobject]@{id='smoke';name='Script Smoke';version='1.0.0';category='Utilidades';author='PokeGrid';icon='script';games=@('Juego Smoke');tags=@('test');featured=$true;description='Prueba';publishedAt='2026-01-01';sha256=('a'*64)})
   Render-CatalogManagement
   if($catalogGrid.Rows.Count -ne 1 -or $catalogCountValue.Text -ne '1' -or -not $catalogDeleteButton.Enabled){throw 'La vista visual del catálogo no pudo representar una publicación seleccionable.'}
   [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('status','--porcelain=v1'))
