@@ -239,3 +239,78 @@ function Read-PokeGridThemeKey() {
     return $key
   } catch { return 'crystal-dark' }
 }
+
+# ---------------------------------------------------------------------------
+# Botones: region redondeada y los cinco estados por rol.
+#
+# Vive aqui y no en el guion para que la GUI y los tests compartan exactamente
+# la misma implementacion.
+# ---------------------------------------------------------------------------
+
+$script:buttonStyles = @{}
+
+function New-RoundedRegion([int]$Width, [int]$Height, [int]$Radius) {
+  # PLANE tiene radio 0 y no gasta region: se devuelve null.
+  if ($Radius -le 0) { return $null }
+  $path = [Drawing.Drawing2D.GraphicsPath]::new()
+  $d = $Radius * 2
+  $path.AddArc(0, 0, $d, $d, 180, 90)
+  $path.AddArc($Width - $d, 0, $d, $d, 270, 90)
+  $path.AddArc($Width - $d, $Height - $d, $d, $d, 0, 90)
+  $path.AddArc(0, $Height - $d, $d, $d, 90, 90)
+  $path.CloseFigure()
+  return [Drawing.Region]::new($path)
+}
+
+function Get-ButtonRoleStyle([string]$role) {
+  $rest = switch ($role) {
+    'danger'  { 'Danger' }
+    'success' { 'Success' }
+    'primary' { 'Primary' }
+    default   { $null }
+  }
+  if ($rest) {
+    $base = Get-ThemeColor "Rest.$rest.Base"
+    $hover = Get-ThemeColor "Rest.$rest.Hover"
+    $fore = Get-ThemeColor "Rest.$rest.Fore"
+    $pressed = Blend-Color $base ([Drawing.Color]::Black) 0.18
+    $border = $hover
+  } elseif ($role -eq 'ghost') {
+    # Boton terciario: sin relleno, solo texto y borde al pasar por encima.
+    # Antes caia en la rama por defecto y salia igual que 'secondary'.
+    $base = Get-ThemeColor 'Surface.Soft'
+    $hover = Get-ThemeColor 'Surface.Hover'
+    $fore = Get-ThemeColor 'Text.Secondary'
+    $pressed = Blend-Color $hover ([Drawing.Color]::Black) 0.12
+    $border = Get-ThemeColor 'Border.Strong'
+  } else {
+    $base = Get-ThemeColor 'Surface.Raised'
+    $hover = Get-ThemeColor 'Surface.Hover'
+    $fore = Get-ThemeColor 'Text.Primary'
+    $pressed = Blend-Color $base ([Drawing.Color]::Black) 0.12
+    $border = Get-ThemeColor 'Border.Base'
+  }
+  return @{
+    Base = $base; Hover = $hover; Pressed = $pressed
+    Fore = $fore; Border = $border
+  }
+}
+
+function Set-ButtonRole($button, [string]$role) {
+  $style = Get-ButtonRoleStyle $role
+  $button.BackColor = $style.Base
+  $button.ForeColor = $style.Fore
+  $button.FlatAppearance.BorderColor = $style.Border
+  $button.FlatAppearance.MouseDownBackColor = $style.Pressed
+  $script:buttonStyles[[int]$button.GetHashCode()] = @{ Role = $role; Style = $style }
+  return $style
+}
+
+function Apply-RoundedRegions($control) {
+  # Se recorre el arbol entero porque el tamano de un boton no se conoce hasta
+  # despues de que el contenedor lo ha colocado.
+  if ($control -is [Windows.Forms.Button]) {
+    $control.Region = New-RoundedRegion $control.Width $control.Height ([int]$script:theme.Radius)
+  }
+  foreach ($child in $control.Controls) { Apply-RoundedRegions $child }
+}

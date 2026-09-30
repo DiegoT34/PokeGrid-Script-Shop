@@ -29,6 +29,7 @@ jobs:
             'test-theme-persistence.ps1'
             'test-theme-contrast.ps1'
             'test-no-hardcoded-colors.ps1'
+            'test-button-visual.ps1'
             'test-validate-catalog.ps1'
             'test-catalog-schema.ps1'
             'test-workflow-wiring.ps1'

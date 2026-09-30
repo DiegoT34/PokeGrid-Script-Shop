@@ -39,6 +39,7 @@ $script:loaded = $null
 $script:existing = $null
 $script:publicationMode = 'New'
 $script:isBusy = $false
+$script:buttonStyles = @{}
 $script:catalogEntries = @()
 $script:catalogSelected = $null
 $script:launcherInfo = $null
@@ -118,19 +119,16 @@ function New-Button([string]$text, [string]$kind = 'secondary') {
   $button.Text = $text
   $button.FlatStyle = 'Flat'
   $button.FlatAppearance.BorderSize = 1
-  $button.Font = [Drawing.Font]::new('Segoe UI Semibold', 9.25, [Drawing.FontStyle]::Bold)
-  $button.ForeColor = $palette.Text
+  $button.Font = [Drawing.Font]::new('Segoe UI Semibold', 9.5, [Drawing.FontStyle]::Bold)
   $button.Cursor = 'Hand'
   $button.Margin = [Windows.Forms.Padding]::new(4)
-  $normal = $palette.SurfaceRaised; $hover = Get-ThemeColor 'Surface.Hover'; $border = $palette.Border
-  if ($kind -eq 'primary') { $normal = $palette.PrimaryDark; $hover = Get-ThemeColor 'Rest.Primary.Hover'; $border = $palette.Primary }
-  if ($kind -eq 'accent') { $normal = $palette.AccentDark; $hover = Get-ThemeColor 'Rest.Danger.Hover'; $border = $palette.Accent }
-  if ($kind -eq 'ghost') { $normal = $palette.SurfaceSoft; $hover = $palette.SurfaceRaised; $border = $palette.Border }
-  $button.BackColor = $normal
-  $button.FlatAppearance.BorderColor = $border
-  $button.FlatAppearance.MouseDownBackColor = $hover
-  $button.Add_MouseEnter(({ if ($this.Enabled) { $this.BackColor = $hover } }.GetNewClosure()))
-  $button.Add_MouseLeave(({ $this.BackColor = $normal }.GetNewClosure()))
+  $button.UseVisualStyleBackColor = $false
+  # 'accent' es el nombre antiguo del boton de accion; el rol se llama 'danger'.
+  # Las 15 llamadas existentes siguen pasando 'accent' y no se tocan.
+  $role = if ($kind -eq 'accent') { 'danger' } else { $kind }
+  Set-ButtonRole $button $role | Out-Null
+  $button.Add_MouseEnter(({ if ($this.Enabled) { $s = $script:buttonStyles[[int]$this.GetHashCode()].Style; $this.BackColor = $s.Hover; $this.FlatAppearance.BorderColor = $s.Hover } }.GetNewClosure()))
+  $button.Add_MouseLeave(({ $s = $script:buttonStyles[[int]$this.GetHashCode()].Style; $this.BackColor = $s.Base; $this.FlatAppearance.BorderColor = $s.Border; $this.Region = New-RoundedRegion $this.Width $this.Height ([int]$script:theme.Radius) }.GetNewClosure()))
   return $button
 }
 
@@ -650,6 +648,7 @@ function Apply-ResponsiveLayout {
   foreach($card in @($launcherRepoCard,$launcherReleaseCard,$launcherActionCard)){ $card.Width=[Math]::Max(700,$launcherAvailable) }
   $repoFooter.Visible=$form.ClientSize.Width -ge 1080
   $repoFooter.Text=$(if($tabs.SelectedTab -eq $launcherPage){"Launcher: "+$launcherPathBox.Text}elseif($tabs.SelectedTab -eq $catalogPage){"Catálogo: "+$repoRoot}else{"Repositorio: "+$repoRoot})
+  Apply-RoundedRegions $form
 }
 
 $form.Add_Resize({Apply-ResponsiveLayout});$form.Add_Shown({Apply-ResponsiveLayout;if($tabs.SelectedTab -eq $launcherPage -and $launcherPathBox.Text){[void](Refresh-LauncherRepository)};if($tabs.SelectedTab -eq $catalogPage){[void](Refresh-CatalogManagement)}})
