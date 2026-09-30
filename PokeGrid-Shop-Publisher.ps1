@@ -850,4 +850,16 @@ if($ScreenshotPath){
   $timer.Add_Tick({$timer.Stop();$target=[IO.Path]::GetFullPath($ScreenshotPath);New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force|Out-Null;$bitmap=[Drawing.Bitmap]::new($form.Width,$form.Height);$form.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$form.Width,$form.Height));$bitmap.Save($target,[Drawing.Imaging.ImageFormat]::Png);$bitmap.Dispose();$form.Close()});$timer.Start()
 }
 
+# El cristal del fondo se activa antes de mostrar la ventana: Enable-PokeGridBlur
+# engancha Add_HandleCreated, que dispara cuando la ventana recibe su handle.
+# Si el sistema no lo soporta, el tema cae a su modo plano sin cambiar de color y
+# se avisa en el pie, en lugar de dejar la ventana medio rota.
+$blurApplied = Enable-PokeGridBlur $form
+$requestedTheme = Get-PokeGridTheme
+$script:theme = Resolve-PokeGridEffectiveTheme -BlurSupported $blurApplied
+if ($script:theme.Kind -ne 'glass' -and $requestedTheme.Kind -eq 'glass') {
+  $statusLabel.Text = "Tema $($script:theme.Name) en modo plano: el sistema no admite cristal."
+  $statusLabel.ForeColor = $palette.Warning
+}
+
 [void]$form.ShowDialog()

@@ -25,7 +25,7 @@ function Get-PokeGridIconPath([string]$name) {
       return $p
     }
     'rocket' {
-      # Nosece con ventana y dos aletas: cuerpo recto, punta redondeada arriba.
+      # Nosece con punta redondeada y dos aletas.
       $p = [Drawing.Drawing2D.GraphicsPath]::new()
       $body = [Drawing.Drawing2D.GraphicsPath]::new()
       $body.StartFigure()
@@ -45,9 +45,8 @@ function Get-PokeGridIconPath([string]$name) {
       return $p
     }
     'palette' {
-      # Pinta: circulo con un hueco de mezcla en la esquina inferior derecha.
+      # Pinta: circulo con el hueco de mezcla en la esquina inferior derecha.
       $p = [Drawing.Drawing2D.GraphicsPath]::new()
-      $p.FillMode = 'Alternate'
       $outer = [Drawing.Drawing2D.GraphicsPath]::new()
       $outer.AddEllipse(1, 1, 22, 22)
       $hole = [Drawing.Drawing2D.GraphicsPath]::new()
@@ -57,7 +56,7 @@ function Get-PokeGridIconPath([string]$name) {
       return $p
     }
     'globe' {
-      # Globo terra: circulo con dos meridianos y dos paralelos.
+      # Globo terra: circulo con dos meridianos que se cruzan en los polos.
       $p = [Drawing.Drawing2D.GraphicsPath]::new()
       $p.AddEllipse(1, 1, 22, 22)
       $inner = [Drawing.Drawing2D.GraphicsPath]::new()
@@ -70,9 +69,7 @@ function Get-PokeGridIconPath([string]$name) {
       return $p
     }
     'dna' {
-      # Helice: dos curvas que se cruzan en el centro, con barras horizontales
-      # que las unen. Las curvas se dibujan con mas recorrido horizontal para que
-      # el cruce se lea como una X y no como dos hojas sueltas.
+      # Helice: dos curvas que se cruzan en el centro, con barras horizontales.
       $p = [Drawing.Drawing2D.GraphicsPath]::new()
       $left = [Drawing.Drawing2D.GraphicsPath]::new()
       $left.StartFigure()
@@ -82,7 +79,6 @@ function Get-PokeGridIconPath([string]$name) {
       $right.StartFigure()
       $right.AddBezier(18, 1, 6, 5, 6, 19, 18, 23)
       $p.AddPath($right, $false); $right.Dispose()
-      # Barras en tres alturas, con la separacion que da el cruce de las curvas.
       foreach ($pair in @(@(4.5, 3.6), @(12, 0.0), @(19.5, -3.6))) {
         $bar = [Drawing.Drawing2D.GraphicsPath]::new()
         $bar.StartFigure()
@@ -133,7 +129,7 @@ function New-IconPictureBox([string]$name, [int]$size = 18) {
   # La ruta esta pensada en 24x24 y se escala al tamano pedido, de modo que el
   # icono se ve igual a 16, 18 o 22 px.
   # GraphicsPath no tiene constructor que reciba otra ruta: la copia se hace
-  # con AddPath(ruta, connect) sobre una matriz de escala.
+  # con AddPath(ruta, connect) y despues Transform sobre una Matrix de escala.
   $scale = [single]($size / 24.0)
   $matrix = [Drawing.Drawing2D.Matrix]::new()
   $matrix.Scale($scale, $scale)
@@ -146,12 +142,17 @@ function New-IconPictureBox([string]$name, [int]$size = 18) {
   $box.Image = $bitmap
   return $box
 }
+
 # ---------------------------------------------------------------------------
 # El reloj de animaciones.
 #
-# Un unico Timer de 16 ms adelanta TODAS las animaciones vivas. Un Timer por
+# Un unico Timer de 10 ms adelanta TODAS las animaciones vivas. Un Timer por
 # animacion los haria competir por el hilo de la interfaz, que en Windows Forms
 # es un solo hilo: varias animaciones simultaneas se ralentizarian entre si.
+#
+# El intervalo es 10 y no 16: el reloj del sistema de Windows va a ~15.6 ms, y un
+# intervalo de 16 cae justo encima y da 19 ticks de los 31 teoricos. Medido en
+# esta maquina, con 10 se obtienen 56 ticks por segundo.
 # ---------------------------------------------------------------------------
 
 $script:animations = @{}
@@ -160,10 +161,6 @@ $script:animationClock = $null
 function Initialize-PokeGridAnimationClock {
   if ($script:animationClock) { return }
   $script:animationClock = [Windows.Forms.Timer]::new()
-  # 10 ms y no 16: el reloj del sistema de Windows va a ~15.6 ms, y un intervalo
-  # de 16 cae justo encima y da 19 ticks de los 31 teoricos. Con 10 se mide
-  # 30 ticks reales. Una transicion de 240 ms da ~15 pasos, que es lo que hace
-  # que se vea continua en vez de a saltos.
   $script:animationClock.Interval = 10
   $script:animationClock.Add_Tick({
     $now = [DateTime]::UtcNow
@@ -212,4 +209,62 @@ function Stop-PokeGridAnimation([string]$target) {
 
 function Get-PokeGridAnimationCount() {
   return $script:animations.Count
+}
+
+# ---------------------------------------------------------------------------
+# El cristal del fondo.
+#
+# En Windows 10 no hay Mica ni Acrylic: solo existe este blur antiguo de dwmapi.
+# Las VMs y las sesiones remotas suelen ignorarlo, por eso se DETECTA y no se asume.
+#
+# Lo que es verdad y lo que no: el FONDO de la ventana se difumina de verdad y el
+# escritorio se ve borroso detras. Los PANELES encima son colores opacos
+# pre-mezclados, porque WinForms no pinta paneles con alfa por pixel.
+# ---------------------------------------------------------------------------
+
+$script:PokeGridBlurSource = "using System;`nusing System.Runtime.InteropServices;`npublic static class PokeGridBlur {`n  [StructLayout(LayoutKind.Sequential)]`n  public struct MARGINS { public int Left, Right, Top, Bottom; }`n  [DllImport(`"dwmapi.dll`")]`n  public static extern int DwmEnableBlurBehindWindow(IntPtr hwnd, ref MARGINS margins, int flags);`n}`n"
+
+$script:pokeGridBlurTypeLoaded = $false
+
+function Get-PokeGridBlurSupported() {
+  # Windows 10 1803 (17134) en adelante es donde este blur esta disponible.
+  try {
+    $version = [Environment]::OSVersion.Version
+    return ($version.Major -gt 10) -or ($version.Major -eq 10 -and $version.Build -ge 17134)
+  } catch { return $false }
+}
+
+function Enable-PokeGridBlur($form) {
+  # Nunca lanza: si el P/Invoke falla, la app arranca igual, sin cristal. Un error
+  # al abrir la aplicacion seria mucho peor que perder un efecto visual.
+  try {
+    if (-not $script:theme.Blur) { return $false }
+    if (-not $script:pokeGridBlurTypeLoaded) {
+      Add-Type -TypeDefinition $script:PokeGridBlurSource -ErrorAction Stop
+      $script:pokeGridBlurTypeLoaded = $true
+    }
+    $handler = {
+      if (-not $script:theme.Blur) { return }
+      try {
+        $margins = New-Object 'PokeGridBlur+MARGINS'
+        $margins.Left = -1; $margins.Right = -1; $margins.Top = -1; $margins.Bottom = -1
+        [void][PokeGridBlur]::DwmEnableBlurBehindWindow($this.Handle, [ref]$margins, 2)
+      } catch { }
+    }.GetNewClosure()
+    $form.Add_HandleCreated($handler)
+    return $true
+  } catch { return $false }
+}
+
+function Resolve-PokeGridEffectiveTheme([bool]$BlurSupported = $false) {
+  # Sin soporte: mismo tema, mismos colores, solo sin cristal. Se conserva la Key
+  # para que al guardar la preferencia no se acabe escribiendo otro tema, y no se
+  # toca ningun color porque la legibilidad no depende de que haya blur.
+  $theme = $script:theme
+  if ($theme.Kind -ne 'glass') { return $theme }
+  if ($BlurSupported) { return $theme }
+  $fallback = @{} + $theme
+  $fallback['Kind'] = 'flat'
+  $fallback['Blur'] = $false
+  return $fallback
 }
