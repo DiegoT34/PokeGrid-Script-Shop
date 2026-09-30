@@ -156,7 +156,10 @@ $script:PokeGridThemeSettings = [ordered]@{
       Primary = [ordered]@{ Base = '#2B6CB0'; Hover = '#3B82C4'; Fore = '#FFFFFF' }
       Danger  = [ordered]@{ Base = '#9B2C2C'; Hover = '#C0392B'; Fore = '#FFFFFF' }
       Success = [ordered]@{ Base = '#1E8449'; Hover = '#27AE60'; Fore = '#FFFFFF' }
-      Warning = [ordered]@{ Base = '#9A7B0F'; Hover = '#B8961A'; Fore = '#FFFFFF' }
+      # El amarillo de advertencia original daba 4.03:1 con texto blanco, por
+      # debajo de 4.5:1. Oscurecido a #7A6209 para llegar a 5.4:1 sin perder
+      # la lectura de "aviso".
+      Warning = [ordered]@{ Base = '#7A6209'; Hover = '#96781B'; Fore = '#FFFFFF' }
     }
     Shadow = [ordered]@{ Depth = 0; Alpha = 0; Y = 0 }
     Motion = [ordered]@{ Fast = 0; Normal = 0; Slow = 0; Easing = 'linear' }
