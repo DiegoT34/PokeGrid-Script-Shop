@@ -118,6 +118,63 @@ La herramienta comprueba el remoto oficial y la rama `main`, sincroniza las etiq
 
 Los userscripts `.user.js` o `.js` y los archivos comprimidos `.zip`, `.rar` o `.7z` ubicados en la raíz del proyecto quedan excluidos de la publicación del launcher. Antes de confirmar se muestra la lista exacta de archivos que sí serán incluidos.
 
+## Capturas de pantalla
+
+Un script puede llevar hasta **seis** capturas, que se ven en su ficha y se abren grandes al
+pulsarlas.
+
+```powershell
+.\tools\publish-script.ps1 -Path .\mi-script.user.js -Id 'mi-script' -Screenshots @(
+  '.\capturas\panel-principal.png',
+  '.\capturas\ajustes.jpg'
+)
+```
+
+Los archivos se copian a `screenshots/` con un **nombre que genera el publicador**:
+`mi-script-1.png`, `mi-script-2.jpg`. El nombre del archivo que tú eliges no se usa, y por
+eso puedes llamarlos como quieras.
+
+El campo `catalog.json` se escribe solo, con las URLs completas:
+
+```json
+"screenshots": [
+  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/screenshots/mi-script-1.png",
+  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/screenshots/mi-script-2.jpg"
+]
+```
+
+Un script sin capturas **no lleva el campo**, ni vacío.
+
+### Qué se descarta, y por qué no tumba la publicación
+
+Una captura que no cumple **no se publica, pero el script entero sí**. El publicador escribe
+un aviso por cada una y sigue. Bloquear la publicación por un archivo mal puesto sería un
+fallo de la herramienta, no una protección: el script es lo que se publica y la captura es
+decoración.
+
+Lo que se descarta:
+
+- **Una extensión que no sea** `png`, `jpg`, `jpeg`, `webp` o `gif`.
+- **Un archivo de más de 2 MB.** El tamaño se comprueba al copiar.
+- **Una ruta que no exista** en el momento de publicar.
+- **Más de seis** rutas: se publican las primeras y el aviso dice cuántas se ignoran.
+- **Un archivo que se haya movido** entre que lo elegiste y que se copió.
+
+`downloadUrl` es al revés: si es inválida, la publicación **se detiene**, porque sin ella no
+se puede instalar el script.
+
+### Al actualizar
+
+Publicar una actualización **sin** `-Screenshots` **conserva** las capturas que ya tenía el
+script, y el publicador te avisa de que están ahí. Si pasas capturas nuevas, se numeran a
+continuación de las que ya había y **no sobrescriben** ninguna.
+
+Para cambiar las fotos, borra los archivos viejos de `screenshots/` y quita su entrada del
+catálogo, y vuelve a publicar. El publicador no adivina cuáles quieres quitar: preguntar y
+borrar es tuyo.
+
+Y **retirar un script borra sus capturas**. No quedan archivos huérfanos en `screenshots/`.
+
 ## Seguridad de la publicación
 
 - No se publica nada al abrir la herramienta ni al pulsar **Validar**.
