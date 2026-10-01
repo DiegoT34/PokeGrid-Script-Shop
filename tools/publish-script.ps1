@@ -155,8 +155,13 @@ if ($Screenshots.Count -gt 0) {
     throw 'La ruta calculada de screenshots/ no es segura.'
   }
   foreach ($candidate in @($Screenshots)) {
-    if ($shotNames.Count -ge $maxShots) {
-      $shotWarnings.Add("Se ignoraron $($Screenshots.Count - $maxShots) captura(s) mas por el limite de $maxShots.")
+    # El total es el de las previas MAS las nuevas, no solo las nuevas. Con el recuento
+    # solo de las nuevas, un script con tres previas y cinco nuevas no daba el aviso del
+    # limite, y se acababa con ocho capturas declaradas de las que el launcher solo
+    # enseñaria seis.
+    if (($previas.Count + $shotNames.Count) -ge $maxShots) {
+      $restantes = @($Screenshots).Count - [array]::IndexOf(@($Screenshots), $candidate)
+      $shotWarnings.Add("Se ignoraron $restantes captura(s) mas por el limite de $maxShots, contando las $($previas.Count) que ya tenia.")
       break
     }
     $full = [IO.Path]::GetFullPath($candidate)
@@ -203,12 +208,30 @@ if ($Screenshots.Count -gt 0) {
 # Se recogen del catalogo y no de disco, porque el catalogo es la autoridad: es lo que el
 # launcher baja. Un archivo suelto en screenshots/ sin entrada no es una captura del
 # script, es basura de una publicacion anterior.
-if ($shotNames.Count -eq 0 -and $previas.Count -gt 0) {
-  foreach ($previa in $previas) {
-    $shotNames.Add(([string]$previa).Split('/')[-1])
+# Las previas SIEMPRE se conservan, tambien cuando se pasan capturas nuevas. Publicar una
+# actualizacion con un par de fotos no puede borrar del catalogo las otras que el script
+# llevaba meses enseñando: verificado que lo hacia, porque el bloque solo corria cuando no
+# quedaba ninguna captura nueva.
+#
+# Van PRIMERO en la lista, que es el orden que las tenia antes. Asi el recorte por el limite
+# de seis se come las nuevas —que son las que se acaban de subir— y no las viejas.
+if ($previas.Count -gt 0) {
+  $nuevas = @($shotNames)
+  $shotNames.Clear()
+  foreach ($previa in $previas) { $shotNames.Add(([string]$previa).Split('/')[-1]) }
+  foreach ($nombre in $nuevas) { $shotNames.Add($nombre) }
+  if ($nuevas.Count -eq 0) {
+    $motivo = $(if ($Screenshots.Count -eq 0) { "no se paso -Screenshots" } else { "ninguna de las capturas indicadas sirvio" })
+    $shotWarnings.Add("Se conservaron $($previas.Count) captura(s) que ya tenia el script porque $motivo. Para cambiarlas, pasa -Screenshots con archivos validos; para quitarlas, borra los archivos de screenshots\ y quita su entrada del catalogo.")
   }
-  $motivo = $(if ($Screenshots.Count -eq 0) { "no se paso -Screenshots" } else { "ninguna de las capturas indicadas sirvio" })
-  $shotWarnings.Add("Se conservaron $($previas.Count) captura(s) que ya tenia el script porque $motivo. Para cambiarlas, pasa -Screenshots con archivos validos; para quitarlas, borra los archivos de screenshots\ y quita su entrada del catalogo.")
+}
+
+# El recorte final, por si el total se pasa aunque el bucle no haya avisado. Se hace
+# sobre la lista ya combinada —previas primero— para que lo que se salga sean las nuevas.
+if ($shotNames.Count -gt $maxShots) {
+  $sobran = $shotNames.Count - $maxShots
+  while ($shotNames.Count -gt $maxShots) { $shotNames.RemoveAt($shotNames.Count - 1) }
+  $shotWarnings.Add("Se descartaron $sobran captura(s) por el limite de $maxShots. Son las nuevas: las que ya tenia el script se conservan.")
 }
 
 try {

@@ -175,15 +175,62 @@ try {
     throw "El rollback borro capturas que ya estaban antes de la publicacion.`n$($colgadas -join ', ')"
   }
 
-  # Publicar una captura NUEVA sobre un script que ya tiene una no puede sobrescribirla.
+  # Un script que YA tiene capturas, al que se le pasan mas: el total se recorta a seis y
+  # las previas se conservan. Este caso lo anadio la revision final de la rama, y encontro
+  # dos fallos que ninguna otra prueba veia: con tres previas y cinco nuevas, el catalogo
+  # acababa con cinco capturas que eran todas nuevas —las previas desaparecian— y el aviso
+  # del limite no salia porque el recuento miraba solo las nuevas.
+  [IO.File]::WriteAllText($newScript, "// ==UserScript==`n// @name Shot Script`n// @namespace http://tampermonkey.net/`n// @version 1.4.0`n// ==/UserScript==`n", $utf8)
+  $cuatro2 = Join-Path $testRoot 'cuatro-2.gif'
+  [IO.File]::WriteAllBytes($cuatro2, $pngBytes)
+  $cinco = Join-Path $testRoot 'cinco.webp'
+  [IO.File]::WriteAllBytes($cinco, $pngBytes)
+  $conPrevias = Invoke-Publisher -Script $publisher -Shots @($cuatro2,$cinco) -Params @{
+    Path = $newScript; Id = 'shot-script'; PublicationMode = 'Update'
+    Summary = 'Con capturas'; Description = 'Con capturas'; Changelog = 'Cuarta'
+    RepositoryRoot = $testRoot
+  }
+  if($conPrevias.ExitCode -ne 0){throw "La actualizacion con capturas nuevas fallo.`n$($conPrevias.Output)"}
+  $trasCuarta = (Get-Content -LiteralPath (Join-Path $testRoot 'catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json).scripts | Where-Object { $_.id -eq 'shot-script' } | Select-Object -First 1
+  $urlsCuarta = @($trasCuarta.screenshots)
+  if($urlsCuarta.Count -gt 6){throw "La actualizacion dejo $($urlsCuarta.Count) capturas y el limite son 6."}
+  # Lo que NO puede pasar es que las previas desaparezcan por pasar unas nuevas: eso deja al
+  # script sin las fotos que tenia publicadas.
+  if($urlsCuarta -notcontains "$base/shot-script-1.png"){throw "La captura previa shot-script-1.png desaparecio al pasar unas nuevas.`n$($urlsCuarta -join ', ')"}
+
+  # Y el caso que de verdad supera el limite contando las previas: tres previas y cinco
+  # nuevas son ocho, y solo pueden quedar seis. Ademas el aviso tiene que decir cuantas se
+  # descartaron, contando el total y no solo las nuevas.
+  [IO.File]::WriteAllText($newScript, "// ==UserScript==`n// @name Shot Script`n// @namespace http://tampermonkey.net/`n// @version 1.5.0`n// ==/UserScript==`n", $utf8)
+  $nuevas5 = @()
+  # Con punto delante de la extension: sin el, el nombre queda «cinco-jpg» y el publicador
+  # lo descarta por extension vacia, que es un caso distinto del que se quiere probar.
+  foreach ($ext in @('jpg','jpeg','gif')) {
+    $p = Join-Path $testRoot "cinco-5.$ext"
+    [IO.File]::WriteAllBytes($p, $pngBytes)
+    $nuevas5 += $p
+  }
+  $nuevas5 += $cinco
+  $nuevas5 += $cuatro2
+  $conExceso = Invoke-Publisher -Script $publisher -Shots $nuevas5 -Params @{
+    Path = $newScript; Id = 'shot-script'; PublicationMode = 'Update'
+    Summary = 'Con capturas'; Description = 'Con capturas'; Changelog = 'Quinta'
+    RepositoryRoot = $testRoot
+  }
+  if($conExceso.ExitCode -ne 0){throw "La actualizacion con exceso fallo.`n$($conExceso.Output)"}
+  $urlsQuinta = @(((Get-Content -LiteralPath (Join-Path $testRoot 'catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json).scripts | Where-Object { $_.id -eq 'shot-script' } | Select-Object -First 1).screenshots)
+  if($urlsQuinta.Count -ne 6){throw "Con 3 previas y 5 nuevas hay 8 posibles y deben quedar 6; quedaron $($urlsQuinta.Count):`n$($urlsQuinta -join ', ')"}
+  if($urlsQuinta -notcontains "$base/shot-script-1.png"){throw "Las previas desaparecieron al pasar demasiadas nuevas.`n$($urlsQuinta -join ', ')"}
+  if($conExceso.Output -notmatch 'limite de 6'){throw "El recorte contando las previas no se explico.`n$($conExceso.Output)"}
+
   # Este caso lo anadio el implementador al ejecutar el paso 7, no el plan: la numeracion
   # arrancaba en 1 siempre, y el nombre generado volvia a ser shot-script-1.png con otro
   # contenido. La foto nueva se comia el sitio de la vieja sin avisar.
-  #
-  # La version sube a 1.3.0 porque el publicador no deja republicar la misma.
-  [IO.File]::WriteAllText($newScript, "// ==UserScript==`n// @name Shot Script`n// @namespace http://tampermonkey.net/`n// @version 1.3.0`n// ==/UserScript==`n", $utf8)
+  [IO.File]::WriteAllText($newScript, "// ==UserScript==`n// @name Shot Script`n// @namespace http://tampermonkey.net/`n// @version 1.6.0`n// ==/UserScript==`n", $utf8)
   $cuatro = Join-Path $testRoot 'cuatro.webp'
   [IO.File]::WriteAllBytes($cuatro, $pngBytes)
+  # Y el caso de no sobrescribir en disco: una captura nueva no puede pisar el ARCHIVO de la
+  # anterior, aunque la URL sea distinta. El hash de las dos previas se toma antes.
   $hashPrevia1 = (Get-FileHash -LiteralPath (Join-Path $shotsDir 'shot-script-1.png') -Algorithm SHA256).Hash
   $hashPrevia2 = (Get-FileHash -LiteralPath (Join-Path $shotsDir 'shot-script-2.jpg') -Algorithm SHA256).Hash
   $conTercera = Invoke-Publisher -Script $publisher -Shots @($cuatro) -Params @{
@@ -192,21 +239,18 @@ try {
     RepositoryRoot = $testRoot
   }
   if($conTercera.ExitCode -ne 0){throw "La publicacion con una tercera captura fallo.`n$($conTercera.Output)"}
-  $trasTercera = (Get-Content -LiteralPath (Join-Path $testRoot 'catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json).scripts | Where-Object { $_.id -eq 'shot-script' } | Select-Object -First 1
-  $urlsTercera = @($trasTercera.screenshots)
-  if($urlsTercera.Count -ne 1){throw "Al pasar una captura nueva el catalogo deberia declarar solo esa, y declara $($urlsTercera.Count)."}
-  if($urlsTercera[0] -notmatch 'shot-script-3\.webp$'){throw "La captura nueva no se numero a continuacion de las anteriores: $($urlsTercera[0])"}
+  $urlsTercera = @(((Get-Content -LiteralPath (Join-Path $testRoot 'catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json).scripts | Where-Object { $_.id -eq 'shot-script' } | Select-Object -First 1).screenshots)
+  # Con la regla nueva, pasar una captura nueva CONSERVA las previas y anade la nueva. Lo que
+  # no puede pasar es que la nueva se llame como una de las que ya estaban.
+  if($urlsTercera -contains "$base/shot-script-1.webp"){throw 'La captura nueva se llamo shot-script-1.webp y pisa a una previa. El numerito tiene que seguir al de las previas.'}
   if((Get-FileHash -LiteralPath (Join-Path $shotsDir 'shot-script-1.png') -Algorithm SHA256).Hash -ne $hashPrevia1){
     throw 'La captura nueva SOBRESCRIBIO a shot-script-1.png, que ya estaba publicada.'
   }
   if((Get-FileHash -LiteralPath (Join-Path $shotsDir 'shot-script-2.jpg') -Algorithm SHA256).Hash -ne $hashPrevia2){
     throw 'La captura nueva altero shot-script-2.jpg, que ya estaba publicada.'
   }
-  if(-not (Test-Path -LiteralPath (Join-Path $shotsDir 'shot-script-3.webp') -PathType Leaf)){
-    throw 'La captura nueva no se copio a disco con su nombre numerado.'
-  }
 
-  Write-Output 'Screenshots publication passed: nombre generado, copia identica, URLs completas, campo ausente sin capturas, limite de tamano, rollback sin capturas colgadas y numeracion que no sobrescribe.'
+  Write-Output 'Screenshots publication passed: nombre generado, copia identica, URLs completas, campo ausente sin capturas, limite de tamano, rollback sin capturas colgadas, numeracion que no sobrescribe y recorte que conserva las previas.'
 } finally {
   if((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
