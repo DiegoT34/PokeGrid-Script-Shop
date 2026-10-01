@@ -62,6 +62,25 @@ if (-not (Test-Path -LiteralPath $uiPath -PathType Leaf)) { throw 'No se encontr
 . $uiPath
 $script:theme = Get-PokeGridTheme (Read-PokeGridThemeKey)
 
+# La carpeta screenshots/ tiene que existir ANTES de cualquier `git add -- screenshots`, y
+# por dos razones:
+#  1. `git add` sobre una ruta que no existe sale con codigo de error, y eso cortaria la
+#     publicacion de un script que no tiene ninguna foto. Verificado.
+#  2. Sin la carpeta en el `add`, el commit sale bien y la URL del catalogo apunta a
+#     imagenes que no estan en GitHub. El fallo no aparece en la maquina de quien publica
+#     —que es la que puede arreglarlo— sino en la de quien lee la Shop.
+#
+# Se crea vacia. Un directorio vacio no lo lleva git a ninguna parte: solo deja de dar
+# error. Y si el publicador acaba de copiar capturas, la carpeta ya existe y esto no hace
+# nada.
+function Ensure-ScreenshotsFolder {
+  param([string]$Root)
+  $path = Join-Path $Root 'screenshots'
+  if (-not (Test-Path -LiteralPath $path -PathType Container)) {
+    [void](New-Item -ItemType Directory -Path $path -Force)
+  }
+}
+
 # $palette se mantiene como proxy para no tocar los usos ya escritos: cada clave
 # apunta a un token del tema activo, no a un color fijo. Los botones usan tokens
 # Rest.*, que en el tema oscuro son mas saturados que los antiguos Primary y Accent.
@@ -863,12 +882,13 @@ $catalogDeleteButton.Add_Click({
     $removeOutput=& $catalogRemover -Id ([string]$current.id) -RepositoryRoot $repoRoot 2>&1|Out-String
     if($removeOutput.Trim()){Log-Catalog $removeOutput.Trim()}
     $target="scripts/$($current.id).user.js"
-    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target))
+    Ensure-ScreenshotsFolder $repoRoot
+    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target,'screenshots'))
     $diffResult=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('diff','--cached','--quiet') -AllowFailure
     if($diffResult.ExitCode -eq 0){throw 'No se detectaron cambios para retirar la publicación.'}
     if($diffResult.ExitCode -ne 1){throw $(if($diffResult.Output){$diffResult.Output}else{'No se pudo revisar la retirada preparada.'})}
     $commitMessage="Retirar $($current.name) $($current.version) de la Shop"
-    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$commitMessage,'--','catalog.json',$target))
+    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$commitMessage,'--','catalog.json',$target,'screenshots'))
     Log-Catalog 'Subiendo la retirada a GitHub…';[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('push'))
     if(Verify-OnlineRemoval ([string]$current.id)){Log-Catalog "$($current.name) ya no aparece en la Shop online." 'ok'}else{Log-Catalog 'GitHub recibió el cambio; el catálogo online aún se está propagando.' 'ok'}
     [Windows.Forms.MessageBox]::Show("$($current.name) fue retirado correctamente de la Shop.`r`n`r`nLas instalaciones existentes no fueron eliminadas de los equipos de los usuarios.",'Publicación retirada','OK','Information')|Out-Null
@@ -930,10 +950,10 @@ $publishButton.Add_Click({
     $tags=@($tagsBox.Text -split ','|ForEach-Object{$_.Trim()}|Where-Object{$_});$permissions=@($permissionsBox.Lines|ForEach-Object{$_.Trim()}|Where-Object{$_})
     $parameters=@{Path=$script:loaded.Path;Id=$idBox.Text;PublicationMode=$script:publicationMode;Category=$categoryBox.Text;Tags=$tags;Permissions=$permissions;Summary=$summaryBox.Text;Description=$descriptionBox.Text;Changelog=$changelogBox.Text;Author=$authorBox.Text;MinLauncherVersion=$minLauncherBox.Text;Icon=$iconBox.Text;Featured=$featuredBox.Checked;RepositoryRoot=$repoRoot}
     Log 'Generando archivo publicado, catálogo y SHA-256…';$publisherOutput=& $cliPublisher @parameters 2>&1|Out-String;Log $publisherOutput.Trim()
-    $target="scripts/$($idBox.Text).user.js";[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target));$diffResult=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('diff','--cached','--quiet') -AllowFailure
+    $target="scripts/$($idBox.Text).user.js";Ensure-ScreenshotsFolder $repoRoot;[void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('add','--','catalog.json',$target,'screenshots'));$diffResult=Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('diff','--cached','--quiet') -AllowFailure
     if($diffResult.ExitCode -eq 0){Log 'No hay cambios nuevos para publicar.' 'ok';return};if($diffResult.ExitCode -ne 1){throw $(if($diffResult.Output){$diffResult.Output}else{'No se pudieron comprobar los cambios preparados.'})}
     $message="Publicar $($script:loaded.Name) $($script:loaded.Version)";Log 'Creando commit local…'
-    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$message,'--','catalog.json',$target))
+    [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('commit','-m',$message,'--','catalog.json',$target,'screenshots'))
     Log 'Subiendo la publicación a GitHub…'
     try {
       [void](Invoke-PokeGridGit -RepositoryRoot $repoRoot -Arguments @('push'))

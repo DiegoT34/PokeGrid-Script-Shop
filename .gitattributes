@@ -1,2 +1,7 @@
 * text=auto eol=lf
 scripts/*.user.js text eol=lf
+# La regla global * text=auto eol=lf pasaria las imagenes por una conversion de fin de
+# linea. Git las detecta como binarias por el contenido, pero eso depende de que las
+# detecte bien, y una imagen con un byte que parezca texto se lleva dos conversiones que
+# no le corresponden. Con la regla explicita no hay que depender de la deteccion.
+screenshots/* binary
