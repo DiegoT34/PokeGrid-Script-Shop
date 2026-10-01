@@ -1,34 +1,7 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-09-28T20:02:35Z",
+    "updatedAt":  "2026-10-01T02:35:42Z",
     "scripts":  [
-                    {
-                        "id":  "better-market-pro",
-                        "name":  "Better market Pro",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.20.8",
-                        "author":  "DiegoT34",
-                        "summary":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
-                        "description":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
-                        "category":  "Utilidades",
-                        "tags":  [
-
-                                 ],
-                        "games":  [
-                                      "Poke Idle World"
-                                  ],
-                        "permissions":  [
-
-                                        ],
-                        "minLauncherVersion":  "0.22.3",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-pro.user.js",
-                        "sha256":  "5796edd4b52de301a86b950d5f67039fc02893d4e785aad02696160dc9f0337e",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 10.20.8",
-                        "icon":  "🧩",
-                        "featured":  true,
-                        "publishedAt":  "2026-09-25T11:48:47Z"
-                    },
                     {
                         "id":  "custom-hub-game",
                         "name":  "CUSTOM HUB GAME",
