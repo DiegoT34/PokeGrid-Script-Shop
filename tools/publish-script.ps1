@@ -12,12 +12,19 @@
   [string]$MinLauncherVersion = '0.22.1',
   [string]$Icon = '🧩',
   [string]$RepositoryRoot = '',
-  [switch]$Featured
+  [switch]$Featured,
+  [string[]]$Screenshots = @()
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = if ($RepositoryRoot) { [IO.Path]::GetFullPath($RepositoryRoot) } else { Split-Path -Parent $PSScriptRoot }
 $maxScriptBytes = 10MB
+# El mismo contrato que aplica el launcher en src/script-shop-screenshots.js. Si un
+# dia divergen, el launcher tiene razon: es el que decide si la captura se ve.
+$maxShotBytes = 2MB
+$maxShots = 6
+$shotsBase = 'https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/screenshots'
+$shotExtensionPattern = '^(?i)\.(?:png|jpg|jpeg|webp|gif)$'
 $source = (Resolve-Path -LiteralPath $Path).Path
 $sourceInfo = Get-Item -LiteralPath $source
 if (-not $sourceInfo.PSIsContainer -and $sourceInfo.Length -gt 0 -and $sourceInfo.Length -le $maxScriptBytes) {
@@ -110,8 +117,108 @@ $catalogBytes = if ($catalogExisted) { [IO.File]::ReadAllBytes($catalogPath) } e
 $targetExisted = Test-Path -LiteralPath $target -PathType Leaf
 $targetBytes = if ($targetExisted) { [IO.File]::ReadAllBytes($target) } else { $null }
 
+# Capturas: se copian con un nombre GENERADO a partir del id y la posicion. El
+# nombre del archivo que elige la persona no se usa, y esa es toda la proteccion:
+# el prefijo con el id es lo que impide que un script se apropie de las capturas
+# de otro, asi que respetarlo inutilitaria la regla. Solo se lee la extension.
+$shotsDir = Join-Path $repoRoot 'screenshots'
+$shotWarnings = [Collections.Generic.List[string]]::new()
+$shotNames = [Collections.Generic.List[string]]::new()
+$shotState = @()
+
+# El numero de la siguiente captura NO empieza en cero si el script ya tenia fotos.
+#
+# Sin esto, publicar una captura nueva sobre un script que ya tenia una la SOBRESCRIBE:
+# el nombre generado seria otra vez <id>-1.png, y la foto nueva se comia el sitio de la
+# vieja sin avisar ni dejar rastro. Verificado antes de escribir estas lineas.
+$shotNext = 1
+$previas = @()
+if ($existingById) { $previas = @($existingById.screenshots | Where-Object { [string]$_ }) }
+foreach ($previa in $previas) {
+  $nombrePrevio = ([string]$previa).Split('/')[-1]
+  $corte = $nombrePrevio.LastIndexOf('.')
+  if ($corte -le 0) { continue }
+  $cola = $nombrePrevio.Substring(0, $corte)
+  $guionFinal = $cola.LastIndexOf('-')
+  if ($guionFinal -le 0) { continue }
+  $numeroPrevio = 0
+  if ([int]::TryParse($cola.Substring($guionFinal + 1), [ref]$numeroPrevio)) {
+    if ($numeroPrevio -ge $shotNext) { $shotNext = $numeroPrevio + 1 }
+  }
+}
+if ($previas.Count -gt 0 -and $shotNext -le $maxShots) {
+  $shotWarnings.Add("El script ya tenia $($previas.Count) captura(s) y las nuevas se numeran desde la $shotNext, para no sobrescribirlas.")
+}
+
+if ($Screenshots.Count -gt 0) {
+  if (-not $shotsDir.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'La ruta calculada de screenshots/ no es segura.'
+  }
+  $seenExtensions = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($candidate in @($Screenshots)) {
+    if ($shotNames.Count -ge $maxShots) {
+      $shotWarnings.Add("Se ignoraron $($Screenshots.Count - $maxShots) captura(s) mas por el limite de $maxShots.")
+      break
+    }
+    $full = [IO.Path]::GetFullPath($candidate)
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+      $shotWarnings.Add("No se encontro la captura: $full")
+      continue
+    }
+    $length = (Get-Item -LiteralPath $full).Length
+    if ($length -gt $maxShotBytes) {
+      $shotWarnings.Add("Se descarto $([IO.Path]::GetFileName($full)): ocupa $length bytes y el limite son $maxShotBytes.")
+      continue
+    }
+    $extension = [IO.Path]::GetExtension($full)
+    if ($extension -notmatch $shotExtensionPattern) {
+      $shotWarnings.Add("Se descarto $([IO.Path]::GetFileName($full)): la extension '$extension' no es valida.")
+      continue
+    }
+    $normalized = $extension.ToLowerInvariant()
+    if (-not $seenExtensions.Add($normalized)) {
+      $shotWarnings.Add("Se descarto $([IO.Path]::GetFileName($full)): la extension $normalized ya esta usada por otra captura.")
+      continue
+    }
+    # El numero sale de $shotNext, que ya continua al de las previas. Con
+    # $shotNames.Count + 1 volvia a uno, y la captura nueva se comia el sitio de la
+    # anterior: el aviso decia «se numeran desde la 2» y el archivo salia como -1.webp.
+    $shotState += [pscustomobject]@{
+      Source = $full
+      Name = "$Id-$shotNext$normalized"
+      Existed = Test-Path -LiteralPath (Join-Path $shotsDir "$Id-$shotNext$normalized") -PathType Leaf
+    }
+    $shotNames.Add("$Id-$shotNext$normalized")
+    $shotNext += 1
+  }
+}
+
+# Publicar sin -Screenshots CONSERVA las capturas que el script ya tenia, y avisa. Y
+# tambien las conserva cuando se pasaron capturas y ninguna sirvio: un archivo mal puesto
+# no puede hacer que el script pierda las fotos que lleva meses mostrando.
+#
+# Es la decision D3 de la especificacion, y sin esto se perdian: verificado que una
+# actualizacion sin el parametro se llevaba el campo screenshots del catalogo.
+#
+# Se recogen del catalogo y no de disco, porque el catalogo es la autoridad: es lo que el
+# launcher baja. Un archivo suelto en screenshots/ sin entrada no es una captura del
+# script, es basura de una publicacion anterior.
+if ($shotNames.Count -eq 0 -and $previas.Count -gt 0) {
+  foreach ($previa in $previas) {
+    $shotNames.Add(([string]$previa).Split('/')[-1])
+  }
+  $motivo = $(if ($Screenshots.Count -eq 0) { "no se paso -Screenshots" } else { "ninguna de las capturas indicadas sirvio" })
+  $shotWarnings.Add("Se conservaron $($previas.Count) captura(s) que ya tenia el script porque $motivo. Para cambiarlas, pasa -Screenshots con archivos validos; para quitarlas, borra los archivos de screenshots\ y quita su entrada del catalogo.")
+}
+
 try {
   New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+  if ($shotState.Count -gt 0) {
+    New-Item -ItemType Directory -Path $shotsDir -Force | Out-Null
+    foreach ($shot in $shotState) {
+      Copy-Item -LiteralPath $shot.Source -Destination (Join-Path $shotsDir $shot.Name) -Force
+    }
+  }
   $publishedCode = [regex]::Replace($code, '(?im)^(\s*//\s*@version\s+).+?\s*$', "`${1}$version", 1)
   $publishedCode = $publishedCode -replace "\r\n?", "`n"
   [IO.File]::WriteAllText($target, $publishedCode, [Text.UTF8Encoding]::new($false))
@@ -138,6 +245,13 @@ try {
     featured = [bool]$Featured
     publishedAt = $publishedAt
   }
+  # El campo screenshots solo se anade si hay capturas. Un array vacio ocuparia espacio
+  # y diria que el script tiene fotos que no tiene, y un null escrito tal cual diria
+  # lo mismo de otra forma: ConvertTo-Json en PowerShell 5.1 no tiene SkipIfNull, asi
+  # que la unica manera de que la clave no aparezca es no ponerla.
+  if ($shotNames.Count -gt 0) {
+    $entry.screenshots = @($shotNames | ForEach-Object { "$shotsBase/$_" })
+  }
   $remaining = @($catalog.scripts | Where-Object { $_.id -ne $Id })
   $catalog.scripts = @([pscustomobject]$entry) + $remaining
   $catalog.updatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -159,14 +273,30 @@ try {
   } catch {
     Write-Host "AVISO  No se pudo restaurar catalog.json: $($_.Exception.Message)" -ForegroundColor Yellow
   }
+  # Las capturas tambien son estado. Un archivo de mas que ninguna entrada del
+  # catalogo describe es basura que se acumula, y una foto de la version anterior
+  # sustituida por la nueva deja la ficha mostrando lo que ya no hace.
+  try {
+    if ($shotState.Count -gt 0) {
+      foreach ($shot in $shotState) {
+        if ($shot.Existed) { continue }
+        $written = Join-Path $shotsDir $shot.Name
+        if (Test-Path -LiteralPath $written) { Remove-Item -LiteralPath $written -Force }
+      }
+    }
+  } catch {
+    Write-Host "AVISO  No se pudieron deshacer las capturas: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
   throw
 }
 
 $operationLabel = $(if ($operationMode -eq 'New') { 'script nuevo' } else { 'actualización' })
+foreach ($warning in $shotWarnings) { Write-Host "AVISO  $warning" -ForegroundColor Yellow }
 Write-Host "Preparado como ${operationLabel}: $targetName" -ForegroundColor Green
 Write-Host "Versión: $version"
 Write-Host "SHA-256: $sha256"
 Write-Host 'Revisa catalog.json y luego ejecuta:'
 Write-Host '  git add catalog.json scripts/'
+if ($shotNames.Count -gt 0) { Write-Host '  git add screenshots/' }
 Write-Host "  git commit -m 'Publicar $name $version'"
 Write-Host '  git push'
