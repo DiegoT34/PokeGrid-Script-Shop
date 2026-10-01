@@ -9,6 +9,11 @@ $catalogPath = Join-Path $root 'catalog.json'
 $schemaPath = Join-Path $root 'catalog.schema.json'
 $errors = [Collections.Generic.List[string]]::new()
 $downloadBase = 'https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts'
+# El mismo contrato que aplica el launcher en src/script-shop-screenshots.js. La comprobacion
+# del HOST va aparte de la de la ruta, y es lo mas importante: la ruta no lleva el host
+# dentro, asi que comprobarla no dice nada de donde se descarga.
+$shotPattern = '(?i)^https://raw\.githubusercontent\.com/DiegoT34/PokeGrid-Script-Shop/(?:main|[a-f0-9]{40})/screenshots/([a-z0-9][a-z0-9._-]{0,99}\.(?:png|jpg|jpeg|webp|gif))$'
+$maxShots = 6
 $rfc3339 = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
 
 if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) { throw "No se encontro catalog.json en $root" }
@@ -68,8 +73,55 @@ foreach ($item in @($catalog.scripts)) {
   if ($fileNamespace -ne [string]$item.namespace) { $errors.Add("@namespace no coincide: '$id'") }
 }
 
+# Capa 4: capturas. AVISA, no lanza.
+#
+# Una captura con la URL mal escrita no puede tumbar el catalogo. El launcher hace
+# exactamente lo mismo y por una razon que conviene no olvidar al leer esto: downloadUrl
+# invalida SI lanza, porque sin ella no se puede instalar el script; una captura es
+# decoracion, y dejar sin Shop a media gente por un archivo mal puesto seria peor que la
+# captura que falta.
+$shotNotices = [Collections.Generic.List[string]]::new()
+$shotCount = 0
+foreach ($item in @($catalog.scripts)) {
+  $id = [string]$item.id
+  if ($null -eq $item.PSObject.Properties['screenshots']) { continue }
+  $shots = @($item.screenshots | Where-Object { [string]$_ })
+  $shotCount += $shots.Count
+  if ($shots.Count -gt $maxShots) {
+    $shotNotices.Add("$id declara $($shots.Count) capturas y el limite son $maxShots. El launcher solo mostrara las $maxShots primeras.")
+  }
+  $position = 0
+  foreach ($shot in @($shots | Select-Object -First $maxShots)) {
+    $position += 1
+    $url = [string]$shot
+    # [regex]::Match y no `$patron -match $url`. Verificado que con el operador el
+    # resultado es False y con [regex] es True, para la MISMA URL y el MISMO patron: el
+    # operador -match toma el operando izquierdo como patron, y aqui los dos son cadenas y
+    # se resuelve de otra manera. Con [regex]::Match ademas se saca el grupo capturado sin
+    # depender de $Matches, que se sobrescribe con el ultimo uso.
+    $match = [regex]::Match($url, $shotPattern)
+    if (-not $match.Success) {
+      $shotNotices.Add("$id captura $position con URL invalida: $url")
+      continue
+    }
+    $name = $match.Groups[1].Value
+    # El prefijo se compara en minusculas, igual que en el launcher. Con la comparacion
+    # exacta, Foto-Bien-1.png de un script cuyo id es foto-bien se rechazaria sin motivo.
+    if (-not $name.ToLowerInvariant().StartsWith("$id-".ToLowerInvariant())) {
+      $shotNotices.Add("$id captura $position se llama '$name' y deberia empezar por '$id-'")
+    }
+    $file = Join-Path $root "screenshots\$name"
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+      $shotNotices.Add("$id captura $position no existe en disco: screenshots\$name")
+    }
+  }
+}
+foreach ($notice in $shotNotices) { Write-Host "  AVISO  $notice" -ForegroundColor Yellow }
+
 if ($errors.Count) {
   foreach ($message in $errors) { Write-Host "  ERROR  $message" -ForegroundColor Red }
   throw "Catalogo invalido: $($errors.Count) problema(s)."
 }
-Write-Host "Catalogo valido: $(@($catalog.scripts).Count) script(s), limite de $MaxScriptBytes bytes."
+$shotSummary = ", $shotCount captura(s)"
+if ($shotNotices.Count) { $shotSummary += " con $($shotNotices.Count) aviso(s)" }
+Write-Host "Catalogo valido: $(@($catalog.scripts).Count) script(s), limite de $MaxScriptBytes bytes$shotSummary."

@@ -31,7 +31,17 @@
           "icon": { "type": "string", "maxLength": 8 },
           "featured": { "type": "boolean" },
           "publishedAt": { "type": "string", "format": "date-time" },
-          "homepage": { "type": "string", "format": "uri" }
+          "homepage": { "type": "string", "format": "uri" },
+          "screenshots": {
+            "type": "array",
+            "maxItems": 6,
+            "description": "URLs de las capturas de la ficha. El nombre del archivo tiene que empezar por el id del script seguido de un guion, y la URL tiene que ser del repositorio oficial. El launcher descarta las que no cumplen, asi que una aqui invalida no tumba el catalogo pero la captura no se vera.",
+            "items": {
+              "type": "string",
+              "maxLength": 220,
+              "format": "uri"
+            }
+          }
         },
         "additionalProperties": true
       }

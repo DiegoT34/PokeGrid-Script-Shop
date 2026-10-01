@@ -28,6 +28,7 @@ jobs:
             'test-screenshots-rejection.ps1'
             'test-screenshots-git-add.ps1'
             'test-screenshots-removal.ps1'
+            'test-validate-catalog.ps1'
             'test-theme-math.ps1'
             'test-theme-data.ps1'
             'test-theme-persistence.ps1'
