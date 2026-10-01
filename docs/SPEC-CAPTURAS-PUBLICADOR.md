@@ -123,7 +123,7 @@ que quien lea el esquema sepa que el contrato incluye capturas y con qué reglas
 |---|---|
 | `tools/publish-script.ps1` | Parámetro `-Screenshots`, copia, generación del nombre, campo en la entrada, avisos, restauración en caso de fallo. |
 | `tools/validate-catalog.ps1` | Capa 4: capturas. Avisa, no lanza. |
-| `PokeGrid-Shop-Publisher.ps1` | `git add` y `git commit` incluyen `screenshots/`. |
+| `PokeGrid-Shop-Publisher.ps1` | `git add` y `git commit` incluyen `screenshots/`, y la retirada de un script borra las suyas. |
 | `catalog.schema.json` | Campo `screenshots` con su tipo y su límite. |
 | `.gitattributes` | `screenshots/* binary`. |
 | `PUBLISHER-README.md` | Cómo se publican capturas. |
@@ -154,6 +154,7 @@ quita la duda.
 | Un script que ya tenía capturas y pasa 6 nuevas | Se conservan las suyas y se descartan las 6 nuevas por el límite, con aviso. El total se queda en 6. |
 | El nombre de la captura contiene espacios o tildes | Da igual: se descarta el nombre y se genera otro. Solo se lee la extensión. |
 | `screenshots/` ya existe con archivos de otro script | No se tocan. Cada script tiene las suyas por prefijo. |
+| **Retirar** un script | Se borran sus capturas, las que su prefijo identifique. Sin eso se acumulan archivos huérfanos en `screenshots/` que ya no describe ninguna entrada del catálogo, y el repositorio crece sin que nadie sepa por qué. |
 | La copia falla a mitad | Se restaura el estado anterior de la carpeta, igual que hoy se restaura el userscript. |
 | La URL del script es inválida | **Lanza**, como hoy. Sin `downloadUrl` no se puede instalar. |
 
