@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $publisher = Join-Path $PSScriptRoot 'publish-script.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('pokegrid-shots-' + [guid]::NewGuid().ToString('N'))
 $utf8 = [Text.UTF8Encoding]::new($false)

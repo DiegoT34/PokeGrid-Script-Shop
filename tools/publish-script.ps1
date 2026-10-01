@@ -154,7 +154,6 @@ if ($Screenshots.Count -gt 0) {
   if (-not $shotsDir.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'La ruta calculada de screenshots/ no es segura.'
   }
-  $seenExtensions = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
   foreach ($candidate in @($Screenshots)) {
     if ($shotNames.Count -ge $maxShots) {
       $shotWarnings.Add("Se ignoraron $($Screenshots.Count - $maxShots) captura(s) mas por el limite de $maxShots.")
@@ -175,11 +174,12 @@ if ($Screenshots.Count -gt 0) {
       $shotWarnings.Add("Se descarto $([IO.Path]::GetFileName($full)): la extension '$extension' no es valida.")
       continue
     }
+    # La extension se normaliza a minusculas, pero NO se rechaza por repetida. Es lo que
+    # creia el plan y era un error mio: el launcher acepta mi-script-1.png y
+    # mi-script-2.png sin problema, porque lo que las distingue es el numero, no la
+    # extension. Filtrar por extension repetida hacia imposible tener las seis capturas,
+    # que es justo lo que el launcher y el limite de $maxShots si soportan.
     $normalized = $extension.ToLowerInvariant()
-    if (-not $seenExtensions.Add($normalized)) {
-      $shotWarnings.Add("Se descarto $([IO.Path]::GetFileName($full)): la extension $normalized ya esta usada por otra captura.")
-      continue
-    }
     # El numero sale de $shotNext, que ya continua al de las previas. Con
     # $shotNames.Count + 1 volvia a uno, y la captura nueva se comia el sitio de la
     # anterior: el aviso decia «se numeran desde la 2» y el archivo salia como -1.webp.

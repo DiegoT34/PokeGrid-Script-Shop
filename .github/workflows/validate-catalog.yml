@@ -24,6 +24,8 @@ jobs:
         shell: pwsh
         run: |
           $tests = @(
+            'test-screenshots-publication.ps1'
+            'test-screenshots-rejection.ps1'
             'test-theme-math.ps1'
             'test-theme-data.ps1'
             'test-theme-persistence.ps1'
