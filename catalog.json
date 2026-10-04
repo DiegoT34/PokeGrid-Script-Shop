@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-10-01T02:36:01Z",
+    "updatedAt":  "2026-10-04T20:19:53Z",
     "scripts":  [
                     {
                         "id":  "better-market-pro",
                         "name":  "Better market Pro",
                         "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.20.8",
+                        "version":  "10.20.9",
                         "author":  "DiegoT34",
                         "summary":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
                         "description":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
@@ -22,39 +22,12 @@
                                         ],
                         "minLauncherVersion":  "0.22.1",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-pro.user.js",
-                        "sha256":  "a5f2da692a911a3f824519b23543b98db24d48f756c2659efde4f7c54147c129",
+                        "sha256":  "f4d51a38a3e8ffd39eac6f32b609e3383b66be756c4e01b6abbdfe52aeb0daeb",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación 10.20.8",
+                        "changelog":  "Publicación 10.20.9",
                         "icon":  "script",
-                        "featured":  true,
-                        "publishedAt":  "2026-10-01T02:36:01Z"
-                    },
-                    {
-                        "id":  "custom-hub-game",
-                        "name":  "CUSTOM HUB GAME",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "4.0.0",
-                        "author":  "DiegoT34",
-                        "summary":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
-                        "description":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
-                        "category":  "Utilidades",
-                        "tags":  [
-
-                                 ],
-                        "games":  [
-                                      "Poke Idle World"
-                                  ],
-                        "permissions":  [
-
-                                        ],
-                        "minLauncherVersion":  "0.22.3",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-hub-game.user.js",
-                        "sha256":  "dc95753be5ff34b285291cb6de0cdd5a9b1c16e7014270ca0e604fa41ae20c8b",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación 4.0.0",
-                        "icon":  "🧩",
-                        "featured":  true,
-                        "publishedAt":  "2026-09-26T09:53:31Z"
+                        "featured":  false,
+                        "publishedAt":  "2026-10-04T20:19:04Z"
                     },
                     {
                         "id":  "telegram-alerts",

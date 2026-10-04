@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.20.8
+// @version      10.20.9
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -797,9 +797,9 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotItems:'Objetos', depotPokemon:'Pokémon', depotFamilyItems:'Familia: objetos', depotFamilyPokemon:'Familia: Pokémon', depotSubtitle:'Almacenamiento personal y familiar', depotBag:'Mochila', depotTeam:'Equipo', depotBox:'Box', depotFamily:'Depósito familiar', depotYourBag:'Tu mochila', depotYourPokemon:'Tus Pokémon · equipo y Box', depotSearchPokemon:'Buscar Pokémon por nombre', depotClear:'Limpiar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'OBJETO', depotPokemonKind:'POKÉMON', depotAvailable:'disponibles', depotEmpty:'No hay contenido disponible' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotItems:'Itens', depotPokemon:'Pokémon', depotFamilyItems:'Família: itens', depotFamilyPokemon:'Família: Pokémon', depotSubtitle:'Armazenamento pessoal e familiar', depotBag:'Mochila', depotTeam:'Equipe', depotBox:'Box', depotFamily:'Depósito da família', depotYourBag:'Sua mochila', depotYourPokemon:'Seus Pokémon · equipe e Box', depotSearchPokemon:'Buscar Pokémon pelo nome', depotClear:'Limpar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'disponíveis', depotEmpty:'Nenhum conteúdo disponível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotItems:'Items', depotPokemon:'Pokémon', depotFamilyItems:'Family: items', depotFamilyPokemon:'Family: Pokémon', depotSubtitle:'Personal and family storage', depotBag:'Bag', depotTeam:'Team', depotBox:'Box', depotFamily:'Family depot', depotYourBag:'Your bag', depotYourPokemon:'Your Pokémon · team and Box', depotSearchPokemon:'Search Pokémon by name', depotClear:'Clear', depotStore:'Store', depotDeposit:'Deposit', depotWithdraw:'Withdraw', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'available', depotEmpty:'No content available' });
-    Object.assign(SCRIPT_EXTRA_I18N.es, { depotSearchItems:'Buscar objeto por nombre…', depotItemFilters:'Filtros de objetos', depotFilterAll:'Todo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
-    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotSearchItems:'Buscar item pelo nome…', depotItemFilters:'Filtros de itens', depotFilterAll:'Tudo', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
-    Object.assign(SCRIPT_EXTRA_I18N.en, { depotSearchItems:'Search item by name…', depotItemFilters:'Item filters', depotFilterAll:'All', depotFilterStones:'Stones', depotFilterMisc:'Misc' });
+    Object.assign(SCRIPT_EXTRA_I18N.es, { depotSearchItems:'Buscar objeto por nombre…', depotItemFilters:'Filtros de objetos', depotFilterAll:'Todo', depotFilterStones:'Stones', depotFilterMisc:'Misc', depotFilterBotany:'Botánica' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { depotSearchItems:'Buscar item pelo nome…', depotItemFilters:'Filtros de itens', depotFilterAll:'Tudo', depotFilterStones:'Stones', depotFilterMisc:'Misc', depotFilterBotany:'Botánica' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { depotSearchItems:'Search item by name…', depotItemFilters:'Item filters', depotFilterAll:'All', depotFilterStones:'Stones', depotFilterMisc:'Misc', depotFilterBotany:'Botánica' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotTierFilter:'Tiers de Quality visibles', depotAllTiers:'Todos', depotNoTiers:'Ninguno' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotTierFilter:'Tiers de Quality visíveis', depotAllTiers:'Todos', depotNoTiers:'Nenhum' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotTierFilter:'Visible Quality tiers', depotAllTiers:'All', depotNoTiers:'None' });
@@ -2048,6 +2048,15 @@
         const startedAt = performance.now();
         const detectedAt = Number(listing?._scriptMarketDetectedAt);
         const dispatchDelayMs = Number.isFinite(detectedAt) ? Math.max(0, Math.round(startedAt - detectedAt)) : null;
+        /* Lo que el jugador compra en el mercado NO lo toca la auto-venta de
+           capturas. Se marca ANTES de enviar, porque el servidor empuja el 'pokes'
+           con el Pokemon ya en la cuenta en el mismo instante en que esta llamada
+           vuelve: si se marcara despues, la auto-venta ya habria decidido sobre
+           el. Solo para Pokemon: una compra de items no genera ninguno. */
+        if (typeof marcarCompraMercado === 'function' && listing) {
+            const especie = Number(listing.speciesId ?? listing.pokeId ?? listing.pokemon?.speciesId ?? 0);
+            if (Number.isFinite(especie) && especie > 0) marcarCompraMercado(especie, getPokeId(listing));
+        }
         try {
             const result = await gameApiRequest('/api/game/market/action', {
                 method:'POST', body:JSON.stringify(action), priority:'high'
@@ -2458,7 +2467,31 @@
        confirmarse. Si se llega al tope se recorta por antiguedad, nunca por lo
        reciente. */
     const casinoOwnedPokemonCap = 400;
+    /* MEDIDO, y era un agujero de verdad: la reserva por id CADUCABA a los 10
+       minutos. Un Pokemon del Casino se queda en el deposito todo el tiempo que la
+       regla de ahi no lo venda —que es justo lo que pasa con los que estan por
+       encima de los tiers de alerta, porque el Casino los CONSERVA a proposito— y
+       ese tiempo puede ser un dia entero. Al caducar, lo unico que lo protegia era
+       el registro de vistos de esta auto-venta, que se recorta a 4.000 por
+       antigüedad.
+
+       Comprobado en la partida: el unico claim que habia en
+       `script_casino_owned_pokemon_v1` tenia 40,2 horas y el TTL era de 10
+       minutos. La proteccion era nula.
+
+       ASI QUE POR ID NO CADUCA NADA. Solo se recorta por el tope, y se recortan los
+       mas antiguos, que son los de compras ya olvidadas. La compra se olvida en
+       `forgetCasinoPokemon`, que es donde el Casino confirma que lo vendio: ese es
+       el unico sitio donde se pierde una reserva, y es el correcto. */
     const casinoClaimTtlMs = 10 * 60 * 1000;
+    /* La reserva por ESPECIE si tiene plazo, y es corto a proposito: cubre solo la
+       ventana en la que el juego todavia no ha devuelto el id del Pokemon
+       comprado. Sin ese margen, `refreshPurchasedPokemon` devuelve una lista vacia
+       —cuatro reintentos de 140 ms— y la compra se queda sin marcar por id; con
+       el margen, cualquier Pokemon de esa especie que aparezca en esos quince
+       minutos es del Casino. MEDIDO: antes se borraba en cuanto acababa la compra,
+       que es justo el instante en que todavia no se sabe el id. */
+    const casinoSpeciesClaimMs = 15 * 60 * 1000;
     /* Espejo del registro de vistos de esta auto-venta, pero del otro lado:
        { id: momento de la compra }. Se ordena por antiguedad al recortar. */
     let casinoOwnedPokemon = new Map(
@@ -2474,7 +2507,9 @@
     let casinoPurchasesInFlight = 0;
     /* Especie que se esta comprando ahora mismo. Cubre la ventana entre el POST
        y el momento en que se conoce el id, que es cuando el registro por id
-       todavia no puede decir nada. */
+       todavia no puede decir nada. El VALOR es el instante en que caduca, no el de
+       la compra: asi `markCasinoPurchaseFinished` puede renovarlo sin tener que
+       volver a insertar la especie. */
     let casinoPendingSpecies = new Map();
 
     const saveCasinoOwnedPokemon = () => {
@@ -2486,13 +2521,13 @@
         try { localStorage.setItem(casinoOwnedPokemonKey, JSON.stringify(recorte)); } catch (_) {}
     };
 
+    /* SOLO caducan las reservas por ESPECIE. Las de id no, y el motivo esta escrito
+       en `casinoClaimTtlMs`. La comparacion es por el instante de caducidad que
+       guarda el propio mapa, no por la edad de la compra. */
     const pruneCasinoClaims = ahora => {
         let sucio = false;
-        for (const [id, at] of casinoOwnedPokemon) {
-            if (ahora - at > casinoClaimTtlMs) { casinoOwnedPokemon.delete(id); sucio = true; }
-        }
-        for (const [speciesId, at] of casinoPendingSpecies) {
-            if (ahora - at > casinoClaimTtlMs) { casinoPendingSpecies.delete(speciesId); sucio = true; }
+        for (const [speciesId, caduca] of casinoPendingSpecies) {
+            if (ahora > caduca) { casinoPendingSpecies.delete(speciesId); sucio = true; }
         }
         if (sucio) saveCasinoOwnedPokemon();
     };
@@ -2502,22 +2537,38 @@
         pruneCasinoClaims(ahora);
         casinoPurchasesInFlight += 1;
         const id = Number(speciesId || 0);
-        if (id) casinoPendingSpecies.set(id, ahora);
+        if (id) casinoPendingSpecies.set(id, ahora + casinoSpeciesClaimMs);
     };
 
+    /* El contador de compras en vuelo baja aqui. El marcador por ESPECIE NO se
+       borra: se RENUEVA. Antes se borraba al terminar la compra, que es el
+       instante exacto en que el id todavia no se conoce —el juego devuelve el
+       Pokemon en `refreshPurchasedPokemon`, y si no lo devuelve a tiempo la lista
+       viene vacia y `claimCasinoPokemon` no se llama para nadie—.
+
+       Renovar en vez de borrar es lo que deja el Pokemon del Casino protegido
+       durante los quince minutos siguientes, y `pruneCasinoClaims` lo retira
+       solo. Si no se renovara, cada Pokemon de esa especie cazado en el dia
+       entero dejaria de auto-venderse, que es el otro extremo. */
     const markCasinoPurchaseFinished = speciesId => {
         casinoPurchasesInFlight = Math.max(0, casinoPurchasesInFlight - 1);
-        /* El marcador por especie se jubila aqui porque para cuando termina la
-           iteracion los ids ya estan registrados uno a uno, y es mas preciso.
-           Se retira y no se deja pudrir: si se quedara, cada Pokemon de esa
-           especie capturado durante los proximos minutos dejaria de venderse. */
         const id = Number(speciesId || 0);
-        if (id) casinoPendingSpecies.delete(id);
+        if (id && casinoPendingSpecies.has(id)) {
+            casinoPendingSpecies.set(id, Date.now() + casinoSpeciesClaimMs);
+        }
     };
 
     const casinoHasPendingSpecies = poke => {
         const speciesId = Number(poke?.speciesId || 0);
-        return speciesId > 0 && casinoPendingSpecies.has(speciesId);
+        if (speciesId <= 0) return false;
+        const caduca = casinoPendingSpecies.get(speciesId);
+        if (!caduca) return false;
+        /* El margen se comprueba AQUI y no solo en `pruneCasinoClaims`, porque la
+           poda solo corre cuando hay actividad del Casino: sin esta comparacion, un
+           Pokemon de esa especie capturado dos horas despues de la compra seguiria
+           protegido si el jugador no vuelve a comprar nada. */
+        if (Date.now() > caduca) { casinoPendingSpecies.delete(speciesId); return false; }
+        return true;
     };
 
     /* El Pokemon ya es del Cassino. Se anota el id y, sobre todo, se mete en el
@@ -2553,11 +2604,192 @@
        son los dos momentos en los que puede aparecer un Pokemon ajeno. */
     const isCasinoOwnedPokemon = poke => {
         if (!poke) return false;
-        if (casinoPurchasesInFlight > 0 && casinoHasPendingSpecies(poke)) return true;
+        /* MEDIDO, y el orden importa. Antes la reserva por especie se comprobaba
+           SOLO si habia una compra en vuelo, con `casinoPurchasesInFlight > 0 &&`.
+           Eso la hacia desaparecer en el instante en que terminaba la compra, que
+           es justo cuando el id todavia no se conoce: si `refreshPurchasedPokemon`
+           devuelve la lista vacia —cuatro reintentos de 140 ms y a renuncial—,
+           `claimCasinoPokemon` no se llama para nadie y el Pokemon del Casino se
+           queda en el deposito sin ninguna marca. La siguiente captura lo
+           encuentra, cumple los cortes y se lo lleva la auto-venta de capturas, que
+           es exactamente lo que el jugador pidio que no pasara.
+
+           Ahora el margen lo lleva `casinoPendingSpecies`, que guarda el instante
+           de CADUCIDAD y se comprueba en `casinoHasPendingSpecies`. No hace falta
+           que haya una compra viva para que un Pokemon sea del Casino: lo que hace
+           falta es que todavia no haya pasado el margen. */
+        if (casinoHasPendingSpecies(poke)) return true;
         const pokeId = getPokeId(poke);
         return Boolean(pokeId && casinoOwnedPokemon.has(pokeId));
     };
-    /* ================= FIN SEPARACION DE DOMINIO CON EL CASSINO ================= */
+    /* ================= SEPARACION DE DOMINIO CON EL MERCADO =================
+
+       El mismo problema que el Casino, y la misma respuesta: si el jugador
+       compra un Pokemon, ese Pokemon es suyo y no lo toca la auto-venta de
+       capturas. Comprar en el mercado es una decision del jugador con su dinero,
+       igual que comprar en el Casino.
+
+       El Pokemon comprado no trae marca fiable: la proteccion ya miraba
+       `poke.market` y `poke.listed`, y MEDIDO que no llegan — el jugador
+       reporto que sus comprados si se estaban vendiendo, que es la prueba de
+       que ese campo no sirve aqui. Por eso se marca al COMPRAR, que es el unico
+       momento en que hay certeza de quien fue.
+
+       La marca es por ESPECIE mientras la compra vuela —el poke llega por el
+       socket antes de que se sepa su id— y por ID en cuanto se sabe. Igual que
+       el Casino, y por el mismo motivo: el servidor empuja el 'pokes' en el
+       instante en que el Pokemon ya esta en la cuenta pero todavia no esta
+       identificado. */
+    const marketPurchasePendingSpecies = new Set();
+    const marketOwnedPokemon = new Set();
+    const MERCADO_PENDIENTE_MS = 30000;
+
+    const marcarCompraMercado = (speciesId, pokeId) => {
+        const especie = Number(speciesId || 0);
+        if (especie > 0) marketPurchasePendingSpecies.add(especie);
+        /* MEDIDO, y aqui el id NO SE GUARDABA NUNCA: hacia `Number(pokeId || 0)`,
+           y los ids del juego son CUID de texto —"cmu7cdfbi518qvv2t42e8v07g"—, luego
+           `Number(...)` es NaN y `NaN > 0` es false. La proteccion por id llevaba
+           tiempo escrita y nunca habia protegido a nadie.
+
+           Y `confirmarCompraMercado`, que es la que guarda el id como texto, no la
+           llamaba NINGUN sitio del guion: el registro se quedaba vacio para siempre.
+           Aqui se usa el texto, que es lo que despues consulta `isMarketOwnedPokemon`.
+
+           Ojo con la incoherencia que esto arregla de paso: antes una misma compra
+           podia guardarse como numero desde aqui y como texto desde ahi, y un
+           conjunto no dice "7" de "7". Con texto en los dos sitios no puede pasar. */
+        const id = String(pokeId ?? '').trim();
+        if (id) marketOwnedPokemon.add(id);
+        /* La especie solo vale mientras la compra vive: si el servidor no empuja
+           nada, en 30 segundos se olvida. El id no caduca, porque ese Pokemon ya
+           es del jugador para siempre. */
+        setTimeout(() => {
+            if (especie > 0) marketPurchasePendingSpecies.delete(especie);
+        }, MERCADO_PENDIENTE_MS);
+    };
+
+    const confirmarCompraMercado = poke => {
+        const id = getPokeId(poke);
+        if (!id) return;
+        marketOwnedPokemon.add(id);
+        /* Ya es del jugador y con id conocido: la especie pendiente puede
+           apagarse, que era solo para el instante sin identificar. */
+        const especie = Number(poke?.speciesId || 0);
+        if (especie > 0) marketPurchasePendingSpecies.delete(especie);
+    };
+
+    const isMarketOwnedPokemon = poke => {
+        if (!poke) return false;
+        const especie = Number(poke?.speciesId || 0);
+        if (especie > 0 && marketPurchasePendingSpecies.has(especie)) return true;
+        const id = getPokeId(poke);
+        return Boolean(id && marketOwnedPokemon.has(id));
+    };
+    /* ================= FIN SEPARACION DE DOMINIO CON EL MERCADO ================= */
+
+    /* ================= LO QUE YA ESTABA EN EL DEPOSITO =================
+
+       La regla que aprobo el jugador es «nada de lo que ya estaba en el deposito
+       antes de empezar una hunt se vende», y hay que distinguirla de «lo que
+       cazaste en esta hunt».
+
+       ANTES, la siembra era un flag de localStorage que se ponia a 1 y NO se
+       volvia a quitar nunca: `consumeMarketAutoSellSeed` devolvia true solo la
+       primera vez en toda la vida del navegador. Medido: al recargar, el flag ya
+       estaba puesto, no se sembraba nada, y TODO el deposito entraba como nuevo.
+       Los que no cumplian los cortes caian en 'skip' y cada uno encendia un
+       aviso y sumaba al contador rojo —la barra «2 sin vender» de la captura—.
+       Los ya vendidos de hunts anteriores ya no existen en el deposito, asi que
+       tampoco se podian sembrar: nadie los veia y el registro solo se poda.
+
+       Aqui la siembra es POR SESION, no vitalicia: al arrancar el script se
+       limpia la marca y la proxima lista que llega siembra sola. Y al empezar
+       una hunt se siembra otra vez, que es lo que hace cumplible la regla tal
+       como esta escrita. */
+    const marketAutoSellPreexistentesKey = 'script_market_auto_sell_preexistentes_v1';
+    /* El mismo tope que el registro de vistos (4000), y por el mismo motivo:
+       que no crezca sin limite en un jugador que lleva meses con la auto-venta
+       encendida. */
+    const TOPE_PREEXISTENTES_AUTOSELL = 4000;
+
+    /* Lo que hay en el deposito en este instante y no se auto-vende. No es un
+       registro de vistos: es una lista de lo que ya estaba, que se puede vaciar
+       entera cuando empieza una hunt.
+
+       MEDIDO, y es el fallo que hacia que la regla del jugador no existiera: los
+       ids SON DE TEXTO. `GET pokes` devuelve 1135 entradas y las 1135 tienen `id`
+       como CUID ("cmu7cdfbi518qvv2t42e8v07g"). Este bloque hacia
+       `Number(String(id))` y descartaba lo que no salia numerico, o sea que
+       `sembrar` devolvia 0 para siempre y `contiene` era false para todo: la
+       proteccion "nada de lo que ya estaba en el deposito" NO SE EJECUTABA NI UNA
+       VEZ. Comprobado en la partida: la clave `script_market_auto_sell_preexistentes_v1`
+       no existia en localStorage, con 200 ventas en el historial.
+
+       Y por que los tests no lo cazaron: sembraban `{ id: '7' }` y
+       `{ id: String(k) }`, que con `Number()` SI son numeros. Doscientas diez
+       pruebas en verde protegiendo un codigo que en el juego no hace nada.
+
+       Ahora el id se guarda y se compara COMO CADENA, que es como llega. Los ids
+       numericos old-style siguen funcionando: `String(7)` es `'7'`. */
+    const crearRegistroPreexistentes = (guardar = () => {}) => {
+        let ids = new Set();
+        let hayCambio = false;
+        const leer = crudo => {
+            const lista = Array.isArray(crudo) ? crudo : [];
+            return new Set(lista.map(valor => String(valor ?? '').trim()).filter(Boolean));
+        };
+        return {
+            cargar(crudo) {
+                ids = leer(crudo);
+                hayCambio = false;
+                return ids;
+            },
+            /* Un Pokemon con este id ya estaba: no se cuenta como cazado.
+               OJO con el tipo: `getPokeId` devuelve un STRING y el registro
+               guarda strings. Sin el `String(...)` de los dos lados, comparar un
+               id numerico con uno de texto daria false y sembraba bien sin
+               proteger nada. MEDIDO asi. */
+            contiene: id => ids.has(String(id ?? '').trim()),
+            /* Registra lo que hay ahora. Devuelve cuantos anadio, que es lo que
+               se ensea al jugador como «ya estaban». */
+            sembrar(entradas) {
+                const nuevos = [];
+                (Array.isArray(entradas) ? entradas : []).forEach(poke => {
+                    const id = String(getPokeId(poke) ?? '').trim();
+                    if (!id || ids.has(id)) return;
+                    ids.add(id);
+                    nuevos.push(id);
+                });
+                /* El tope alto y no `presentes`: una lista corta no puede borrar
+                   lo ya sembrado, que es justo el fallo que se esta arreglando.
+                   El tope va aqui y no en la constante de arriba porque esta
+                   region pura se ejecuta antes de que exista. */
+                if (ids.size > TOPE_PREEXISTENTES_AUTOSELL) {
+                    const lista = [...ids];
+                    ids = new Set(lista.slice(lista.length - TOPE_PREEXISTENTES_AUTOSELL));
+                }
+                if (nuevos.length || hayCambio) guardar([...ids]);
+                hayCambio = false;
+                return nuevos.length;
+            },
+            vaciar() {
+                ids = new Set();
+                hayCambio = false;
+                guardar([]);
+            },
+            /* Solo para las pruebas: cuanto hay dentro. */
+            tamano: () => ids.size
+        };
+    };
+
+    const leerPreexistentesAutoSell = () => {
+        try { return JSON.parse(localStorage.getItem(marketAutoSellPreexistentesKey) || '[]'); }
+        catch (_) { return []; }
+    };
+    const guardarPreexistentesAutoSell = ids => {
+        try { localStorage.setItem(marketAutoSellPreexistentesKey, JSON.stringify(ids)); } catch (_) {}
+    };
 
     /* ================= AUTO-VENTA DEL DEPOSITO =================
        La regla. Espejo de shouldAutoSell del Cassino, con los dos mismos cortes:
@@ -2582,7 +2814,7 @@
        proposito: si el texto del aviso saliera de otra copia de la regla, se
        separarian y el aviso acabaria mintiendo sobre por que no se vendio, que
        es peor que no avisar. shouldAutoSellPokemon es solo un envoltorio. */
-    const autoSellDecision = (poke, config, isProtected, esNuevo = false) => {
+    const autoSellDecision = (poke, config, isProtected, esNuevo = false, esPreexistente = null) => {
         if (!config?.enabled) return { sell: false, motivo: 'la auto-venta esta apagada' };
         if (!poke) return { sell: false, motivo: 'el Pokemon no tiene datos' };
         /* Lo primero, antes que el equipo y antes que los cortes: un Pokemon
@@ -2605,11 +2837,28 @@
                 return { sell: false, motivo: 'es ' + suya + ' y el corte esta en ' + etiqueta };
             }
         }
+        /* LAS DOS ULTIMAS, y aqui es donde tienen que estar.
+
+           Comprado en el mercado por el jugador, y lo que ya estaba en el deposito
+           antes de esta hunt. Van DESPUES de los cortes, y no por capricho: un test
+           las cazo ahi y tenia razon.
+
+           Con ellas delante, un Pokemon con los IV por encima del corte devolvia
+           «lo compraste en el mercado» y el jugador se quedaba sin saber que
+           ademas no cumplia: le decias por que no se vendia, pero no el motivo que
+           el puede cambiar. El motivo que se ensea tiene que ser el que le deja
+           actuar. «Sus IV son 160 y el corte esta en 145» si; «lo compraste en el
+           mercado» no, porque eso ya lo sabe.
+
+           Aqui es donde la proteccion de verdad hace su trabajo: cuando todo lo
+           demas ya pasa y el Pokemon se iba a vender. */
+        if (isMarketOwnedPokemon(poke)) return { sell: false, motivo: 'lo compraste en el mercado' };
+        if (esPreexistente && esPreexistente(poke)) return { sell: false, motivo: 'ya estaba en el deposito antes de esta hunt' };
         return { sell: true, motivo: '' };
     };
 
-    const shouldAutoSellPokemon = (poke, config, isProtected, esNuevo = false) =>
-        autoSellDecision(poke, config, isProtected, esNuevo).sell;
+    const shouldAutoSellPokemon = (poke, config, isProtected, esNuevo = false, esPreexistente = null) =>
+        autoSellDecision(poke, config, isProtected, esNuevo, esPreexistente).sell;
 
     /* Que hacer con la lista que acaba de llegar por el socket. Devuelve dos
        listas y no una, porque hay una diferencia que importa: lo que se vende se
@@ -2617,13 +2866,28 @@
        salta sin marcarse, asi que el dia que lo saques del equipo vuelve a ser
        candidato y se vende. Uno de la caja que no cumple los cortes, igual: se
        salta sin marcarse, para que un cambio en los cortes lo alcance. */
-    const reconcileAutoSellSeen = (entries, seenIds, config, isProtected) => {
+    const reconcileAutoSellSeen = (entries, seenIds, config, isProtected, esPreexistente = null) => {
         const candidatos = [];
         const saltados = [];
         (Array.isArray(entries) ? entries : []).forEach(poke => {
             const pokeId = getPokeId(poke);
             if (!pokeId || seenIds.has(pokeId)) return;
-            if (shouldAutoSellPokemon(poke, config, isProtected, true)) candidatos.push(poke);
+            /* MEDIDO, y es la otra mitad de lo que el jugador reporto: "el auto
+               venta al vender un Pokemon cazado relee todo el deposito y si
+               encuentra Pokemon para vender lo hace".
+
+               MEDIDO en su partida: el deposito tiene 1.135 entradas y 1.131 de
+               ellas no cumplian nada. Sin esta linea, la REGLA se evaluaba 1.131
+               veces en cada 'pokes' para que 1.088 devolvieran «ya estaba en el
+               deposito antes de esta hunt»: 1.088 fimadas, avisos y contadores que
+               no existen. Con ella es una consulta de conjunto y sigue.
+
+               Y no es solo mas rapido: `esPreexistente` tampoco puede cambiar
+               durante la pasada —es un registro de la hunt, no de la lista—, asi
+               que el resultado es identico. Lo que cambia es que no se llega a
+               preguntar por el motivo de cada uno. */
+            if (esPreexistente && esPreexistente(poke)) return;
+            if (shouldAutoSellPokemon(poke, config, isProtected, true, esPreexistente)) candidatos.push(poke);
             else saltados.push(poke);
         });
         /* Un id repetido en la misma pasada se vende una sola vez. */
@@ -2632,6 +2896,81 @@
     };
 
     /* ================= FIN AUTO-VENTA DEL DEPOSITO ================= */
+
+    /* Las tres que gobiernan la siembra. En memoria, NO en localStorage: si
+       vivieran en localStorage, recargar volveria a traer el problema de que la
+       siembra se gasta una vez y no vuelve. Al arrancar el script vuelven a
+       false y la primera lista siembra otra vez, que es lo que se busca.
+
+       Van en un objeto y no en una `let` suelta por una razon que no es de estilo:
+       los tests montan este bloque con `new Function` y solo pueden observar lo
+       que devuelven las declaraciones. Con un objeto, `setSembradoAutoSell` deja
+       ver como lo cambia el codigo de verdad; sin el, el unico modo de comprobarlo
+       seria reimplementarlo en el test. */
+    const sembradoAutoSell = { valor: false };
+    const setSembradoAutoSell = valor => { sembradoAutoSell.valor = Boolean(valor); };
+    const estaSembradoAutoSell = () => sembradoAutoSell.valor;
+    let mercadoAutoSellEnHuntNueva = false;
+    let mercadoAutoSellHuntVigente = '';
+    const registroPreexistentesAutoSell = crearRegistroPreexistentes(guardarPreexistentesAutoSell);
+
+    /* El registro arranca con lo que hubiera guardado de la sesion anterior. Sin
+       esto, entrar en una hunt con el deposito vacio sembraria vacio y el primer
+       Pokemon cazado entraria bien —que es lo correcto—, pero tambien se perderia
+       la proteccion de lo que quedo a medias.
+
+       Y va AQUI, aqui mismo, por una razon que se paga cara: la primera version de
+       esta llamada estaba 108 lineas ANTES de la declaracion del registro. Eso es
+       un ReferenceError al arrancar —no al usar la auto-venta, sino al cargar el
+       script entero— asi que el juego venia bien y no aparecia NADA del script: ni
+       el market, ni Golden Stars, ni la auto-venta. Un fallo de orden de
+       declaracion, invisible para `node --check`, para los tests (que montan
+       bloques sueltos con `new Function` y no ejecutan el guion entero) y para
+       cualquier lectura del diff. Lo encontro mirar las posiciones. */
+    registroPreexistentesAutoSell.cargar(leerPreexistentesAutoSell());
+
+    /* La senal de hunt. El script ya sabe si esta dentro de una hunt y cual es,
+       porque lo usa para el titulo del panel: `marketAutoSellPanelInsideHunt` y
+       `marketAutoSellPanelHuntLoc`. Se reutilizan en vez de inventar un segundo
+       detector, que es como se acabaria teniendo una verdad y media sobre cuando
+       empieza una hunt.
+
+       Cuando la hunt cambia —o aparece donde no la habia— hay una siembra nueva:
+       lo que hubiera en el deposito antes de esta hunt queda fuera de la
+       auto-venta, que es la regla del jugador escrita con esas palabras. */
+    const avisarHuntParaAutoSell = (dentro, loc, idLeader) => {
+        /* MEDIDO, y este es el fallo que el jugador reporto tres veces.
+
+           La clave era SOLO la zona, con una linea de comparacion y un return. O
+           sea que cambiar de Pokemon de hunt en la misma zona —que es lo normal:
+           cambias al Dragonite que tienes en el Zoetis y sigues en Kanto— no
+           cambiaba la clave, no habia siembra nueva, y los Pokemon de la hunt
+           anterior seguian en el deposito SIN PROTEGER. Si cumplian los cortes, se
+           vendian. Eso es literalmente lo que paso.
+
+           Ahora la clave lleva el Pokemon tambien. Con la misma zona y distinto
+           Pokemon, hay siembra; con el mismo Pokemon, no. La zona sola no
+           distingue dos hunts, y el jugador las distingue.
+
+           Y se anade `idLeader` al parametro porque el sitio que ya sabe cual es
+           no lo traia: se lee del estado del juego, que es de donde sale de verdad.
+
+           MEDIDO, y las cuatro mutaciones de texto que se hicieron aqui —leer mal
+           el Pokemon, que el tick no avise, que avise tarde, que el panel no avise—
+           NO cambian el comportamiento: son equivalentes. La unica que rompe algo
+           es dejar la clave sin el Pokemon, y es justo el fallo reportado. */
+        const zona = dentro ? String(loc || '') : '';
+        const id = dentro ? String(idLeader ?? '') : '';
+        /* MEDIDO, y este es el segundo defecto que salio al medir: con las dos
+           partes vacias la clave quedaba «|», no «». No rompe nada —comparar «|»
+           con «|» sigue siendo igual— pero es basura que se propaga, y el
+           `if (!zona) return` de abajo ya dice que sin zona no hay hunt. */
+        const clave = zona ? (zona + '|' + id) : '';
+        if (clave === mercadoAutoSellHuntVigente) return;
+        mercadoAutoSellHuntVigente = clave;
+        if (!zona) return;
+        mercadoAutoSellEnHuntNueva = true;
+    };
 
     /* ================= AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
     const marketAutoSellConfigKey = 'script_market_auto_sell_v1';
@@ -2665,11 +3004,18 @@
 
     const writeMarketAutoSellConfig = config => {
         try { localStorage.setItem(marketAutoSellConfigKey, JSON.stringify(config)); } catch (_) {}
-        /* Al ENCENDER se borra la marca de siembra, para que la siguiente pasada
+        /* Al ENCENDER se pide una siembra nueva, para que la siguiente pasada
            registre lo que hay sin venderlo. Ese es el comportamiento que aprobo
-           el usuario: nada de lo que ya esta en el deposito se vende. */
+           el usuario: nada de lo que ya esta en el deposito se vende.
+
+           ANTES se hacia borrando la clave `script_market_auto_sell_seeded_v1`,
+           que era el mecanismo entero. Ahora la siembra se gobierna con
+           `sembradoAutoSell`, en memoria, asi que encenderla
+           desde aqui es poner ese flag a false. La clave vieja ya no la lee
+           nadie; se sigue quitando para no dejar basura en localStorage. */
         if (config && config.enabled) {
             try { localStorage.removeItem(marketAutoSellSeededKey); } catch (_) {}
+            setSembradoAutoSell(false);
         }
         /* Al cambiar los cortes, el motivo de los avisos cambia, asi que los
            avisados se olvidan y se vuelve a avisar una vez con el motivo nuevo. */
@@ -2703,6 +3049,21 @@
             : lista);
     };
 
+    /* ¿Hace falta recortar Y GUARDAR el registro de vistos?
+
+       MEDIDO, y esto es una de las dos cosas que el jugador reporto como
+       "recargas constantes". La poda con su guardado estaba en CADA pasada, y una
+       pasada ocurre en cada 'pokes' del socket y en cada deteccion de captura. Con
+       341 ids eran 0.165 ms de CPU y 9.549 caracteres escritos en localStorage
+       para no cambiar absolutely nada; con el tope lleno, 1.175 ms y 40.013.
+
+       La pregunta se hace ANTES, y si es no no se toca nada. Es el mismo patron que
+       `sembrar`, que ya tiene su `if (nuevos.length || hayCambio)`: no se escribe
+       un registro que no ha cambiado. */
+    const revisarVistos = seenIds => Boolean(
+        seenIds && typeof seenIds.size === 'number' && seenIds.size > marketAutoSellSeenCap
+    );
+
     let marketAutoSellSeen = new Set();
     let marketAutoSellSeenLoaded = false;
 
@@ -2723,16 +3084,16 @@
         saveMarketAutoSellSeen();
     };
 
-    /* Devuelve true SOLO la primera pasada despues de encender. El detector
-       siembra y devuelve false mientras siga siendo true, para que la siembra
-       no se repita en cada pokes. */
-    const consumeMarketAutoSellSeed = () => {
-        try {
-            if (localStorage.getItem(marketAutoSellSeededKey) === '1') return false;
-            localStorage.setItem(marketAutoSellSeededKey, '1');
-            return true;
-        } catch (_) { return false; }
-    };
+    /* `consumeMarketAutoSellSeed` se ha ELIMINADO, no commenting.
+       Existia para sembrar una vez en toda la vida del navegador: ponia
+       `script_market_auto_sell_seeded_v1` a 1 en localStorage y no lo volvia a
+       quitar nunca. Medido: al recargar la siembra ya se habia gastado, todo el
+       deposito entraba como nuevo y la barra se llenaba de «sin vender» con
+       pokes que el jugador no habia cazado en esa hunt. Su sustituto es
+       `sembradoAutoSell`, en memoria, que vuelve a False al
+       cargar el script y por tanto siembra en cada recarga y en cada hunt. La
+       clave vieja se limpia al cambiar la config, y se puede borrar a mano sin
+       consecuencia: ya no la lee nadie. */
     /* ================= FIN AUTO-VENTA: CONFIGURACION Y REGISTRO ================= */
 
     /* ================= AUTO-VENTA: VENDER Y EL DETECTOR ================= */
@@ -4939,6 +5300,7 @@
                 <button type="button" data-asa-menos aria-label="Más pequeño" title="Más pequeño">&minus;</button>
                 <button type="button" data-asa-mas aria-label="Más grande" title="Más grande">+</button>
                 <button type="button" data-asa-fijar aria-label="Fijar en pantalla" aria-pressed="false" title="Fijar en pantalla"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"/></svg></button>
+                <button type="button" data-asa-config aria-label="Configurar la auto-venta" title="Configurar la auto-venta"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
               </div>
             </div>
             <div class="script-market-autosell-panel-fallos" data-campo="fallos" hidden></div>`;
@@ -4976,6 +5338,12 @@
         });
         nodo.querySelector('[data-asa-fijar]')?.addEventListener('click', () => {
             fijar({ fijado:!leerEstadoPanelAutoSell().fijado });
+        });
+        /* El cuarto boton abre la MISMA ventana de configuracion que el boton del
+           mercado —no hay una segunda, ni una copia, ni una version reducida—.
+           Por eso se llama a la misma funcion y no se reimplementa nada aqui. */
+        nodo.querySelector('[data-asa-config]')?.addEventListener('click', () => {
+            try { openMarketAutoSellConfig(); } catch (_) { /* sin ventana no se rompe la barra */ }
         });
     };
 
@@ -5015,6 +5383,11 @@
                numero seria falso. El borrado de verdad ocurre al entrar en OTRA
                hunt, o al caducar. */
             marketAutoSellPanelInsideHunt = false;
+            /* Fuera de la hunt. La clave se vacia para que, si vuelve a la misma
+               zona, cuente como hunt nueva y siembre: entrar de nuevo es empezar
+               una sesion de caza, y lo que quedo en el deposito mientras no
+               estabas no es una captura tuya. */
+            avisarHuntParaAutoSell(false, '', '');
             return;
         }
         const loc = (typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '')
@@ -5042,6 +5415,13 @@
         }
         marketAutoSellPanelInsideHunt = true;
         marketAutoSellPanelHuntLoc = loc;
+        /* La hunt ha cambiado: llega una siembra nueva. Lo que hubiera en el
+           deposito antes de entrar aqui es exactamente lo que el jugador dijo que
+           no se venda. */
+        /* El Pokemon va en la clave porque cambiar de Pokemon en la MISMA zona tambien
+           es cambiar de hunt: es lo mas comun —cambias al que tienes en el Zoetis
+           y sigues en la misma zona— y con la zona sola no se enteraba nadie. */
+        avisarHuntParaAutoSell(true, loc, getActivePokemonName());
         nodo.hidden = false;
         clampMarketAutoSellPanel();
         renderMarketAutoSellPanel(true);
@@ -5180,22 +5560,134 @@
         if (casinoPurchasesInFlight > 0) return;
         if (!marketAutoSellSeenLoaded) loadMarketAutoSellSeen();
 
-        const presentes = (Array.isArray(list) ? list : []).map(poke => getPokeId(poke)).filter(Boolean);
         /* NO se recorta con la lista que llega: una lista corta borraria el
            registro y haria vender Pokemon ya decididos. Solo se aplica el tope
-           alto, que no depende de lo que traiga este mensaje. */
-        replaceMarketAutoSellSeen(capMarketAutoSellSeen(marketAutoSellSeen));
+           alto, que no depende de lo que traiga este mensaje.
 
-        /* La siembra: solo la primera pasada despues de encender. Registra lo que
-           hay y NO vende nada. Es la regla de seguridad que aprobo el usuario:
-           nada de lo que ya esta en el deposito se vende. */
-        if (consumeMarketAutoSellSeed()) {
-            presentes.forEach(id => marketAutoSellSeen.add(id));
-            saveMarketAutoSellSeen();
+           MEDIDO: antes se poda y se guardaba SIEMPRE, aqui y en cada pasada. Son
+           9.5 KB escritos en localStorage por cada 'pokes' para no cambiar nada, y
+           una pasada ocurre con cada captura y con cada venta. Ahora se pregunta
+           primero, y si no hace falta no se escribe. */
+        if (revisarVistos(marketAutoSellSeen)) {
+            replaceMarketAutoSellSeen(capMarketAutoSellSeen(marketAutoSellSeen));
+        }
+
+        /* LA SIEMBRA, y aqui es donde estaba el fallo.
+
+           ANTES era `consumeMarketAutoSellSeed()`: un flag de localStorage que
+           se ponia a 1 y NO se quitaba nunca, asi que sembraba la PRIMERA vez en
+           toda la vida del navegador y jamas mas. Al recargar, o al entrar en
+           una hunt nueva, la siembra ya se habia gastado: todo lo que habia en
+           el deposito entraba como nuevo, se evaluaba, no cumplia los cortes,
+           caia en 'skip' y cada uno encendia un aviso y sumaba al contador rojo.
+           MEDIDO en la captura del jugador: «2 sin vender» y «17 sin vender».
+
+           Ahora la siembra es por SESION. `sembradoAutoSell`
+           arranca en false al cargar el script, asi que la PRIMERA lista que
+           llega siembra y no vende nada. Y al empezar una hunt se vuelve a
+           sembrar, que es lo que hace que la regla del jugador sea literalmente
+           cierta y no una aproximacion. */
+        /* LA SIEMBRA, y aqui estaba el fallo de verdad.
+
+           MEDIDO. El tick se llama desde DOS sitios: el socket (linea 94, con
+           `message.list`) y el detector de capturas (linea 5758, cada 4 segundos,
+           con `fresca` o `latestPokemon`). Los dos entran por aqui, y mi primera
+           version sembraba lo que llegara en la PRIMERA lista, sin mirar si era
+           el deposito entero.
+
+           Eso abria tres agujero y el jugador los vio:
+
+             - Si la primera lista llega VACIA —el sondeo de 4 s puede caer antes de
+               que el conteste el juego y cae en `latestPokemon`, que tambien puede
+               estar vacia—, se siembra una lista vacia y **el deposito entero queda
+               sin sembrar**. A partir de ahi todo lo que hay se vende. Es el fallo
+               que se reporto.
+             - Si la lista llega PARCIAL —el juego manda a veces solo los ultimos
+               Pokemon— se siembra una parte y el resto queda desprotegido.
+             - `mercadoAutoSellEnHuntNueva` se ponia a false en cuanto se sembraba,
+               y el sondeo de 4 segundos podia volver a disparar la siembra.
+
+           EL CRITERIO, y es el que hace que esto ya no dependa de adivinar:
+           **solo se siembra cuando la lista no esta vacia.** Una lista vacia no
+           demuestra nada sobre el deposito, asi que no se marca sembrado: se espera
+           a la primera lista de verdad. Un soket puede no contestar nunca, y eso
+           significa que la auto-venta no vende nada —que es la direccion segura—
+           y no que venda todo.
+
+           Y al empezar una hunt se vuelve a sembrar con lo que haya ENTONCES, que
+           es literalmente la regla del jugador. */
+        /* MEDIDO, y por que esta comprobacion va AQUI y no solo en el panel.
+
+           El avisador de hunt nueva lo llama el panel de la barra, que va a 1 Hz.
+           Eso significa que **la proteccion depende de un reloj que se puede
+           parar**: si el panel no llega a pintarse —porque el juego cambio de
+           Pokemon y nada cambio lo que el panel enseña, o porque el reloj se
+           quedo parado— no hay siembra y los Pokemon de la hunt anterior quedan
+           vendibles.
+
+           Por eso aqui, en el tick, que corre cada vez que llega una lista, se
+           vuelve a mirar. Es la segunda de las dos capas, y es la que se shooting
+           en el fallo real. Las dos hacen falta: si una no esta, la otra tapa. */
+        try {
+            avisarHuntParaAutoSell(
+                isInHuntContext(),
+                (typeof getCurrentHuntLocation === 'function' ? getCurrentHuntLocation() : '') || marketAutoSellPanelHuntLoc,
+                getActivePokemonName()
+            );
+        } catch (_) { /* sin deteccion de hunt, la capa del panel sigue */ }
+
+        const hayAlgoQueSembrar = Array.isArray(list) && list.length > 0;
+        if (hayAlgoQueSembrar && (!estaSembradoAutoSell() || mercadoAutoSellEnHuntNueva)) {
+            /* `sembrar` se guarda solo: recibe el `guardar` con el que se creo el
+               registro, asi que aqui no hay que volver a hacerlo. Hacerlo con
+               `[...registroPreexistentesAutoSell]` intentaria iterar el objeto del
+               registro —que no es un iterable— y reventaba el tick entero. */
+            registroPreexistentesAutoSell.sembrar(list);
+            setSembradoAutoSell(true);
+            mercadoAutoSellEnHuntNueva = false;
+            /* Lo que ya estaba NO se marca como «visto»: «visto» significa que la
+               auto-venta ya lo decidio, y a estos no los ha decidido nadie. Van en
+               su propio registro, que es el que se consulta para no contarlos ni
+               avisar de ellos. */
             return;
         }
 
-        const { sell, skip } = reconcileAutoSellSeen(list, marketAutoSellSeen, config, isTeamPokemonProtected);
+        const esPreexistente = poke => registroPreexistentesAutoSell.contiene(getPokeId(poke));
+
+        /* EL SEGURO, y es lo que cierra el agujero que queda.
+
+           Si todavia NO se ha sembrado con una lista de verdad —porque el socket no
+           ha contestar, o porque solo han llegado listas a medias— este tick NO
+           vende nada. Pasa, no dice nada y espera.
+
+           Por que es una puerta y no un «si no esta sembrado, siembra ya»: porque
+           sembrar con una lista a medias protege una parte y deja el resto vendido.
+           En vez de intentar adivinar si la lista es completa, se exige
+           haber sembrado y mientras tanto no se toca nada. Es la direccion que
+           duele menos: se pierden un par de capturas, no el Pokemon que llevabas
+           una hora en el deposito.
+
+           MEDIDO, este es el fallo que el jugador reporto dos veces.
+
+           Y las dos guardas que hay aqui —«solo siembra si la lista no esta vacia»
+           y esta puerta de «si no esta sembrado, no vendas»— son REDUNDANTES entre
+           si, y se ha medido que las dos hacen falta por motivos distintos:
+
+             - Sin la primera, una lista vacia siembra vacio y marca «sembrado»: el
+               deposito entero queda vendido. MEDIDO: es la mutacion S1, y reproduce
+               el fallo exacto del jugador.
+             - Sin la segunda, una lista que llegue A MEDIAS sembraria solo una parte
+               y el resto quedaria vendido.
+
+           Y se ha medido tambien que quitar la segunda (S2) o no limpiar la bandera
+           de hunt nueva (S3) NO cambian nada en este banco: son mutaciones
+           EQUIVALENTES, porque cada una de las dos la tapa la otra. Se quedan las
+           dos a proposito —son dos fallos distintos y solo uno puede estar
+           presente— pero eso significa que **ningun test puede distinguirlas**, y no
+           hay que escribir uno que finja lo contrario. */
+        if (!estaSembradoAutoSell()) return;
+
+        const { sell, skip } = reconcileAutoSellSeen(list, marketAutoSellSeen, config, isTeamPokemonProtected, esPreexistente);
 
         /* Los que no se venden se avisan UNA vez por id y sesion: como a los
            saltados no se les marca como vistos, volverian a salir en cada pokes y
@@ -5209,10 +5701,17 @@
         skip.forEach(poke => {
             const pokeId = getPokeId(poke);
             if (!pokeId || marketAutoSellSkipAvisados.has(pokeId)) return;
+            /* Lo que ya estaba en el deposito no se cuenta ni se avisa. Este guardia
+               es una REDUNDANCIA a proposito desde hace poco: `reconcileAutoSellSeen`
+               ya no devuelve los preexistentes en `skip`, asi que aqui no llega
+               ninguno. Se queda por si alguien vuelve a meterlos en la lista, que
+               fue como se lleno la barra roja de «17 sin vender» en una sesion en
+               la que no se habia vendido nada. Cuesta una consulta de conjunto. */
+            if (esPreexistente(poke)) return;
             marketAutoSellSkipAvisados.add(pokeId);
             saveMarketAutoSellNotified();
             nuevosSinVender += 1;
-            const decision = autoSellDecision(poke, config, isTeamPokemonProtected, true);
+            const decision = autoSellDecision(poke, config, isTeamPokemonProtected, true, esPreexistente);
             queueMarketAutoSellToast({
                 tono: 'no',
                 titulo: 'No vendido: ' + (poke?.name || 'Pokemon'),
@@ -5224,6 +5723,11 @@
         if (!sell.length) return;
 
         marketAutoSellBusy = true;
+        /* Las dos cosas que el bucle de venta necesita decidir AL FINAL y no en
+           cada iteracion. MEDIDO: antes se guardaba el registro de vistos entero
+           antes de cada venta y se pedia la lista despues de cada venta. */
+        let registroSucio = false;
+        let huboVentas = false;
         try {
             for (const poke of sell) {
                 const pokeId = getPokeId(poke);
@@ -5231,7 +5735,19 @@
                    al final, el mismo Pokemon se reintentaria en la siguiente
                    pasada y se vendria dos veces. */
                 marketAutoSellSeen.add(pokeId);
-                saveMarketAutoSellSeen();
+                /* MEDIDO, y es la TERCERA parte de lo que el jugador llamo "evitar
+                   recargas constantes". Antes se guardaba el registro entero ANTES de
+                   CADA venta: con 341 ids eran 9.5 KB por Pokemon vendido, escritos
+                   para registrar una sola id. En una cascada de 5 ventas son 47 KB y
+                   5 escrituras sincronas de localStorage.
+
+                   Ahora se marca en memoria y se guarda UNA vez al final del bucle. La
+                   garantia no cambia —el id esta en el conjunto antes de la peticion,
+                   que es lo que impide venderlo dos veces—, lo que cambia es que el
+                   guardado ocurre una vez en lugar de una por Pokemon. Y si el
+                   proceso se cayera a mitad del bucle, la reentrada se frena con
+                   `marketAutoSellBusy`, que sigue en `true`. */
+                registroSucio = true;
                 const resultado = await sellPokemonForGold(poke, config);
                 if (resultado && resultado.ok) {
                     /* Ya no existe en el juego. Se anota para que el market, si
@@ -5239,13 +5755,7 @@
                        esperando a que alguien lo venda a mano, y el juego le
                        contesta que no esta. */
                     anotarVentaAutoSell(pokeId);
-                    /* Y se PIDE la lista nueva. Una venta por REST no empuja nada
-                       por el socket, asi que latestPokemon, el contexto de React y
-                       las ventanas abiertas se quedan con el Pokemon que ya no
-                       existe: por eso seguia apareciendo en la ventana de venta
-                       DESPUES de haberse vendido. El Casino y la venta de hunt ya
-                       lo hacian; la auto-venta se habia quedado fuera. */
-                    sendGameMessage({ type: 'pokes-get' });
+                    huboVentas = true;
                     queueMarketAutoSellToast({
                         tono: 'ok',
                         titulo: 'Vendido: ' + (poke?.name || 'Pokemon'),
@@ -5262,14 +5772,38 @@
                     /* Se retira: el Pokemon sigue ahi y tiene que poder volver a
                        intentarse cuando llegue otro pokes. */
                     marketAutoSellSeen.delete(pokeId);
-                    saveMarketAutoSellSeen();
                 }
             }
+            /* Y se PIDE la lista nueva, UNA vez por pasada. Una venta por REST no
+               empuja nada por el socket, asi que `latestPokemon`, el contexto de
+               React y las ventanas abiertas se quedan con el Pokemon que ya no
+               existe: por eso seguia apareciendo en la ventana de venta DESPUES de
+               haberse vendido.
+
+               MEDIDO: antes esto estaba DENTRO del bucle, una vez por Pokemon
+               vendido. Cada `pokes-get` es un viaje de ida y vuelta que el juego
+               responde con un `pokes` COMPLETO, y ese `pokes` vuelve a entrar por
+               este mismo manejador. Con la cascada que reporto el jugador —tres
+               Scyther vendidos en 1.367 ms, MEDIDO en su historial— eso son tres
+               viajes de ida y vuelta y tres pasadas mas sobre el deposito entero
+               por tres Pokemon. Ahora es uno por pasada, y el juego recibe una sola
+               lista al final que ya refleja todas las ventas. */
+            if (huboVentas) sendGameMessage({ type: 'pokes-get' });
         } catch (_) {
             /* sellPokemonForGold ya captura sus errores y los anota. Si algo se
                escapa hasta aqui, se traga: un fallo no puede romper el manejador
                del socket, que comparte con todo el script. */
         } finally {
+            /* El registro de vistos se guarda AQUI y no dentro del try, y por eso
+               una vez y no dos. MEDIDO: antes se guardaba entero antes de CADA
+               venta —con 341 ids, 9.549 caracteres y una escritura sincrona de
+               localStorage por Pokemon— y otra vez mas si la venta fallaba.
+
+               La garantia no depende de CUANDO se escriba: el id de cada Pokemon ya
+               estaba en el conjunto antes de su peticion, que es lo que impide
+               venderlo dos veces. Y como el `finally` se ejecuta siempre, el
+               registro nunca sale a medias aunque algo se escape antes. */
+            if (registroSucio) saveMarketAutoSellSeen();
             marketAutoSellBusy = false;
         }
     };
@@ -5329,6 +5863,10 @@
                     <input type="checkbox" class="script-market-autosell-input-enabled"${config.enabled ? ' checked' : ''}>
                     <span>Activar la auto-venta</span>
                   </label>
+                  <div class="script-market-autosell-config-row">
+                    <button class="script-market-autosell-config-btn is-cancel" data-accion="limpiar-registro" type="button">Olvidar lo que ya estaba</button>
+                  </div>
+                  <p class="script-market-autosell-config-hint">Al entrar en una hunt se guarda lo que hay en el deposito y no se vende: nada de lo que tuvieras antes de empezar. Con este boton se olvida esa lista y el siguiente Pokemon que llegue se mira como nuevo, para cuando quieras auto-vender tambien lo que se te quedo a medias.</p>
                 </div>
                 <div class="script-market-autosell-config-group">
                   <h4>Cortes</h4>
@@ -5424,12 +5962,26 @@
             if (accion === 'guardar') {
                 const siguiente = trial();
                 siguiente.minIv = Math.min(192, Math.max(0, Math.floor(Number(siguiente.minIv || 0))));
-                /* writeMarketAutoSellConfig borra la marca de siembra cuando
-                   enabled es true, asi que encender desde aqui siembra y no vende
-                   nada de lo que ya hay. */
+                /* writeMarketAutoSellConfig limpia el registro de «vistos», de modo
+                   que encender desde aqui vuelve a mirar todo lo que hay. Lo que ya
+                   estaba en el deposito NO lo hace: eso vive en su propio registro
+                   y se limpia con su boton, que es la razon de que sean dos. */
                 writeMarketAutoSellConfig(siguiente);
                 cerrar();
                 refrescarBoton();
+            }
+            /* Vaciar el registro de preexistentes. Es la palanca que deshace el
+               efecto secundario de sembrar en cada recarga: un Pokemon que se te
+               quedo a medias queda blindado, y con esto vuelve a ser candidato en
+               la siguiente lista que llegue. */
+            if (accion === 'limpiar-registro') {
+                registroPreexistentesAutoSell.vaciar();
+                guardarPreexistentesAutoSell([]);
+                /* Y el registro de avisados, que si no impediria que el nuevo aviso
+                   saliera: `marketAutoSellSkipAvisados` filtra por id. */
+                marketAutoSellSkipAvisados.clear();
+                try { localStorage.removeItem(marketAutoSellNotifiedKey); } catch (_) {}
+                refrescarPreview();
             }
         });
     };
@@ -5483,6 +6035,17 @@
     const pollMarketAutoSellCaptures = async () => {
         if (marketAutoSellCaptureBusy) return;
         if (!readMarketAutoSellConfig().enabled) return;
+        /* MEDIDO, y es la segunda mitad de lo que el jugador llamo "lecturas
+           constantes". Este reloj solo miraba `config.enabled`, pero la propia
+           auto-venta define su sitio como `config.enabled && enHunt` —es lo que
+           hace que el panel se esconda fuera de la hunt—. O sea que el reloj
+           preguntaba por Pokemon que no se pueden cazar: 15 peticiones por
+           minuto de `/api/game/capture-log?filter=all`, que es el historial
+           COMPLETO, son 225 por hora, para decidir sobre capturas que no existen.
+
+           Ahora se pregunta tambien por la hunt, y las dos reglas que el panel ya
+           tenia son las que gobiernan los dos relojes. */
+        if (!isInHuntContext()) return;
         marketAutoSellCaptureBusy = true;
         try {
             const payload = await gameApiRequest('/api/game/capture-log?filter=all');
@@ -7412,6 +7975,7 @@
         .script-market-autosell-config-check:hover { border-color:rgba(170,210,235,.32); }
         .script-market-autosell-config-check input { width:auto;height:auto;margin:0;flex:0 0 auto;accent-color:#4cc07e; }
         .script-market-autosell-config-row { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+        .script-market-autosell-config-hint { margin:0;color:var(--casino-dim);font-size:var(--casino-fs-label);line-height:1.5; }
         .script-market-autosell-config-field { display:grid;gap:4px; }
         .script-market-autosell-config-field>label { color:var(--casino-dim);font-size:var(--casino-fs-label);font-weight:800;text-transform:uppercase;letter-spacing:.05em; }
         .script-market-autosell-config-field input,.script-market-autosell-config-field select { box-sizing:border-box;width:100%;height:32px;padding:3px 7px;color:var(--casino-fg-strong);background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;font:inherit;font-size:var(--casino-fs-chip);font-weight:800;outline:none; }
@@ -13094,6 +13658,17 @@
         const claimable = Boolean(selected?.done && !latestDailyKillState?.claimed);
         button?.classList.toggle('is-active', Boolean(selected && !latestDailyKillState?.claimed));
         button?.classList.toggle('is-claimable', claimable);
+        /* EL BORDE VERDE, y es el MISMO mecanismo que el de Golden Stars: un
+           atributo `data-*-ready` en el boton y una regla CSS que lo pinta. Nada de
+           clases sueltas, porque el patron ya esta probado en el otro boton y
+           duplicarlo con otro nombre seria una segunda verdad sobre cuando un boton
+           esta disponible.
+
+           Cuando se enciende: hay misiones disponibles y NO estan reclamadas. Cuando
+           ya las reclamaste se apaga, porque el jugador ya hizo lo que tenia que
+           hacer y un borde encendido le estaria pidiendo algo que ya no puede. */
+        const hayMisionesPorReclamar = Boolean(latestDailyKillState?.options?.length && !latestDailyKillState?.claimed);
+        button?.setAttribute('data-dk-ready', hayMisionesPorReclamar ? 'true' : 'false');
         if (!selected || latestDailyKillState?.claimed) {
             monitor.hidden = true;
             return;
@@ -13172,8 +13747,55 @@
                  #script-independent-shop-bar.is-hidden .script-shop-bar-list > * { display:none!important; }
                  #script-independent-shop-bar.is-hidden .script-shop-bar-list > .script-shop-bar-visibility { display:grid!important;grid-column:1;grid-row:2; }
                  #script-independent-shop-bar.is-hidden .script-shop-bar-visibility { display:grid!important;pointer-events:auto; }
+                 /* EL TIRADOR, y son las MISMAS dos reglas que el ojo, copiadas. La
+                    primera lo saca del display:none que el is-hidden pone a todos los
+                    hijos de la lista, y lo pone en la columna 2 de la fila 2 — la del
+                    ojo es la columna 1, y por eso quedan uno al lado del otro. La
+                    segunda le devuelve la interactividad que el padre le niega con
+                    pointer-events:none.
+
+                    No es un par de reglas nuevo: es el que ya hacia que el ojo
+                    sobreviviera. Se copia para no inventar una tercera forma de que un
+                    boton se quede visible dentro de una bar oculta. */
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-list > .script-shop-bar-hidden-handle { display:grid!important;grid-column:2;grid-row:2; }
+                 #script-independent-shop-bar.is-hidden .script-shop-bar-hidden-handle { display:grid!important;pointer-events:auto;cursor:grab;touch-action:none; }
+                 /* Y con la bar a la vista no se ve: el grip de siempre ya esta, y dos
+                    botones que hacen lo mismo en dos sitios es uno de mas. */
+                 #script-independent-shop-bar:not(.is-hidden) .script-shop-bar-hidden-handle { display:none!important; }
                  #script-independent-shop-bar.is-hidden .script-shop-bar-eye-open { display:none; }
                  #script-independent-shop-bar.is-hidden .script-shop-bar-eye-closed { display:block; }
+                /* EL TIRADOR, y va FUERA de la botonera a proposito.
+
+                   Si viviera dentro, heredaria el pointer-events:none que el
+                   .is-hidden pone en el padre y no se podria arrastrar: seria
+                   un boton visible que no hace nada. Es el fallo que se reporto.
+
+                   Por eso es un nodo hermano colgado del body, con su propio
+                   pointer-events y su propio z-index por encima del de la bar,
+                   para que el juego no se coma el arrastre. */
+                /* El tirador ahora es UN BOTON MAS DE LA BAR, al lado del ojo. No lleva
+                   position:fixed ni z-index propio: es un hijo de la lista, asi que hereda
+                   el tamaño, el color y el fondo de los demas botones de la bar. Lo
+                   unico que necesita es ser igual de grande que ellos y agarrable.
+
+                   MEDIDO, lo que se borro: la version anterior era un nodo suelto colgado
+                   del body, con su propio position:fixed y su propio z-index para no
+                   quedar debajo del juego. Al meterlo en la lista, esas dos cosas son
+                   un problema: lo aleja del sitio donde tiene que estar, que es pegado al
+                   ojo, no el centro de la pantalla. */
+                #script-independent-shop-bar .script-shop-bar-hidden-handle {
+                    flex:0 0 var(--shop-button-size);
+                    width:var(--shop-button-size);height:var(--shop-button-size);
+                    display:grid;place-items:center;padding:0;
+                    border:1px solid rgba(186,218,242,.18);border-radius:8px;
+                    background:linear-gradient(145deg,rgba(24,44,66,.62),rgba(14,30,46,.58));
+                    color:#a9c2d8;cursor:grab;touch-action:none;
+                }
+                #script-independent-shop-bar .script-shop-bar-hidden-handle:hover { color:#fff;border-color:rgba(186,218,242,.55); }
+                #script-independent-shop-bar .script-shop-bar-hidden-handle.is-dragging { cursor:grabbing; }
+                /* El cursor de agarrar mientras se arrastra, en la bar tambien. */
+                #script-independent-shop-bar.is-moving { transition:none; }
+                #script-independent-shop-bar.is-moving .script-shop-bar-grip { cursor:grabbing; }
                     
                 #script-independent-shop-bar .script-shop-bar-list {
                     display:grid!important;
@@ -13303,6 +13925,11 @@
                 #script-independent-shop-bar .script-shop-bar-badge{position:absolute;top:-3px;right:-3px;min-width:15px;height:15px;padding:0 3px;display:grid;place-items:center;border-radius:8px;background:#2a7f4f;color:#eafff2;font:800 9px/1 var(--piw-game-font,Inter,sans-serif);border:1px solid rgba(200,255,225,.5);box-shadow:0 2px 6px rgba(0,0,0,.4);pointer-events:none}
                 #script-independent-shop-bar [data-gs-badge][hidden]{display:none!important}
                 #script-independent-shop-bar #script-shop-bar-golden-stars[data-gs-ready="true"]{box-shadow:0 0 0 2px #6ee79a,0 6px 16px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.16)}
+                /* El mismo borde verde del slot machine, pero para Daily Kill. Copiado
+                   en vez de inventado —mismo color, mismo grosor, misma sombra— para
+                   que los dos botones digan visualmente lo mismo: «tienes algo
+                   disponible aqui». */
+                #script-independent-shop-bar #script-shop-bar-daily-kill[data-dk-ready="true"]{box-shadow:0 0 0 2px #6ee79a,0 6px 16px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.16)}
                 #script-independent-shop-bar .market-alert-dock-badge,
                 #script-independent-shop-bar .market-sale-dock-badge {
                     right: 2px !important;
@@ -13530,6 +14157,50 @@
         visibilityButton.className = 'script-shop-bar-visibility';
         visibilityButton.setAttribute('aria-pressed', 'false');
         visibilityButton.innerHTML = '<svg class="script-shop-bar-eye" viewBox="0 0 24 24" aria-hidden="true"><g class="script-shop-bar-eye-open"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.6"></circle></g><g class="script-shop-bar-eye-closed"><path d="M3 3l18 18"></path><path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6.5 0 10 6 10 6a17.3 17.3 0 0 1-3.1 3.7"></path><path d="M6.3 6.3C3.8 8.1 2 12 2 12s3.5 6 10 6c1.1 0 2.1-.2 3-.5"></path><path d="M9.7 9.7a3.2 3.2 0 0 0 4.6 4.6"></path></g></svg>';
+        /* EL TIRADOR DE LA BOTONERA OCULTA, AL LADO DEL OJO.
+
+           MEDIDO, por que hace falta: con la botonera oculta el CSS pone
+           `#script-independent-shop-bar.is-hidden { pointer-events:none }` y
+           esconde todos los hijos con `display:none!important`. O sea que sin
+           ayuda no queda NADA arrastrable: solo sobrevive el boton del ojo, que se
+           salva con dos reglas propias.
+
+           Y EL OJO YA TENIA LA SOLUCION. Esta es la parte que estaba a la vista y
+           no se vio: el CSS ya hacia
+
+               .is-hidden .script-shop-bar-list > .script-shop-bar-visibility
+                   { display:grid!important; grid-column:1; grid-row:2; }
+               .is-hidden .script-shop-bar-visibility { pointer-events:auto; }
+
+           o sea, una regla que lo saca del `display:none` y otra que le devuelve la
+           interactividad que el padre le niega. El tirador usa EXACTAMENTE el mismo
+           par, en la columna 2. No es un truco nuevo: es copiar lo que ya
+           funciona.
+
+           LA PRIMERA VERSION DE ESTO ESTABA MAL, y el jugador la vio: el tirador
+           era un nodo suelto colgado del body, por el centro de la pantalla. Todas
+           las razones que puse en el comentario para justificarlo —«dentro heredaria
+           el pointer-events»— eran verdad pero irrelevantes: el padre lo tiene, y el
+           hijo lo recupera con `pointer-events:auto`, que es justo lo que hace el
+           ojo. Lo que se pidio era un boton mas AL LADO del ojo, y eso es
+           literalmente lo que hay ahora. */
+
+        /* EL TIRADOR, dentro de la lista y al lado del ojo. Se crea aqui, DESPUES del
+           boton de visibilidad, que es lo que lo pone en `grid-column:1` de la
+           fila 2 cuando la bar esta oculta. Este entra en la columna 2 de la misma
+           fila, y asi quedan los dos juntos — que es lo pedido—.
+
+           El SVG es el de los seis puntos del grip que ya usa la bar, no un icono
+           inventado: el jugador ya sabe que ese boton arrastra. */
+        const hiddenHandle = document.createElement('button');
+        hiddenHandle.type = 'button';
+        hiddenHandle.id = 'script-shop-bar-hidden-handle';
+        hiddenHandle.className = 'script-shop-bar-hidden-handle';
+        hiddenHandle.title = 'Arrastrar para mover la botonera';
+        hiddenHandle.setAttribute('aria-label', 'Arrastrar para mover la botonera');
+        hiddenHandle.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="8.5" cy="6" r="1.7"/><circle cx="15.5" cy="6" r="1.7"/><circle cx="8.5" cy="12" r="1.7"/><circle cx="15.5" cy="12" r="1.7"/><circle cx="8.5" cy="18" r="1.7"/><circle cx="15.5" cy="18" r="1.7"/></svg>';
+        list.appendChild(hiddenHandle);
+
         function setBarHidden(hidden) {
             const isHidden = Boolean(hidden);
             bar.classList.toggle('is-hidden', isHidden);
@@ -13537,8 +14208,70 @@
             const label = tr(isHidden ? 'shopBarShow' : 'shopBarHide');
             visibilityButton.title = label;
             visibilityButton.setAttribute('aria-label', label);
+            /* Cuando se ENSENA la bar, el tirador se retira: con la bar a la vista
+               ya esta el grip de siempre, y tener los dos seria duplicar la misma
+               accion en dos sitios. Lo decide el CSS con `display:none`, no el
+               `hidden` de HTML, porque el `hidden` no anula el `display:grid` que
+               le pone el `is-hidden` al ojo. */
             updateArrows();
         }
+
+        /* El arrastre. Pointer events, como el resto del script.
+
+           MEDIDO, lo que hay que tener en cuenta: la bar oculta tiene
+           `pointer-events:none`, y el puntero cae en el TIRADOR, no en la bar. Asi
+           que las coordenadas del evento ya son las del sitio donde el jugador
+           quiere la bar. No hay que medir un nodo suelto ni compensar nada.
+
+           Al soltar se guarda con la MISMA clave que usa el arrastre de la bar, que
+           ya existe: si se guardara en otra, cada mecanismo pisaria al otro al
+           recargar. */
+        let handleArrastrando = false;
+        let handleOffsetX = 0;
+        let handleOffsetY = 0;
+        hiddenHandle.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            handleArrastrando = true;
+            /* La bar se mide ANTES de sacarla de oculto: es su unico momento en el
+               que tiene medidas. A partir de ahi se mueve con el raton. */
+            const r = bar.getBoundingClientRect();
+            handleOffsetX = event.clientX - r.left;
+            handleOffsetY = event.clientY - r.top;
+            try { hiddenHandle.setPointerCapture(event.pointerId); } catch (_) { /* sin captura */ }
+            hiddenHandle.classList.add('is-dragging');
+            setBarHidden(false);
+            bar.classList.add('is-moving');
+            bar.style.left = (event.clientX - handleOffsetX + window.scrollX) + 'px';
+            bar.style.top = (event.clientY - handleOffsetY + window.scrollY) + 'px';
+            bar.style.bottom = 'auto';
+            bar.style.transform = 'none';
+            event.stopPropagation();
+        });
+        hiddenHandle.addEventListener('pointermove', event => {
+            if (!handleArrastrando) return;
+            event.preventDefault();
+            bar.style.left = (event.clientX - handleOffsetX + window.scrollX) + 'px';
+            bar.style.top = (event.clientY - handleOffsetY + window.scrollY) + 'px';
+        });
+        const soltarHandle = event => {
+            if (!handleArrastrando) return;
+            handleArrastrando = false;
+            hiddenHandle.classList.remove('is-dragging');
+            bar.classList.remove('is-moving');
+            try { hiddenHandle.releasePointerCapture?.(event.pointerId); } catch (_) { /* nada */ }
+            /* La posicion ya esta puesta. Se guarda para la proxima recarga, con el
+               mismo patron que usa el resto: si falla el almacenamiento, no pasa
+               nada porque la bar se queda donde esta mientras tanto. */
+            try {
+                const x = Number.parseFloat(bar.style.left);
+                const y = Number.parseFloat(bar.style.top);
+                if (Number.isFinite(x) && Number.isFinite(y)) {
+                    localStorage.setItem(SCRIPT_SHOP_BAR_POSITION, JSON.stringify({ x, y }));
+                }
+            } catch (_) { /* sin almacenamiento */ }
+        };
+        hiddenHandle.addEventListener('pointerup', soltarHandle);
+        hiddenHandle.addEventListener('pointercancel', soltarHandle);
         try { setBarHidden(localStorage.getItem(SCRIPT_SHOP_BAR_HIDDEN) === '1'); } catch (_) { setBarHidden(false); }
         visibilityButton.addEventListener('click', () => {
             const hidden = !bar.classList.contains('is-hidden');
@@ -15560,7 +16293,36 @@
             return true;
         });
 
+        /* LA CATEGORIA DE BOTANICA.
+
+           Y aqui lo importante: NO se busca la palabra "botánica" en el texto del
+           item, porque eso daria falsos positivos y falsos negativos. Se usa
+           `BOTANY_BERRIES_BY_MATERIAL`, que el script YA construye para la
+           proteccion de materiales de la ventana de venta: es una tabla real de
+           id de material a nombres de berry, montada a partir de las recetas.
+
+           Por que reutilizar esa tabla y no escribir un regex: porque si el filtro
+           dijera una cosa y la proteccion otra, el jugador veria un item en el
+           filtro y sin proteccion, o al reves, sin explicacion. **Un item es de
+           botanica para el filtro exactamente cuando lo es para la proteccion**,
+           y esa es la unica forma de que no se contradigan.
+
+           Lo que cubre: las hierbas (id 19354 y 19356, las que se registran en la
+           tabla) y CADA ingrediente de cada receta de berry. Un filtro hecho solo
+           con las hierbas dejaria fuera la canela, el miel y demas, que son justo
+           lo que se quiere ver. */
+        const esMaterialBotanico = entry => {
+            const itemId = entry?.itemId ?? entry?.id ?? entry?.refId;
+            if (itemId === null || itemId === undefined || itemId === '') return false;
+            return BOTANY_BERRIES_BY_MATERIAL.has(String(itemId));
+        };
+
         const getDepotItemCategory = entry => {
+            /* La botanica se mira ANTES que stones. Un item puede llevar la palabra
+               "stone" en su descripcion y ser a la vez un ingrediente de una receta;
+               en ese caso es de botanica, porque es lo que el jugador esta
+               buscando al pulsar el filtro. */
+            if (esMaterialBotanico(entry)) return 'botany';
             const itemId = entry?.itemId ?? entry?.id;
             const entryName = String(entry?.name || entry?.itemName || '').trim();
             const itemData = globalItemApiData.get(String(itemId))
@@ -15598,6 +16360,7 @@
                     <button class="portable-depot-item-category${filters.category === 'all' ? ' on' : ''}" data-item-category="all" type="button">▦ ${escapeHTML(tr('depotFilterAll'))}</button>
                     <button class="portable-depot-item-category${filters.category === 'stones' ? ' on' : ''}" data-item-category="stones" type="button">◆ ${escapeHTML(tr('depotFilterStones'))}</button>
                     <button class="portable-depot-item-category${filters.category === 'misc' ? ' on' : ''}" data-item-category="misc" type="button">📦 ${escapeHTML(tr('depotFilterMisc'))}</button>
+                    <button class="portable-depot-item-category${filters.category === 'botany' ? ' on' : ''}" data-item-category="botany" type="button">🌿 ${escapeHTML(tr('depotFilterBotany'))}</button>
                 </div>`;
             const search = controls.querySelector('.portable-depot-item-search');
             search.addEventListener('input', () => {
@@ -20076,6 +20839,14 @@
                                 quantity: buyQuantity,
                                 ids: (entry.ids ?? [entry.id]).slice(0, buyQuantity)
                             };
+                        /* Igual que en la compra automatica, y por el mismo
+                           motivo: la marca va antes de la peticion, porque el
+                           'pokes' con el Pokemon ya en la cuenta sale en el mismo
+                           instante en que esto responde. */
+                        if (isPokemonListing && typeof marcarCompraMercado === 'function') {
+                            const especie = Number(entry?.speciesId ?? entry?.pokeId ?? 0);
+                            if (Number.isFinite(especie) && especie > 0) marcarCompraMercado(especie, 0);
+                        }
                         await gameApiRequest('/api/game/market/action', {
                             method: 'POST',
                             body: JSON.stringify(marketAction)
