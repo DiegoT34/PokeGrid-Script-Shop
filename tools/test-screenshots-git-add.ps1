@@ -88,6 +88,12 @@ try {
   # Si la GUI hace `git add -- screenshots` sin crearla antes, el add sale con error y la
   # publicacion entera de un script sin fotos se queda a medias. Esto no lo prueba ningun
   # otro test del repo.
+  #
+  # OJO con lo que este bloque NO prueba, y por eso se anoto: aqui solo se mira el `add`.
+  # El `commit` con la MISMA carpeta sale con codigo 1, y esa mitad la mide
+  # tools\test-commit-pathspec.ps1. Una comprobacion que mira un comando y da por buena
+  # la pareja es media garantia, y esta media garantia estuvo en verde mientras el
+  # publicador no podia publicar.
   $solo = Join-Path $testRoot 'solo.user.js'
   [IO.File]::WriteAllText($solo, "// ==UserScript==`n// @name Solo`n// @namespace http://tampermonkey.net/`n// @version 1.0.0`n// ==/UserScript==`n", $utf8)
   $pubSolo = Invoke-Publisher -Script (Join-Path $work 'publish-script.ps1') -Params @{
@@ -128,19 +134,11 @@ try {
   $patronAdd = @'
 @\('add','--','catalog\.json',\$target,'screenshots'\)
 '@
-  $patronCommit = @'
-@\('commit','-m',\$[\w]+,'--','catalog\.json',\$target,'screenshots'\)
-'@
   $patronAddSolo = @'
 @\('add','--','catalog\.json',\$target\)
 '@
-  $patronCommitSolo = @'
-@\('commit','-m',\$[\w]+,'--','catalog\.json',\$target\)
-'@
   $adds = @([regex]::Matches($gui, $patronAdd))
   if($adds.Count -ne 2){throw "Los dos git add de la GUI tienen que incluir 'screenshots' y hay $($adds.Count) que lo hacen de 2."}
-  $commits = @([regex]::Matches($gui, $patronCommit))
-  if($commits.Count -ne 2){throw "Los dos git commit de la GUI tienen que incluir 'screenshots' y hay $($commits.Count) que lo hacen de 2."}
   if($gui -notmatch 'function Ensure-ScreenshotsFolder'){
     throw 'La GUI no crea la carpeta screenshots/ antes del add. Un add sobre ruta inexistente sale con error y corta la publicacion de un script sin fotos.'
   }
@@ -152,12 +150,52 @@ try {
   if($gui -notmatch "function Ensure-ScreenshotsFolder \{[^}]*New-Item"){
     throw 'Ensure-ScreenshotsFolder no crea nada: le falta el New-Item dentro.'
   }
-  # Y ningun add ni commit puede quedarse sin la carpeta. Este es el fallo que la
+  # Y ningun add puede quedarse sin la carpeta. Este es el fallo que la
   # documentacion llama «el mas caro del trabajo», asi que se cuenta, no se busca.
   $addsSinCarpeta = @([regex]::Matches($gui, $patronAddSolo))
   if($addsSinCarpeta.Count -gt 0){throw "Hay $($addsSinCarpeta.Count) git add sin la carpeta screenshots/."}
-  $commitsSinCarpeta = @([regex]::Matches($gui, $patronCommitSolo))
-  if($commitsSinCarpeta.Count -gt 0){throw "Hay $($commitsSinCarpeta.Count) git commit sin la carpeta screenshots/."}
+
+  # ---------------------------------------------------------------------------------
+  # ESTA COMPROBACION CAMBIO DE REGLA, y el motivo esta medido.
+  #
+  # Antes exigia que los dos `git commit` de la GUI llevaran 'screenshots' escrito a
+  # mano, igual que el `add`. Es decir: el test INSISTIA en el defecto que broke al
+  # usuario. Pasa en CI, pasa en local, y pasa con un publicador que no puede publicar
+  # ni retirar nada.
+  #
+  # MEDIDO:
+  #   git add    -- catalog.json scripts/x.user.js screenshots   ->  sale 0
+  #   git commit -- catalog.json scripts/x.user.js screenshots   ->  sale 1
+  #       error: pathspec 'screenshots' did not match any file(s) known to git
+  #
+  # Los dos con el mismo pathspec. `add` se come en silencio un directorio sin
+  # contenido; `commit -- <rutas>` exige que cada ruta sea una ruta que git conoce, y
+  # una carpeta vacia no lo es porque git no guarda directorios. Por eso crear la
+  # carpeta antes del `add` —que es lo que este test exigia y lo que hacia la GUI—
+  # tapaba el error del `add` y dejaba vivo el del `commit`.
+  #
+  # La carpeta sigue yendo en el `add`: ahi no cuesta nada y es lo que mete las
+  # capturas en el indice. Lo que cambia es el `commit`, que ahora pide el pathspec a
+  # `Get-PokeGridCommitPathspec`, que solo anade 'screenshots' si el indice tiene
+  # algo debajo. La carpeta se sigue llevando cuando hay capturas, que es lo que
+  # importa, y se quita cuando no hay ninguna, que es lo que rompia.
+  #
+  # El comportamiento de todo esto lo mide tools\test-commit-pathspec.ps1, con git de
+  # verdad. Aqui solo se mira que los dos commit usen el helper.
+  $patronCommit = @'
+@\('commit','-m',\$[\w]+,'--'\) \+ \(Get-PokeGridCommitPathspec -RepositoryRoot \$repoRoot -Paths @\('catalog\.json',\$target\)\)
+'@
+  $commits = @([regex]::Matches($gui, $patronCommit))
+  if($commits.Count -ne 2){
+    throw "Los dos git commit de la GUI tienen que usar Get-PokeGridCommitPathspec y hay $($commits.Count) que lo hacen de 2. Con 'screenshots' escrito a mano, el commit sale con codigo 1 en cuanto la carpeta esta vacia."
+  }
+  $commitsConCarpetaAMano = @([regex]::Matches($gui,
+    @'
+@\('commit','-m',\$[\w]+,'--','catalog\.json',\$target,'screenshots'\)
+'@))
+  if($commitsConCarpetaAMano.Count -gt 0){
+    throw "Hay $($commitsConCarpetaAMano.Count) git commit con 'screenshots' escrito a mano. MEDIDO: sale con codigo 1 cuando la carpeta esta vacia, y la publicacion se queda con el indice a medias."
+  }
 
   # Y la regla de binario, que sin ella la conversion global de fin de linea pasa las
   # imagenes. Se lee el fichero real, no un comentario que la mencione.
@@ -167,7 +205,7 @@ try {
     throw '.gitattributes no declara «screenshots/* binary».'
   }
 
-  Write-Output 'Screenshots git-add passed: la carpeta entra en el area de preparacion, llega al remoto, el add no falla cuando esta vacia, y los cuatro comandos de la GUI la incluyen.'
+  Write-Output 'Screenshots git-add passed: la carpeta entra en el area de preparacion, llega al remoto, el add no falla cuando esta vacia, y los dos commit de la GUI piden el pathspec que decide el indice.'
 } finally {
   if((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
