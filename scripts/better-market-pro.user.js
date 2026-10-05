@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro
 // @namespace    http://tampermonkey.net/
-// @version      10.20.9
+// @version      10.21.0
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -1510,7 +1510,11 @@
                 const kind = callbackParts.length >= 3 ? callbackParts[1] : 'pokemon';
                 const listingId = callbackParts.length >= 3 ? callbackParts.slice(2).join(':') : query.data.slice(5);
                 try {
-                    const payload = await gameApiRequest(`/api/game/market?category=${kind === 'item' ? 'All' : 'Pokemon'}`);
+                    const payload = await gameApiRequest(`/api/game/market?category=${resolveMarketCategoryRequest(kind === 'item' ? 'All' : 'Pokemon')}`);
+                    /* Sin filtrar: la busqueda es por id de anuncio, que es unico
+                       dentro de la respuesta, y no necesita que el listado sea de
+                       Pokemon. Pedir 'All' lo trae, que era justo lo que no pasaba
+                       con la peticion filtrada. */
                     const listing = getMarketListings(payload).find(entry => String(getMarketListingId(entry)) === listingId);
                     const inboxRecord = kind === 'item'
                         ? getMarketItemAlertInbox().find(record => record.key === `item:${listingId}`)
@@ -17277,6 +17281,53 @@
         return [];
     }
 
+    /* ================= LA CATEGORIA 'Pokemon' NO SE PUEDE PEDIR =================
+
+       MEDIDO el 2026-10-05 contra el servidor, con la sesion del usuario y solo
+       peticiones de lectura:
+
+         GET /api/game/market?category=Pokemon    -> 200, listings: []        <-- VACIO
+         GET /api/game/market?category=All        -> 200, listings: 4071, 600 Pokemon
+         GET /api/game/market?category=Stones     -> 200, listings: 1161
+         GET /api/game/market?category=Items      -> 200, listings: 2785
+         GET /api/game/market?category=Poke Balls -> 200, listings: 84
+
+       Diez escrituras del valor dan 0: 'Pokemon', 'pokemon', 'POKEMON', 'Pokemon'
+       con tilde, 'Pokemons', 'Poke', 'Pokemon' con espacio al final. Anadir
+       `&kind=pokemon` tambien da 0. El filtro del servidor para esa categoria no
+       entrega nada, y la categoria SI existe: se ven las 600 entradas con
+       `category: "Pokemon"` dentro de la respuesta de 'All'.
+
+       El guion pedia 'Pokemon', se llevaba un array vacio y no pasaba nada: ni error,
+       ni aviso, ni excepcion. `getMarketListings` recorre cinco claves posibles y
+       sale con `[]`, y ahi no hay donde avisar. La pestana de Pokemon del Mercado
+       Global salia vacia con 600 publicaciones existiendo, y todo lo que lee
+       anuncios —el precio de referencia al vender, la compra desde Telegram— se
+       quedaba sin nada que mirar.
+
+       ASI QUE SE PIDE 'All' Y SE FILTRA AQUI. Las demas categorias se piden como
+       son, MEDIDO: funcionan. Y una categoria que el servidor anada en el futuro
+       pasa tal cual, para que este arreglo no sea una lista de categorias que se
+       queda vieja sola.
+
+       EL COSTE, MEDIDO y no estimado: pedir 'All' son 1.709.790 bytes contra 77.529
+       de la respuesta vacia, 22,1 veces mas. No hay alternativa: el servidor no
+       entrega los Pokemon de otra manera. Lo que se puede reducir es cuantas veces
+       se pide, y eso ya lo gobiernan los filtros de la ventana. */
+    function resolveMarketCategoryRequest(category) {
+        return String(category ?? '').trim() === 'Pokemon' ? 'All' : (category ?? '');
+    }
+
+    /* El recorte que hace el servidor y este guion no. Se mira la categoria Y el
+       kind porque son las dos cosas que trae la entrada, y MEDIDO: en las 600
+       entradas de Pokemon de la partida coinciden sin una sola discrepancia en
+       ninguna direccion. Con las dos, un anuncio con una de las dos cambiada sigue
+       identificandose; con una sola, se perderia. */
+    function filterMarketPokemonListings(listings) {
+        return (Array.isArray(listings) ? listings : [])
+            .filter(entry => String(entry?.category ?? '') === 'Pokemon' || entry?.kind === 'pokemon');
+    }
+
     function normalizeMarketCurrency(value) {
         const currency = String(value || 'GOLD').trim().toUpperCase();
         return /DIAM|^DD$/.test(currency) ? 'DIAMONDS' : 'GOLD';
@@ -20271,7 +20322,7 @@
             sellReference.textContent = `${isPokemon ? tr('checkingPokemonPrice') : tr('checkingPrice')} ${entry.name}...`;
             try {
                 const [marketPayload, diamondPayload] = await Promise.all([
-                    gameApiRequest(`/api/game/market?category=${isPokemon ? 'Pokemon' : 'All'}`),
+                    gameApiRequest(`/api/game/market?category=${resolveMarketCategoryRequest(isPokemon ? 'Pokemon' : 'All')}`),
                     gameApiRequest('/api/game/market?category=Diamonds').catch(() => null)
                 ]);
                 if (requestId !== sellReferenceRequestId || selectedSellEntry !== entry) return;
@@ -20902,7 +20953,12 @@
                     ? (requestFilterCategory.value || 'All')
                     : marketMode === 'history' || marketMode === 'mine' ? 'All'
                         : marketMode === 'featured' ? 'Pokemon' : marketMode === 'alerts' ? 'All' : activeCategory === HELD_MACHINE_MARKET_CATEGORY ? 'All' : activeCategory;
-                const categoryRequest = gameApiRequest(`/api/game/market?category=${encodeURIComponent(requestedCategory)}`);
+                /* MEDIDO: `requestedCategory` sigue siendo la categoria que quiere el jugador —es lo
+                   que pone los rotulos, los filtros de tipo y de rareza, y la cuenta de la
+                   pestana—, pero lo que se PIDE no puede ser 'Pokemon': el servidor contesta
+                   con `listings: []` y la ventana se queda vacia. Ver
+                   `resolveMarketCategoryRequest`. Por eso son dos cosas y no una. */
+                const categoryRequest = gameApiRequest(`/api/game/market?category=${encodeURIComponent(resolveMarketCategoryRequest(requestedCategory))}`);
                 const diamondRequest = requestedCategory === 'Diamonds'
                     ? categoryRequest
                     : gameApiRequest('/api/game/market?category=Diamonds').catch(() => null);
@@ -20914,6 +20970,17 @@
                 if (characterPayload) updateMarketBalance(characterPayload);
                 if (itemDataLoadPromise) await itemDataLoadPromise;
                 currentListings = getMarketListings(payload);
+                /* Y aqui se recorta lo que el servidor no filtro. El corte va sobre
+                   `requestedCategory` y no sobre la categoria activa porque es lo que
+                   coincide con la peticion: cuando se pidio 'Pokemon' es porque el
+                   jugador quiere Pokemon, y lo que llega son los 4.071 anuncios de
+                   todo el mercado. Sin esto, los filtros de tipo y de rareza de la
+                   pestana de Pokemon ensenarian 3.365 objetos.
+
+                   Y con 'Items', 'Stones', 'Poke Balls' o 'Diamonds' no se recorta
+                   nada: MEDIDO, esas cuatro si las filtra el servidor, y ahi la
+                   respuesta ya es solo de esa categoria. */
+                if (requestedCategory === 'Pokemon') currentListings = filterMarketPokemonListings(currentListings);
                 currentMyListings = Array.isArray(payload?.mine) ? payload.mine : [];
                 if (marketMode === 'alerts') {
                     syncMarketAlertInbox(currentListings);
