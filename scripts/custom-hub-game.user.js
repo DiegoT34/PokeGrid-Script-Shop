@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      4.0.1
-// @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
+// @version      4.0.2
+// @description  Redise├▒o responsivo con carga optimizada, tama├▒os configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
 // @run-at       document-start
@@ -36,29 +36,463 @@
     const SCRIPT_SCALE_STORAGE = 'custom-card-responsive-scales-v1';
     const SCRIPT_SCALE_OPTIONS = [60, 75, 90, 100, 110, 125, 140];
     const SCRIPT_SCALE_AREAS = Object.freeze([
-        { key: 'hud', label: 'Perfil y equipo Pokémon', description: 'Cambia el panel izquierdo del jugador, los Pokémon del equipo y sus barras de HP/XP.', css: '--cc-scale-hud' },
-        { key: 'dock', label: 'Dock de navegación', description: 'Cambia los botones superiores o laterales del juego y sus menús desplegables.', css: '--cc-scale-dock' },
-        { key: 'battle', label: 'Card de batalla', description: 'Cambia la card del Pokémon aliado, incluyendo estadísticas, poder y barras.', css: '--cc-scale-battle' },
-        { key: 'enemy', label: 'Card del enemigo', description: 'Cambia la card, sprite y barra de vida del Pokémon enemigo.', css: '--cc-scale-enemy' },
-        { key: 'capture', label: 'Capture Bar', description: 'Cambia el tamaño de la barra inferior de captura, con sus balls, pociones y salvajes.', css: '--cc-scale-capture' },
-        { key: 'victory', label: 'Notificación de batalla', description: 'Cambia el aviso de victoria, experiencia obtenida y drops de cada derrota.', css: '--cc-scale-victory' },
+        { key: 'hud', label: 'Perfil y equipo Pok├®mon', description: 'Cambia el panel izquierdo del jugador, los Pok├®mon del equipo y sus barras de HP/XP.', css: '--cc-scale-hud' },
+        { key: 'dock', label: 'Dock de navegaci├│n', description: 'Cambia los botones superiores o laterales del juego y sus men├║s desplegables.', css: '--cc-scale-dock' },
+        { key: 'battle', label: 'Card de batalla', description: 'Cambia la card del Pok├®mon aliado, incluyendo estad├¡sticas, poder y barras.', css: '--cc-scale-battle' },
+        { key: 'enemy', label: 'Card del enemigo', description: 'Cambia la card, sprite y barra de vida del Pok├®mon enemigo.', css: '--cc-scale-enemy' },
+        { key: 'capture', label: 'Capture Bar', description: 'Cambia el tama├▒o de la barra inferior de captura, con sus balls, pociones y salvajes.', css: '--cc-scale-capture' },
+        { key: 'victory', label: 'Notificaci├│n de batalla', description: 'Cambia el aviso de victoria, experiencia obtenida y drops de cada derrota.', css: '--cc-scale-victory' },
         { key: 'events', label: 'Barras de eventos', description: 'Cambia el grupo inferior de eventos activos y sus ventanas informativas.', css: '--cc-scale-events' },
-        { key: 'helper', label: 'Auto-Helper', description: 'Cambia el botón y la ventana de configuración del Auto-Helper.', css: '--cc-scale-helper' }
+        { key: 'helper', label: 'Auto-Helper', description: 'Cambia el bot├│n y la ventana de configuraci├│n del Auto-Helper.', css: '--cc-scale-helper' }
     ]);
     const SCRIPT_SCALE_DEFAULTS = Object.freeze(Object.fromEntries(SCRIPT_SCALE_AREAS.map(area => [area.key, 100])));
 
     /* --------------------------------------------------------------- */
-    /* CARD MODE: TEMAS, SPRITES Y EFECTOS                              */
+    /* CARD MODE: TEMAS, SPRITES Y FONDOS                              */
     /* --------------------------------------------------------------- */
     /* Todo lo de la card mode se guarda en la MISMA clave que las escalas
        (SCRIPT_SCALE_STORAGE). Las funciones de carga y guardado conservan
        estas claves aunque el objeto de escalas solo conozca las suyas. */
 
     /* Sello de la revision del card mode. Se escribe en el panel de ajustes
-       (data-cc-build) para poder confirmar que la copia cargada en el
-       navegador corresponde al archivo, sin depender de la consola del
-       sandbox de Tampermonkey. */
-    const CARD_BUILD = '2026-10-06e';
+       (data-cc-build) para poder confirmar que la copia que se esta
+       ejecutando es la del archivo en disco, porque con Tampermonkey el
+       resincronizado del archivo no siempre es inmediato. */
+    const CARD_BUILD = '2026-10-06i';
+
+    /* Fondos del escenario. El area que el juego usa de fondo en modo Card es
+       .cbt-stage: ocupa toda la pantalla y lleva su propio degradado radial.
+       Aqui se aplican encima como capas de fondo de ese mismo elemento, sin
+       tocar el DOM, para que al volver a "Sin fondo" baste con quitar los
+       estilos en linea y el juego recupere el suyo.
+
+       Las escenas pixel art se DIBUJAN, no se reusan imagenes: el juego solo
+       tiene iconos de tipo de 24x24 y mapas del mundo vista cenital, que no
+       sirven de decorado. Cada tipo recibe una escena de naturaleza propia
+       (cielo, horizonte, suelo y detalle) pintada en un lienzo de 160x90 con
+       coordenadas enteras y paleta corta; al escalar a pantalla con
+       image-rendering: pixelated queda pixel art de verdad. Se dibuja una vez
+       por tipo y se cachea como data URL, asi que el coste no se repite.
+
+       El tipo que manda es el del SALVAJE, no el del equipo: sale de la card
+       nativa por su nombre, que se resuelve contra /game/creatures.json (que
+       trae type1/type2 de cada especie, incluidas las variantes de mapa). Si
+       no hay ningun salvaje se recuerda el ultimo visto, para que el fondo no
+       parpadee cada vez que el Auto-Helper lanza y el Pokemon se va. */
+    const CARD_BACKGROUNDS = Object.freeze([
+        { id: 'none',     name: 'Sin fondo',  desc: 'el del juego' },
+        { id: 'scene',    name: 'Escena pixel', desc: 'naturaleza del tipo' },
+        { id: 'scenecard', name: 'Escena suave', desc: 'pixel atenuado' },
+        { id: 'gradient', name: 'Degradado',  desc: 'tono del tipo' },
+        { id: 'plain',    name: 'Sencillo',   desc: 'azul noche' },
+        { id: 'dither',   name: 'Trama',      desc: 'puntitos' }
+    ]);
+    const backgroundById = id => CARD_BACKGROUNDS.find(b => b.id === id) || CARD_BACKGROUNDS[0];
+    const TYPE_ICON_BASE = 'https://poke.idleworld.online/assets/types/';
+
+    const CC_STAGE_SCRIM = 'linear-gradient(180deg, rgba(7,12,20,.78) 0%, rgba(7,12,20,.66) 55%, rgba(7,12,20,.85) 100%)';
+    const CC_STAGE_SCRIM_SOFT = 'linear-gradient(180deg, rgba(7,12,20,.92) 0%, rgba(7,12,20,.86) 55%, rgba(7,12,20,.95) 100%)';
+    /* Proporcion del lienzo parecida a la de una pantalla de juego (2.4:1). Con
+       16:9 el cover estiraba mas en horizontal que en vertical y los pixeles
+       salian rectangulares, que es justo lo que rompe el aire pixel art. */
+    const CC_SCENE_W = 240;
+    const CC_SCENE_H = 100;
+    /* Paso de la trama de puntitos del fondo "Trama". */
+    const CC_STAGE_DOTS = 9;
+
+    /* Ultima combinacion aplicada. Evita reescribir estilos en cada ciclo de
+       refresco: solo se tocan cuando cambia el tipo o el estilo elegido. */
+    let ccStageSignature = '';
+    let ccLastTypes = [];
+    let ccStageTypes = [];
+    const ccSceneCache = new Map();
+
+    /* Nombre canonico del tipo, en el formato que usan las rutas y las claves. */
+    function ccTypeKey(value) {
+        const raw = String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        if (!TYPE_COLORS[raw]) return null;
+        /* El juego los manda en ingles; los alias en castellano del catalogo de
+           colores se traducen aqui. */
+        return { electrico: 'electric', volador: 'flying', siniestro: 'dark',
+            dragonico: 'dragon', bicho: 'bug', acero: 'steel', hada: 'fairy',
+            fantasma: 'ghost', psiquico: 'psychic', lucha: 'fighting', hielo: 'ice' }[raw] || raw;
+    }
+
+    /* --- utilidades de dibujo pixel art --- */
+    function ccMix(a, b, t) {
+        const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+        const mix = sh => {
+            const ca = (pa >> sh) & 255, cb = (pb >> sh) & 255;
+            return Math.round(ca + (cb - ca) * Math.max(0, Math.min(1, t)));
+        };
+        return '#' + [mix(16), mix(8), mix(0)].map(v => v.toString(16).padStart(2, '0')).join('');
+    }
+    function ccShade(hex, k) { return ccMix(hex, k >= 1 ? '#ffffff' : '#000000', Math.abs(1 - k)); }
+    /* Semilla fija por tipo: la escena es siempre la misma y no parpadea al
+       cambiar el Pokemon dentro del mismo tipo. */
+    function ccSeeded(seedText) {
+        let a = 7;
+        for (let i = 0; i < seedText.length; i++) a = (a * 31 + seedText.charCodeAt(i)) | 0;
+        return function () {
+            a |= 0; a = (a + 0x6D2B79F5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+    /* Circulo sin antialias: se dibuja con filas de pixeles, que es lo que
+       mantiene el aspecto pixelado (arc() los suaviza). */
+    function ccDisc(g, cx, cy, r, color) {
+        g.fillStyle = color;
+        for (let y = -r; y <= r; y++) {
+            const half = Math.floor(Math.sqrt(Math.max(0, r * r - y * y)));
+            g.fillRect(Math.round(cx - half), Math.round(cy + y), half * 2 + 1, 1);
+        }
+    }
+    function ccTri(g, x, y, w, h, color) {
+        g.fillStyle = color;
+        for (let i = 0; i < h; i++) {
+            const ww = Math.max(1, Math.round(w * (i + 1) / h));
+            g.fillRect(Math.round(x - ww / 2), Math.round(y - h + i), ww, 1);
+        }
+    }
+
+    /* --- el tipo manda en la paleta y en el decorado --- */
+    const CC_SCENES = Object.freeze({
+        fire:     { sky: ['#2b0a12', '#8c2f0d'], far: '#1d070c', land: ['#6b1d08', '#180603'], accent: '#f97316', spark: '#fbbf24', horizon: 'mountain', detail: 'lava', dark: false },
+        water:    { sky: ['#041a33', '#0d5c86'], far: '#03203d', land: ['#0d5f86', '#041a2e'], accent: '#38bdf8', spark: '#bae6fd', horizon: 'wave', detail: 'waves', dark: false },
+        grass:    { sky: ['#0b2a1e', '#2f8f5b'], far: '#0a2018', land: ['#2f8f4f', '#0d2c1c'], accent: '#22c55e', spark: '#bbf7d0', horizon: 'forest', detail: 'trees', dark: false },
+        electric: { sky: ['#2a2005', '#b58b0a'], far: '#1d1704', land: ['#8a6a08', '#241c04'], accent: '#facc15', spark: '#fef08a', horizon: 'storm', detail: 'bolt', dark: false },
+        ice:      { sky: ['#0d2436', '#7fc4de'], far: '#0a1c2b', land: ['#a8dcef', '#2b5b74'], accent: '#67e8f9', spark: '#f0fdff', horizon: 'mountain', detail: 'ice', dark: false },
+        fighting: { sky: ['#2c0f0c', '#a8412a'], far: '#1d0a07', land: ['#7d3320', '#220c07'], accent: '#f97316', spark: '#fed7aa', horizon: 'mountain', detail: 'spikes', dark: false },
+        poison:   { sky: ['#180a2a', '#5b2a8c'], far: '#10061d', land: ['#3f2560', '#140a22'], accent: '#a855f7', spark: '#e9d5ff', horizon: 'swamp', detail: 'bubbles', dark: true },
+        ground:   { sky: ['#2a1a08', '#9a6b23'], far: '#1c1206', land: ['#8a5a1c', '#221604'], accent: '#a16207', spark: '#fde68a', horizon: 'dunes', detail: 'cracks', dark: false },
+        flying:   { sky: ['#12304f', '#8fc3e8'], far: '#0d243b', land: ['#5b8fb8', '#22415c'], accent: '#60a5fa', spark: '#e0f2fe', horizon: 'cloud', detail: 'feathers', dark: false },
+        psychic:  { sky: ['#1c0b2b', '#7a2f8f'], far: '#140821', land: ['#4d1f66', '#190a25'], accent: '#ec4899', spark: '#fbcfe8', horizon: 'flat', detail: 'stars', dark: true },
+        bug:      { sky: ['#101f0c', '#3f7a2b'], far: '#0a1708', land: ['#3f7a2b', '#0e2310'], accent: '#84cc16', spark: '#d9f99d', horizon: 'forest', detail: 'leaves', dark: false },
+        rock:     { sky: ['#141414', '#5c5750'], far: '#0e0e0e', land: ['#57534e', '#191817'], accent: '#78716c', spark: '#d6d3d1', horizon: 'mountain', detail: 'rocks', dark: false },
+        ghost:    { sky: ['#100a1c', '#3b2a5c'], far: '#0a0614', land: ['#2e2145', '#110b1d'], accent: '#8b5cf6', spark: '#ddd6fe', horizon: 'flat', detail: 'ghosts', dark: true },
+        dragon:   { sky: ['#160a26', '#4c1d95'], far: '#0f0719', land: ['#3b1a6b', '#110a1f'], accent: '#6366f1', spark: '#c7d2fe', horizon: 'mountain', detail: 'scales', dark: true },
+        dark:     { sky: ['#08080a', '#2a2733'], far: '#050506', land: ['#1f1d26', '#0a0a0d'], accent: '#475569', spark: '#94a3b8', horizon: 'mountain', detail: 'eyes', dark: true },
+        steel:    { sky: ['#11161c', '#4a5763'], far: '#0c1014', land: ['#4a5763', '#151b21'], accent: '#64748b', spark: '#cbd5e1', horizon: 'flat', detail: 'plates', dark: false },
+        fairy:    { sky: ['#2a0f2a', '#c05fa8'], far: '#1b0a1b', land: ['#a34e93', '#2c1230'], accent: '#f472b6', spark: '#fce7f3', horizon: 'cloud', detail: 'sparkles', dark: false },
+        normal:   { sky: ['#1e2430', '#7c8ba1'], far: '#161b24', land: ['#5f6b52', '#1b2016'], accent: '#94a3b8', spark: '#e2e8f0', horizon: 'dunes', detail: 'rocks', dark: false }
+    });
+
+    function ccPaintDetail(kind, g, hz, cfg, rnd) {
+        const W = CC_SCENE_W, H = CC_SCENE_H;
+        const accent = cfg.accent, spark = cfg.spark;
+        switch (kind) {
+            case 'lava':
+                for (let i = 0; i < 26; i++) {
+                    const x = Math.round(rnd() * W), y = hz + Math.round(rnd() * (H - hz));
+                    const len = 2 + Math.round(rnd() * 6);
+                    g.fillStyle = rnd() > .45 ? '#f97316' : '#fbbf24';
+                    g.fillRect(x, y, 2, len);
+                }
+                for (let i = 0; i < 22; i++) g.fillStyle = spark, g.fillRect(Math.round(rnd() * W), Math.round(rnd() * hz * .8), 1, 1);
+                break;
+            case 'waves':
+                for (let i = 0; i < 9; i++) {
+                    const y = hz + 2 + i * 3;
+                    g.fillStyle = i % 2 ? ccShade(accent, 1.5) : ccShade(accent, 1.15);
+                    for (let x = (i * 7) % 9; x < W; x += 11) g.fillRect(x, y, 6, 1);
+                }
+                break;
+            case 'trees':
+                for (let i = 0; i < 11; i++) {
+                    const x = Math.round(rnd() * W);
+                    ccTri(g, x, hz + 3, 10 + Math.round(rnd() * 8), 12 + Math.round(rnd() * 8), ccShade(accent, .55));
+                }
+                break;
+            case 'bolt': {
+                const bx = Math.round(W * .62);
+                g.fillStyle = spark;
+                for (let i = 0; i < 16; i++) g.fillRect(bx + (i % 3 === 0 ? 2 : 0), 6 + i * 2, 2, 2);
+                for (let i = 0; i < 14; i++) g.fillStyle = ccShade(accent, 1.4), g.fillRect(Math.round(rnd() * W), Math.round(rnd() * hz), 2, 1);
+                break;
+            }
+            case 'ice':
+                for (let i = 0; i < 14; i++) {
+                    const x = Math.round(rnd() * W), y = hz + Math.round(rnd() * (H - hz)), h = 3 + Math.round(rnd() * 7);
+                    g.fillStyle = i % 3 ? spark : ccShade(accent, 1.2);
+                    for (let j = 0; j < h; j++) g.fillRect(x + (j % 2), y - j, 2, 1);
+                }
+                for (let i = 0; i < 26; i++) g.fillStyle = spark, g.fillRect(Math.round(rnd() * W), Math.round(rnd() * H), 1, 1);
+                break;
+            case 'spikes':
+                for (let i = 0; i < 9; i++) {
+                    const x = Math.round(rnd() * W);
+                    ccTri(g, x, H - 2, 8, 10 + Math.round(rnd() * 8), ccShade(accent, .7));
+                }
+                break;
+            case 'bubbles':
+                for (let i = 0; i < 12; i++) ccDisc(g, Math.round(rnd() * W), hz + Math.round(rnd() * (H - hz)), 1 + Math.round(rnd() * 2), ccShade(accent, 1.3));
+                for (let i = 0; i < 18; i++) g.fillStyle = spark, g.fillRect(Math.round(rnd() * W), Math.round(rnd() * hz), 1, 1);
+                break;
+            case 'cracks':
+                g.fillStyle = ccShade(accent, .55);
+                for (let i = 0; i < 7; i++) {
+                    let x = Math.round(rnd() * W), y = hz;
+                    while (y < H) { g.fillRect(x, y, 1, 1); x += rnd() > .5 ? 1 : -1; y += 1; }
+                }
+                break;
+            case 'feathers':
+                for (let i = 0; i < 8; i++) {
+                    const x = Math.round(rnd() * W), y = Math.round(hz * (.25 + rnd() * .6));
+                    g.fillStyle = ccShade(accent, 1.5);
+                    for (let j = 0; j < 6; j++) g.fillRect(x + j, y + (j % 2), 2, 1);
+                }
+                break;
+            case 'stars':
+                for (let i = 0; i < 34; i++) g.fillStyle = rnd() > .3 ? spark : accent, g.fillRect(Math.round(rnd() * W), Math.round(rnd() * hz), 1, 1);
+                ccDisc(g, Math.round(W * .78), Math.round(hz * .3), 6, ccShade(accent, 1.25));
+                break;
+            case 'leaves':
+                for (let i = 0; i < 16; i++) {
+                    const x = Math.round(rnd() * W), y = Math.round(rnd() * H);
+                    g.fillStyle = i % 2 ? ccShade(accent, .7) : ccShade(accent, 1.2);
+                    g.fillRect(x, y, 3, 1); g.fillRect(x + 1, y - 1, 1, 3);
+                }
+                break;
+            case 'rocks':
+                for (let i = 0; i < 10; i++) {
+                    const w = 4 + Math.round(rnd() * 9), h = 3 + Math.round(rnd() * 6);
+                    g.fillStyle = i % 2 ? ccShade(accent, .8) : ccShade(accent, 1.1);
+                    g.fillRect(Math.round(rnd() * W), hz + Math.round(rnd() * (H - hz - h)), w, h);
+                }
+                break;
+            case 'ghosts':
+                for (let i = 0; i < 5; i++) {
+                    const x = Math.round(rnd() * W), y = hz - 10 + Math.round(rnd() * 20), r = 3 + Math.round(rnd() * 3);
+                    ccDisc(g, x, y, r, ccShade(accent, 1.35));
+                    g.fillStyle = cfg.sky[0];
+                    g.fillRect(x - 1, y - 1, 1, 1); g.fillRect(x + 1, y - 1, 1, 1);
+                }
+                break;
+            case 'scales':
+                for (let r = 0; r < 6; r++) for (let c2 = 0; c2 < 20; c2++) {
+                    if ((r + c2) % 2) continue;
+                    g.fillStyle = ccShade(accent, 1.15);
+                    g.fillRect(c2 * 8 + (r % 2) * 4, hz + r * 6, 7, 5);
+                }
+                break;
+            case 'eyes':
+                for (let i = 0; i < 5; i++) {
+                    const x = Math.round(rnd() * (W - 10)), y = Math.round(rnd() * hz * .8);
+                    g.fillStyle = spark; g.fillRect(x, y, 3, 1); g.fillRect(x + 4, y, 3, 1);
+                    g.fillStyle = cfg.far; g.fillRect(x + 1, y + 1, 1, 1); g.fillRect(x + 5, y + 1, 1, 1);
+                }
+                break;
+            case 'plates':
+                for (let i = 0; i < 9; i++) {
+                    const x = Math.round(rnd() * W), y = hz + Math.round(rnd() * (H - hz));
+                    g.fillStyle = i % 2 ? ccShade(accent, 1.2) : ccShade(accent, .8);
+                    g.fillRect(x, y, 6 + Math.round(rnd() * 8), 2);
+                }
+                break;
+            case 'sparkles':
+                for (let i = 0; i < 16; i++) {
+                    const x = Math.round(rnd() * W), y = Math.round(rnd() * H), r = 1 + Math.round(rnd() * 2);
+                    g.fillStyle = spark;
+                    g.fillRect(x - r, y, r * 2 + 1, 1); g.fillRect(x, y - r, 1, r * 2 + 1);
+                }
+                break;
+        }
+    }
+
+    function ccRenderScene(type) {
+        const key = ccTypeKey(type) || 'normal';
+        if (ccSceneCache.has(key)) return ccSceneCache.get(key);
+        const cfg = CC_SCENES[key] || CC_SCENES.normal;
+        const rnd = ccSeeded(key);
+        const canvas = document.createElement('canvas');
+        canvas.width = CC_SCENE_W;
+        canvas.height = CC_SCENE_H;
+        const g = canvas.getContext('2d');
+        if (!g) return '';
+        const W = CC_SCENE_W, H = CC_SCENE_H;
+        const hz = Math.round(H * .56);
+
+        /* Cielo en pocas bandas: el escalonado es justo lo que da el aire
+           pixel art, un degradado suave pareceria una foto. */
+        const steps = 9;
+        for (let i = 0; i < steps; i++) {
+            g.fillStyle = ccMix(cfg.sky[0], cfg.sky[1], i / (steps - 1));
+            g.fillRect(0, Math.round(hz * i / steps), W, Math.ceil(hz / steps) + 1);
+        }
+        if (cfg.dark) {
+            for (let i = 0; i < 30; i++) g.fillStyle = cfg.spark, g.fillRect(Math.round(rnd() * W), Math.round(rnd() * hz * .8), 1, 1);
+        }
+        /* Astro bajo. */
+        ccDisc(g, Math.round(W * (.16 + rnd() * .66)), Math.round(hz * .3), 5 + Math.round(rnd() * 3), ccShade(cfg.spark, .95));
+
+        /* Horizonte segun el tipo. */
+        g.fillStyle = cfg.far;
+        switch (cfg.horizon) {
+            case 'mountain':
+                for (let x = 0; x < W; x += 10) {
+                    const peak = 8 + Math.round(rnd() * 16);
+                    ccTri(g, x + 5, hz, 20, peak, cfg.far);
+                }
+                break;
+            case 'forest':
+                for (let x = 2; x < W; x += 9) ccTri(g, x, hz + 1, 12, 6 + Math.round(rnd() * 8), cfg.far);
+                break;
+            case 'dunes':
+                for (let x = 0; x < W; x += 4) {
+                    const h = 3 + Math.round(Math.sin(x / 11) * 3 + rnd() * 2);
+                    g.fillRect(x, hz - h, 4, h + 2);
+                }
+                break;
+            case 'wave':
+                for (let i = 0; i < 4; i++) {
+                    g.fillRect(0, hz - 4 + i * 2, W, 1);
+                    g.fillStyle = ccShade(cfg.far, 1.4); g.fillRect(0, hz - 4 + i * 2, W, 1); g.fillStyle = cfg.far;
+                }
+                break;
+            case 'storm':
+                for (let i = 0; i < 3; i++) ccDisc(g, Math.round(rnd() * W), Math.round(hz * .34), 8 + Math.round(rnd() * 6), ccShade(cfg.far, 1.5));
+                for (let x = 0; x < W; x += 12) ccTri(g, x + 6, hz, 22, 10 + Math.round(rnd() * 12), cfg.far);
+                break;
+            case 'swamp':
+                for (let x = 0; x < W; x += 6) g.fillRect(x, hz - 2 - Math.round(rnd() * 4), 6, 6);
+                break;
+            case 'cloud':
+                for (let i = 0; i < 5; i++) ccDisc(g, Math.round(rnd() * W), Math.round(hz * .3 + rnd() * 16), 6 + Math.round(rnd() * 7), ccShade(cfg.far, 1.6));
+                break;
+            default:
+                g.fillRect(0, hz - 3, W, 3);
+        }
+
+        /* Suelo en bandas, con tramado disperso para que no quede plano. */
+        const landSteps = 7;
+        for (let i = 0; i < landSteps; i++) {
+            g.fillStyle = ccMix(cfg.land[0], cfg.land[1], i / (landSteps - 1));
+            g.fillRect(0, hz + Math.round((H - hz) * i / landSteps), W, Math.ceil((H - hz) / landSteps) + 1);
+        }
+        /* La union cielo-suelo se dibuja con tramado en vez de una linha dura,
+           que si no parte la escena en dos bandas. */
+        for (let i = 0; i < 7; i++) {
+            g.fillStyle = ccMix(cfg.far, cfg.land[0], i / 6);
+            g.fillRect(0, hz - 7 + i, W, 1);
+            for (let x = (i % 2); x < W; x += 2) {
+                g.fillStyle = ccMix(cfg.far, cfg.land[0], (i + 1) / 6);
+                g.fillRect(x, hz - 7 + i, 1, 1);
+            }
+        }
+        for (let i = 0; i < 420; i++) {
+            g.fillStyle = rnd() > .5 ? ccShade(cfg.land[0], 1.25) : ccShade(cfg.land[0], .8);
+            g.fillRect(Math.round(rnd() * W), hz + Math.round(rnd() * (H - hz)), 1, 1);
+        }
+        g.fillStyle = cfg.accent;
+        for (let i = 0; i < 24; i++) g.fillRect(Math.round(rnd() * W), H - 1 - Math.round(rnd() * 4), 2, 1);
+
+        ccPaintDetail(cfg.detail, g, hz, cfg, rnd);
+
+        /* Velo inferior para que los textos de la card no compitan. */
+        for (let i = 0; i < 10; i++) {
+            g.fillStyle = `rgba(7,12,20,${(i / 10) * .45})`;
+            g.fillRect(0, H - 10 + i, W, 1);
+        }
+
+        const url = canvas.toDataURL('image/png');
+        ccSceneCache.set(key, url);
+        return url;
+    }
+
+    /* Tipo del SALVAJE. Sale del nombre que pinta la card nativa, resuelto
+       contra el catalogo del juego, que ya tiene en cuenta las variantes de
+       mapa ("Brave Blastoise", "Enraged Typhlosion"...). */
+    function ccWildTypes() {
+        const nameEl = document.querySelector('.cbt-card.cbt-mob .cbt-cardname');
+        const raw = nameEl ? nameEl.textContent.trim() : '';
+        const name = (raw.match(/(.*?)\s+(Lv\.?|Nv\.?)\s*\d+/i)?.[1] || raw).trim();
+        if (!name) return [];
+        return ccCreatureTypes(name);
+    }
+
+    /* Tipos que rigen el fondo. Prioriza el del salvaje y recuerda el ultimo
+       visto, para que el fondo no se apague entre captura y captura. */
+    function ccStageTypeList() {
+        const wild = ccWildTypes();
+        if (wild.length) ccStageTypes = wild;
+        return ccStageTypes.length ? ccStageTypes : (ccLastTypes || []);
+    }
+
+    /* Capas de fondo del estilo pedido, en el mismo criterio para el escenario
+       real y para las muestras del menu. */
+    function ccBackgroundLayers(bg, types) {
+        if (!bg || bg.id === 'none') return 'none';
+        const keys = (types || []).map(ccTypeKey).filter(Boolean);
+        const main = keys[0] || 'normal';
+        const toRgb = hex => {
+            const n = parseInt(hex.slice(1), 16);
+            return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+        };
+        const c1 = TYPE_COLORS[main];
+        const c2 = TYPE_COLORS[keys[1] || 'normal'];
+        /* Degradado tematico: tonal del primer tipo, mestruje con el segundo y
+           cierre oscuro para que el borde inferior no compita con la card. */
+        const tint = `linear-gradient(165deg, rgba(${toRgb(c1)},.34) 0%, rgba(${toRgb(c2)},.17) 45%, rgba(7,12,20,.92) 100%)`;
+        /* La escena es una data URL y tiene que ir envuelta en url(...): suelta no es
+           una capa de background valida, el navegador descartaria la declaracion
+           entera y el fondo se quedaria sin pintar. Si el lienzo no llegara a
+           dibujarse, se deja solo la capa de legibilidad en vez de una capa
+           vacia con coma final, que tampoco seria valida. */
+        const dataUrl = ccRenderScene(main);
+        const scene = dataUrl ? 'url("' + dataUrl + '")' : '';
+        switch (bg.id) {
+            case 'plain':    return [CC_STAGE_SCRIM, 'linear-gradient(160deg,#12202f 0%,#0b1420 55%,#070c14 100%)'].join(', ');
+            case 'dither':   return [CC_STAGE_SCRIM, 'radial-gradient(rgba(148,190,240,.11) 1px, transparent 1px)'].join(', ');
+            case 'gradient': return [CC_STAGE_SCRIM, tint].join(', ');
+            case 'scenecard':return [CC_STAGE_SCRIM_SOFT, scene].filter(Boolean).join(', ');
+            default:         return [CC_STAGE_SCRIM, scene].filter(Boolean).join(', ');
+        }
+    }
+
+    function ccBackgroundSize(bg) {
+        if (!bg) return 'auto';
+        const scene = 'cover';
+        switch (bg.id) {
+            case 'dither':   return `auto, ${CC_STAGE_DOTS}px ${CC_STAGE_DOTS}px`;
+            case 'scene':
+            case 'scenecard':return `auto, ${scene}`;
+            default:         return 'auto';
+        }
+    }
+
+    function ccBackgroundRepeat(bg) {
+        return bg && (bg.id === 'scene' || bg.id === 'scenecard') ? 'no-repeat' : 'repeat';
+    }
+
+    function ccBackgroundUsesPixels(bg) {
+        return !!bg && (bg.id === 'scene' || bg.id === 'scenecard');
+    }
+
+    function ccApplyStageBackground() {
+        const stage = document.querySelector('.cbt-stage');
+        if (!stage) return;
+        const bg = backgroundById(scriptCardPreferences.bg);
+        const types = ccStageTypeList();
+        const keys = types.map(ccTypeKey).filter(Boolean);
+        const signature = `${bg.id}|${keys.join(',')}`;
+        if (signature === ccStageSignature) return;
+        ccStageSignature = signature;
+
+        ['background-image', 'background-color', 'background-size', 'background-repeat',
+         'background-position', 'image-rendering'].forEach(prop => stage.style.removeProperty(prop));
+        document.body?.classList.remove('cc-stage-scene');
+        if (bg.id === 'none') return;
+
+        stage.style.backgroundColor = '#070c14';
+        stage.style.backgroundImage = ccBackgroundLayers(bg, types);
+        stage.style.backgroundSize = ccBackgroundSize(bg);
+        stage.style.backgroundRepeat = ccBackgroundRepeat(bg);
+        stage.style.backgroundPosition = 'center center';
+        if (ccBackgroundUsesPixels(bg)) stage.style.imageRendering = 'pixelated';
+        document.body?.classList.add('cc-stage-scene');
+    }
 
     const CARD_THEMES = Object.freeze([
         { id: '1', name: 'Panel técnico',      desc: 'raíl + mono',     cls: 'cc-theme-1' },
@@ -106,7 +540,7 @@
     const CARD_PREFS_DEFAULTS = Object.freeze({
         /* La bola NO es una preferencia: se toma de la que se lanzo de verdad,
            via catch-result.ballId. */
-        theme: '3', sprite: 'dream3d',
+        theme: '3', sprite: 'dream3d', bg: 'none',
         showPct: true, hitFx: true, glow: false, memoOpen: false
     });
     const CARD_PREF_KEYS = Object.keys(CARD_PREFS_DEFAULTS);
@@ -122,6 +556,7 @@
                 const value = raw[`card_${key}`];
                 if (key === 'theme') return [key, CARD_THEMES.some(t => t.id === value) ? value : CARD_PREFS_DEFAULTS.theme];
                 if (key === 'sprite') return [key, CARD_SPRITES.some(s => s.id === value) ? value : CARD_PREFS_DEFAULTS.sprite];
+                if (key === 'bg') return [key, CARD_BACKGROUNDS.some(b => b.id === value) ? value : CARD_PREFS_DEFAULTS.bg];
                 return [key, typeof value === 'boolean' ? value : CARD_PREFS_DEFAULTS[key]];
             }));
         } catch (_) {
@@ -2204,6 +2639,17 @@
 
         /* rejilla de sprites */
         .cc-sprite-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; padding:0 11px 11px; }
+        /* Muestras de fondo: cada baldosa lleva las mismas capas que el fondo
+           real, asi que se ven tal cual quedaran en pantalla. */
+        .cc-bg-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; padding:0 11px 11px; }
+        .cc-bg-tile { position:relative; height:52px; border-radius:9px; cursor:pointer; overflow:hidden;
+            background-color:#070c14; background-repeat:repeat; background-position:center center;
+            border:1px solid rgba(148,178,214,.14); transition:border-color .15s, box-shadow .15s; }
+        .cc-bg-tile:hover { border-color:rgba(148,178,214,.4); }
+        .cc-bg-tile.on { border-color:rgba(140,190,255,.75); box-shadow:0 0 0 1px rgba(140,190,255,.35) inset; }
+        .cc-bg-tile .cc-bt-label { position:absolute; left:0; right:0; bottom:0; padding:3px 4px;
+            font-size:8px; font-weight:800; letter-spacing:.04em; text-align:center; color:#e6eef8;
+            background:linear-gradient(180deg, rgba(7,12,20,0) 0%, rgba(7,12,20,.92) 60%); }
         .cc-sprite-tile { position:relative; display:flex; align-items:center; gap:5px; padding:5px; min-width:0;
             border-radius:7px; cursor:pointer; background:rgba(8,13,20,.5);
             border:1px solid rgba(148,178,214,.13); transition:background .15s,border-color .15s; }
@@ -2315,6 +2761,12 @@
                 </details>
 
                 <details class="cc-accordion">
+                    <summary>Fondo del escenario<em data-cc-bg-badge></em></summary>
+                    <p class="cc-hint">Fondo de la pantalla en modo Card. Los colores y el pixel art salen del tipo del Pokémon equipado.</p>
+                    <div class="cc-bg-grid" data-cc-bgs></div>
+                </details>
+
+                <details class="cc-accordion">
                     <summary>Opciones</summary>
                     <div class="cc-toggles" data-cc-toggles></div>
                 </details>
@@ -2379,6 +2831,29 @@
             spriteGrid.appendChild(tile);
         });
 
+        /* ---------- fondos del escenario ---------- */
+        const bgGrid = wrap.querySelector('[data-cc-bgs]');
+        CARD_BACKGROUNDS.forEach(bg => {
+            const tile = document.createElement('button');
+            tile.type = 'button';
+            tile.className = `cc-bg-tile${bg.id === scriptCardPreferences.bg ? ' on' : ''}`;
+            tile.dataset.ccBg = bg.id;
+            tile.title = bg.desc;
+            /* Cada muestra se pinta con el mismo criterio que el fondo real
+               (capas + tamaños + pixelado) para que no haya sorpresas. */
+            tile.style.backgroundImage = ccBackgroundLayers(bg, ccStageTypeList());
+            tile.style.backgroundSize = ccBackgroundSize(bg);
+            tile.style.backgroundRepeat = ccBackgroundRepeat(bg);
+            if (ccBackgroundUsesPixels(bg)) tile.style.imageRendering = 'pixelated';
+            tile.innerHTML = `<span class="cc-bt-label">${bg.name}</span>`;
+            tile.addEventListener('click', () => {
+                scriptCardPreferences.bg = bg.id;
+                saveCardPreferences();
+                applyCardPreferences();
+            });
+            bgGrid.appendChild(tile);
+        });
+
         /* ---------- opciones ---------- */
         const togglesHost = wrap.querySelector('[data-cc-toggles]');
         [
@@ -2425,12 +2900,27 @@
                 const s = spriteById(scriptCardPreferences.sprite);
                 node.textContent = s.anim ? `${s.short} · animada` : s.short;
             });
+            /* El fondo enseña tambien el tipo que esta mandando el color, para
+               que se vea de un vistazo que sigue al Pokemon del equipo. */
+            wrap.querySelectorAll('[data-cc-bg-badge]').forEach(node => {
+                const bg = backgroundById(scriptCardPreferences.bg);
+                const type = (ccLastTypes || []).map(ccTypeKey).filter(Boolean)[0];
+                node.textContent = bg.id === 'none' ? bg.name : (type ? `${bg.name} · ${type}` : bg.name);
+            });
         };
         syncBadges();
         wrap._ccSync = () => {
             syncBadges();
             wrap.querySelectorAll('[data-cc-theme]').forEach(node => node.classList.toggle('on', node.dataset.ccTheme === scriptCardPreferences.theme));
             wrap.querySelectorAll('[data-cc-sprite]').forEach(node => node.classList.toggle('on', node.dataset.ccSprite === scriptCardPreferences.sprite));
+            wrap.querySelectorAll('[data-cc-bg]').forEach(node => {
+                node.classList.toggle('on', node.dataset.ccBg === scriptCardPreferences.bg);
+                /* Las muestras se repintan porque el tipo del Pokemon puede
+                   haber cambiado desde que se abrio el menu. */
+                node.style.backgroundImage = ccBackgroundLayers(backgroundById(node.dataset.ccBg), ccStageTypeList());
+                node.style.backgroundSize = ccBackgroundSize(backgroundById(node.dataset.ccBg));
+                node.style.backgroundRepeat = ccBackgroundRepeat(backgroundById(node.dataset.ccBg));
+            });
             wrap.querySelectorAll('[data-cc-toggle]').forEach(node => node.classList.toggle('on', !!scriptCardPreferences[node.dataset.ccToggle]));
             ccRenderPreview(wrap.querySelector('[data-cc-preview]'));
         };
@@ -2451,6 +2941,11 @@
         renderCustomCard();
         updateMobCard();
         applyHitEffects();
+        /* El fondo se reaplica con el estilo nuevo. renderCustomCard tambien lo
+           hace al detectar el tipo, pero si la card no llega a reconstruirse
+           (mismo Pokemon, otro fondo) hay que forzar la firma. */
+        ccStageSignature = '';
+        ccApplyStageBackground();
         document.querySelectorAll('.cc-scale-pane').forEach(pane => { if (pane._ccSync) pane._ccSync(); });
     }
 
@@ -2836,6 +3331,12 @@
         const spa = stats.spa ?? stats.spAtk ?? stats.sp_atk ?? stats.satk ?? "-";
         const spd = stats.spd ?? stats.spDef ?? stats.sp_def ?? stats.sdef ?? "-";
         const vel = stats.vel ?? stats.speed ?? stats.spe ?? "-";
+
+        /* El fondo del escenario sigue al tipo del Pokemon. Se guarda la lista
+           ya resuelta y se aplica; la funcion solo reescribe los estilos si el
+           tipo o el estilo elegido han cambiado de verdad. */
+        ccLastTypes = typesArr;
+        ccApplyStageBackground();
 
         const level = p.level || 1;
         const iv = p.ivTotal || p.ivs_total || 0;
@@ -4240,6 +4741,9 @@
         /* Se guarda donde esta el enemigo para que la animacion de captura
            pueda dibujarse aunque la card ya se haya borrado. */
         ccLastEnemySpot = ccEnemySpot(customMobCard, ccCaptureLayer());
+        /* El fondo manda el tipo del SALVAJE: se revisa aqui, porque este ciclo
+           es el que ve cuando cambia el Pokemon en pantalla. */
+        ccApplyStageBackground();
 
         const hpFill = customMobCard.querySelector('.mob-hp-fill');
         if (hpFill) {
@@ -4344,6 +4848,9 @@
         }
     }, { passive: true });
     scheduleUiRefresh(0);
+    /* El fondo del escenario se aplica tambien al arrancar, por si el equipo
+       cambia antes de que se llegue a reconstruir la card. */
+    ccApplyStageBackground();
 
     /* El listener del script nunca debe ejecutarse delante del manejador del
        juego. Se encolan solo mensajes relevantes y se procesan en tiempo idle. */

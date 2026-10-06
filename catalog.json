@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-10-06T17:14:03Z",
+    "updatedAt":  "2026-10-06T19:06:07Z",
     "scripts":  [
                     {
                         "id":  "custom-hub-game",
                         "name":  "CUSTOM HUB GAME",
                         "namespace":  "http://tampermonkey.net/",
-                        "version":  "4.0.1",
+                        "version":  "4.0.2",
                         "author":  "DiegoT34",
                         "summary":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
                         "description":  "Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.",
@@ -22,9 +22,9 @@
                                         ],
                         "minLauncherVersion":  "0.22.1",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/custom-hub-game.user.js",
-                        "sha256":  "5a8ba39c50d9421f29188344f2712128c2539d8a8d9b628d80c8240652eec736",
+                        "sha256":  "07be3975f9118d3d5bab16aeab7e3367296f7cfda3f246dca68f5bbdb486fac5",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 4.0.1",
+                        "changelog":  "Actualización 4.0.2",
                         "icon":  "script",
                         "featured":  false,
                         "publishedAt":  "2026-10-06T12:53:41Z"
