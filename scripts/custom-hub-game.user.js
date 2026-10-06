@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      4.0.0
+// @version      4.0.1
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -58,7 +58,7 @@
        (data-cc-build) para poder confirmar que la copia cargada en el
        navegador corresponde al archivo, sin depender de la consola del
        sandbox de Tampermonkey. */
-    const CARD_BUILD = '2026-10-06c';
+    const CARD_BUILD = '2026-10-06e';
 
     const CARD_THEMES = Object.freeze([
         { id: '1', name: 'Panel técnico',      desc: 'raíl + mono',     cls: 'cc-theme-1' },
@@ -1412,6 +1412,9 @@
         .cc-tier { display:inline-flex; align-items:center; gap:4px; font-size:8.5px; font-weight:800;
                    letter-spacing:.12em; text-transform:uppercase; color:var(--tier); }
         .cc-types { display:flex; gap:3px; flex-wrap:wrap; }
+        /* Fila de tipos para los temas que antes no la pintaban: 1, 4, 6 y 7. */
+        .cc-typerow { display:flex; margin-top:5px; }
+        .cc-typerow-top { margin:-2px 11px 5px; }
         .cpc-type-badge { --cpc-type-color:#445e6d; padding:2px 6px; border-radius:5px;
             border:1px solid color-mix(in srgb,var(--cpc-type-color) 76%,#0b1220);
             font-size:9px; font-weight:800; line-height:1.15; text-transform:uppercase; letter-spacing:.3px;
@@ -2659,6 +2662,7 @@
                             <div class="cc-name">${name}</div>
                             <div class="cc-sub">Nv <b>${level}</b> · IV <b>${iv}</b>/192</div>
                             <div class="cc-tier">${tierInfo.label}</div>
+                            <div class="cc-typerow">${ccTypesHtml(types)}</div>
                         </div>
                     </div>
                     ${ccStatsGrid(stats)}
@@ -2702,6 +2706,7 @@
                 return `${ccRingSvg(hpPct, true, ccImg(p, ccSpriteClasses(p)), `${Math.round(hpPct)}%`)}
                     <div class="cc-name">${name}</div>
                     <div class="cc-sub">Nv <b>${level}</b> · IV <b>${iv}</b>/192 · <b style="color:var(--tier)">${tierInfo.label}</b></div>
+                    <div class="cc-typerow">${ccTypesHtml(types)}</div>
                     ${ccStatsGrid(stats)}
                     <div class="cc-pow">${ccIcon('bolt')}<span>${power}</span><span class="lbl">Poder</span></div>`;
 
@@ -2737,6 +2742,7 @@
                         <div style="flex:1;min-width:0">
                             <div class="cc-name">${name}</div>
                             <div class="cc-sub">Nv <b>${level}</b> · IV <b>${iv}</b>/192 · <b style="color:var(--tier)">${tierInfo.label}</b></div>
+                            <div class="cc-typerow">${ccTypesHtml(types)}</div>
                         </div>
                         <div class="cc-pow"><div class="val">${power}</div><div class="lbl">${ccIcon('bolt')}PODER</div></div>
                     </div>
@@ -2752,6 +2758,7 @@
             case '7':
             default:
                 return `<div class="cc-head"><span class="cc-name">${name}</span><span class="cc-tier">${tierInfo.label}</span></div>
+                    <div class="cc-typerow cc-typerow-top">${ccTypesHtml(types)}</div>
                     <div class="cc-stage">
                         <div class="cc-hud"><div class="cpc-bar-wrapper"><div class="cpc-bar-fill cpc-hp-high" id="cpc-hp-fill" style="width:100%"></div></div><span class="v cc-hp-val" id="cpc-hp-text">Cargando</span></div>
                         <div class="cc-floor"></div>
@@ -3910,9 +3917,13 @@
         }
     }
 
-    /* Quita acentos y signos para poder comparar nombres. */
+    /* Quita acentos, signos y el nivel del final para poder comparar nombres.
+       El nivel se va aqui y no en el llamante porque el nombre aparece con
+       formato distinto en cada sitio: la card nativa lo pinta al final
+       ("Enraged Typhlosion Nv 50") y el socket lo manda sin el. */
     function ccFoldName(value) {
         return String(value || '')
+            .replace(/\s+(?:lv|nv)\.?\s*\d+\s*$/i, ' ')
             .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             .replace(/[^a-z0-9]+/gi, ' ')
             .trim().toLowerCase();
@@ -3974,15 +3985,102 @@
         if (words.length > 1) {
             candidates.add(words.slice(0, 2).join(' '));
             if (words[0].length > 3) candidates.add(words[0]);
+            /* Red de seguridad para los modificadores de mapa que se inventen
+               mas adelante: "Enraged Typhlosion" -> "Typhlosion", quitando la
+               primera palabra o la ultima, sin lista cerrada de prefijos. */
+            const sinPrimera = words.slice(1).join(' ');
+            const sinUltima = words.slice(0, -1).join(' ');
+            if (sinPrimera.length > 2) candidates.add(sinPrimera);
+            if (sinUltima.length > 2) candidates.add(sinUltima);
+            words.forEach(word => { if (word.length > 3) candidates.add(word); });
         }
 
         return [...candidates].filter(name => name.length > 1);
     }
 
+    /* --------------------------------------------------------------- */
+    /* CATALOGO DE CRIATURAS DEL JUEGO                                 */
+    /* --------------------------------------------------------------- */
+    /* El juego publica /game/creatures.json con las 647 especies que usa. Es
+       la fuente exacta para saber que Pokemon se esta mostrando, y clave para
+       el problema de los subnombres de mapa:
+
+         10522  "Enraged Typhlosion"  captureBase: 157  looktype: 323
+          157  "Typhlosion"                            looktype: 323
+
+       La variante tiene su propio pokeId (10522, que no existe en PokeAPI) pero
+       declara `captureBase` con el id de la especie base, que es justo el que
+       necesitan las URLs de sprite. Y ese pokeId coincide con el id de la
+       pokedex de PokeAPI, asi que sirve directamente para construir la imagen.
+
+       Gracias a esto el subnombre lo resuelve el propio juego: no hay que
+       adivinar qué palabra es el nombre original ni depender de la red. */
+
+    let ccCreatureIndex = null;
+    let ccCreatureRequest = null;
+
+    function ccLoadCreatures() {
+        if (ccCreatureIndex) return Promise.resolve(ccCreatureIndex);
+        if (ccCreatureRequest) return ccCreatureRequest;
+        ccCreatureRequest = fetch('/game/creatures.json')
+            .then(response => (response.ok ? response.json() : null))
+            .then(data => {
+                const list = Array.isArray(data?.creatures) ? data.creatures : [];
+                const index = new Map();
+                list.forEach(entry => {
+                    const key = ccFoldName(entry.name);
+                    if (key && !index.has(key)) index.set(key, entry);
+                });
+                ccCreatureIndex = index;
+                return index;
+            })
+            .catch(() => { ccCreatureIndex = new Map(); return ccCreatureIndex; });
+        return ccCreatureRequest;
+    }
+
+    /* Id de especie (el de la pokedex) a partir del nombre que pinta el juego.
+       Devuelve null si el catalogo no lo tiene. */
+    function ccSpeciesIdFromCatalog(name) {
+        if (!ccCreatureIndex) return null;
+        const entry = ccCreatureIndex.get(ccFoldName(name));
+        if (!entry) return null;
+        /* captureBase es la especie base de las variantes de mapa. */
+        const base = Number(entry.captureBase);
+        if (Number.isFinite(base) && base > 0) return base;
+        const id = Number(entry.pokeId);
+        return Number.isFinite(id) && id > 0 ? id : null;
+    }
+
+    /* Tipo y rareza del enemigo, que el catalogo tambien trae. */
+    function ccCreatureTypes(name) {
+        const entry = ccCreatureIndex?.get(ccFoldName(name));
+        if (!entry) return [];
+        return [entry.type1, entry.type2].filter(Boolean).map(ccTypeLabel).filter(Boolean);
+    }
+
+    /* Se pide al arrancar para que el catalogo este listo antes de que aparezca
+       el primer salvaje: son 647 filas, el juego ya lo descarga para sus
+       propios sprites, asi que suele salir de la cache de red. */
+    ccLoadCreatures();
+
     function ccResolveSpeciesAny(name) {
-        const candidates = ccSpeciesNameCandidates(name);
-        return candidates.reduce((chain, candidate) =>
-            chain.then(found => found || ccResolveSpecies(candidate)), Promise.resolve(null));
+        /* Primero el catalogo del juego: es exacto y no necesita red. */
+        return ccLoadCreatures()
+            .then(() => ccSpeciesIdFromCatalog(name))
+            .then(id => {
+                if (id) return id;
+                /* Si el nombre no esta tal cual, se prueban las variantes
+                   depuradas (nivel, marcador de shiny, prefijos y sufijos de
+                   forma) contra el catalogo, y solo como ultimo recurso se
+                   pregunta a PokeAPI. */
+                const candidates = ccSpeciesNameCandidates(name);
+                for (const candidate of candidates) {
+                    const found = ccSpeciesIdFromCatalog(candidate);
+                    if (found) return found;
+                }
+                return candidates.reduce((chain, candidate) =>
+                    chain.then(res => res || ccResolveSpecies(candidate)), Promise.resolve(null));
+            });
     }
 
     function ccResolveSpecies(name) {
@@ -4008,15 +4106,6 @@
             return `<img class="cc-spr cc-enemy-spr${source.px ? ' pixel' : ''}${source.anim ? ' anim' : ''}" src="${source.url(speciesId)}" alt="${name}" onerror="this.onerror=null;this.src='${fallback}';this.className=this.className.replace(' anim','')">`;
         }
         return `<div class="cc-enemy-canvas"><canvas class="mob-sprite-canvas" width="64" height="64"></canvas></div>`;
-    }
-
-    function ccEnemyRingSvg(hpPct) {
-        const C = 2 * Math.PI * 21.5;
-        const offset = C * (1 - Math.min(100, Math.max(0, hpPct)) / 100);
-        return `<svg class="cc-enemy-ring" viewBox="0 0 46 46">
-            <circle class="trk" cx="23" cy="23" r="21.5"></circle>
-            <circle class="fil" cx="23" cy="23" r="21.5" stroke-dasharray="${C}" stroke-dashoffset="${offset}"></circle>
-        </svg>`;
     }
 
     /* El enemigo tiene una sola estructura para los 7 temas: cc-mob-name, cc-mob-art
@@ -4076,18 +4165,39 @@
         const theme = themeById(scriptCardPreferences.theme);
         customMobCard.className = `custom-poke-card cc-mob ${theme.cls}`;
 
-        /* ---- fuente de verdad: el evento pending del socket ---- */
-        /* Trae speciesId (exacto, sin subnombre), hp/maxHp y shiny. El DOM de
-           la card nativa solo da el nombre, y ese nombre puede traer variantes
-           que no existen en PokeAPI. */
+        /* ---- fuente de verdad: el socket y el catalogo del juego ---- */
+        /* El evento pending trae speciesId, hp/maxHp y shiny. Si no hay nada
+           pendiente (lo normal, porque la lista se vacia en cuanto el
+           Auto-Helper lanza) se trabaja con el nombre que pinta la card
+           nativa y se resuelve la especie contra /game/creatures.json, que
+           conoce las variantes de mapa y su `captureBase`. */
         const wild = ccCurrentWild();
         const nameEl = mobCard.querySelector('.cbt-cardname');
         const rawName = nameEl ? nameEl.textContent.trim() : '';
         /* El nombre que se muestra sigue siendo el del juego (con su shiny y
-           su subnombre), pero el sprite se busca por speciesId. */
+           su subnombre), pero el sprite se busca por id de especie. */
         const name = (rawName.match(/(.*?)\s+(Lv\.?|Nv\.?)\s*\d+/i)?.[1] || rawName).trim();
-        const speciesId = wild?.speciesId ? Number(wild.speciesId) || null
-            : (customMobCard.dataset.ccSpecies ? Number(customMobCard.dataset.ccSpecies) || null : null);
+        const nameKey = ccFoldName(name);
+
+        /* El id cacheado solo se reutiliza si es del mismo Pokemon: si no,
+           al aparecer un salvaje distinto se estaria pintando el sprite del
+           anterior. */
+        const cachedName = customMobCard.dataset.ccSpeciesName || '';
+        if (cachedName && cachedName !== nameKey) {
+            delete customMobCard.dataset.ccSpecies;
+            delete customMobCard.dataset.ccSpeciesName;
+        }
+
+        let speciesId = wild?.speciesId ? Number(wild.speciesId) || null : null;
+        if (!speciesId) {
+            /* El catalogo ya descargado resuelve en el acto, sin parpadeo del
+               sprite de reserva. */
+            speciesId = ccSpeciesIdFromCatalog(name) || null;
+            if (!speciesId) {
+                const cached = Number(customMobCard.dataset.ccSpecies);
+                speciesId = Number.isFinite(cached) && cached > 0 ? cached : null;
+            }
+        }
 
         /* ---- vida: la del socket si esta, si no la de la barra nativa ---- */
         let hpPct = null;
@@ -4112,12 +4222,14 @@
         if (customMobCard.dataset.ccKey !== markupKey) {
             customMobCard.dataset.ccKey = markupKey;
             customMobCard.innerHTML = ccEnemyMarkup(theme.id, name, speciesId, hpPct);
-            /* Plan B: sin speciesId del socket se resuelve por nombre limpio. */
+            /* Plan B: sin speciesId del socket ni del catalogo, se resuelve por
+               nombre limpio (el catalogo puede tardar en estar descargado). */
             if (!speciesId && name) {
                 ccResolveSpeciesAny(name).then(id => {
                     if (!id || !customMobCard.isConnected) return;
                     if (customMobCard.dataset.ccSpecies === String(id)) return;
                     customMobCard.dataset.ccSpecies = String(id);
+                    customMobCard.dataset.ccSpeciesName = nameKey;
                     customMobCard.dataset.ccKey = '';
                     updateMobCard();
                 });
@@ -4386,20 +4498,28 @@
 
     function ccReadSocketBars() {
         const p = latestPokemonData;
-        if (!p) return { hpPct: null, xp: null };
-        let hpPct = null;
+        if (!p) return { hp: null, maxHp: null, hpPct: null, xp: null };
+        const hp = Number(p.hp);
         const maxHp = Number(p.maxHp);
-        if (Number.isFinite(maxHp) && maxHp > 0 && Number.isFinite(Number(p.hp))) {
-            hpPct = (Number(p.hp) / maxHp) * 100;
-        }
-        return { hpPct, xp: Number(p.xp) || null };
+        const ok = Number.isFinite(hp) && Number.isFinite(maxHp) && maxHp > 0;
+        return { hp: ok ? hp : null, maxHp: ok ? maxHp : null, hpPct: ok ? (hp / maxHp) * 100 : null, xp: Number(p.xp) || null };
     }
 
     function updateLiveBars() {
         domCache.phudNode = document.querySelector('.phud-mon');
 
         const socketBars = ccReadSocketBars();
-        const text = ccReadPhudText();
+        let text = ccReadPhudText();
+
+        /* El panel concatena sus trozos sin separadores y queda
+           "GolemNv.4324296/11520": el nivel va pegado a la vida. Si se busca
+           "numero/numero" a pelo se leen los digitos del nivel delante y sale
+           un 4324296/11520 que no existe. Como el nivel se sabe exacto, se
+           inserta un espacio despues antes de interpretar nada. */
+        const level = Number(latestPokemonData?.level);
+        if (Number.isFinite(level) && level > 0) {
+            text = text.replace(new RegExp('((?:Lv|Nv)\\.?\\s*' + level + ')(?=\\d)', 'gi'), '$1 ');
+        }
 
         const matchHP = text.match(/([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?[kMBT]?)\s*\/\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?[kMBT]?)/i);
         const matchXP = text.match(/EXP\s*([0-9]+(?:\.[0-9]+)?)\s*%/) || text.match(/([0-9]+(?:\.[0-9]+)?)\s*%/);
@@ -4413,12 +4533,12 @@
             const max = parseFloat(matchHP[2].replace(/,/g, '').replace(/[kMBT]/ig, ''));
             if (!isNaN(cur) && !isNaN(max) && max > 0) hpPercent = (cur / max) * 100;
         }
-        /* El socket manda en el HP: sus numeros ya vienen calculados y no
-           dependen de que el panel este visible. El panel solo rellena cuando
-           el socket aun no ha traido nada. */
+        /* El socket manda en el HP: trae hp y maxHp ya calculados y no depende
+           de que el panel este visible, asi que el texto tambien sale de ahi y
+           cifra y barra no pueden contradecirse. */
         if (socketBars.hpPct !== null) {
             hpPercent = socketBars.hpPct;
-            hpText = hpText || `${Math.round(Number(latestPokemonData?.hp ?? 0))}/${Math.round(Number(latestPokemonData?.maxHp ?? 0))}`;
+            hpText = `${Math.round(socketBars.hp)}/${Math.round(socketBars.maxHp)}`;
         } else if (!matchHP) {
             hpPercent = 100;
             hpText = "";
