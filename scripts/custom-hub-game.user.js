@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.0.8
+// @version      5.0.9
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -85,9 +85,32 @@
         { id: 'scenecard', name: 'Escena suave', desc: 'pixel atenuado' },
         { id: 'gradient', name: 'Degradado',  desc: 'tono del tipo' },
         { id: 'plain',    name: 'Sencillo',   desc: 'azul noche' },
-        { id: 'dither',   name: 'Trama',      desc: 'puntitos' }
+        { id: 'dither',   name: 'Trama',      desc: 'puntitos' },
+        /* Cuatro tramas geometricas mas. Todas repetibles y discretas, del mismo
+           aire plano que el resto: son lineas finas de bajo contraste, para que
+           no compitan con el texto de la card. */
+        { id: 'diagonal', name: 'Diagonales', desc: 'lineas inclinadas' },
+        { id: 'rejilla',  name: 'Rejilla',    desc: 'cuadricula' },
+        { id: 'rombos',   name: 'Rombos',     desc: 'rombo repetido' },
+        { id: 'ondas',    name: 'Ondas',      desc: 'arcos suaves' }
     ]);
     const backgroundById = id => CARD_BACKGROUNDS.find(b => b.id === id) || CARD_BACKGROUNDS[0];
+
+    /* Presets del fondo Degradado.
+
+       Cada uno son dos colores, el de arriba y el de abajo. Estan elegidos para
+       que el texto blanco de la card se lea encima: todos los segundos son
+       oscuros, que es lo que pide la capa de cierre del degradado. */
+    const CC_GRAD_PRESETS = Object.freeze([
+        { name: 'Atardecer', a: '#f97316', b: '#7c3aed' },
+        { name: 'Oceano',    a: '#0ea5e9', b: '#1e3a8a' },
+        { name: 'Bruma',     a: '#94a3b8', b: '#1e293b' },
+        { name: 'Bosque',    a: '#22c55e', b: '#064e3b' },
+        { name: 'Toxico',    a: '#a3e635', b: '#4c1d95' },
+        { name: 'Ascuas',    a: '#ef4444', b: '#450a0a' },
+        { name: 'Hielo',     a: '#67e8f9', b: '#1e40af' },
+        { name: 'Orquidea',  a: '#f472b6', b: '#4c1d95' }
+    ]);
 
     const CC_STAGE_SCRIM = 'linear-gradient(180deg, rgba(7,12,20,.78) 0%, rgba(7,12,20,.66) 55%, rgba(7,12,20,.85) 100%)';
     const CC_STAGE_SCRIM_SOFT = 'linear-gradient(180deg, rgba(7,12,20,.92) 0%, rgba(7,12,20,.86) 55%, rgba(7,12,20,.95) 100%)';
@@ -431,9 +454,20 @@
         };
         const c1 = TYPE_COLORS[main];
         const c2 = TYPE_COLORS[keys[1] || 'normal'];
-        /* Degradado tematico: tonal del primer tipo, mestruje con el segundo y
+        /* El degradado, con los colores elegidos a mano si los hay.
+
+           Vacios significan "sigue al tipo", que es como estaba antes de que esto
+           se pudiera configurar. En cuanto se elige un color, manda el elegido: el
+           ajuste no se pisa solo al cambiar de Pokemon, porque quien lo eligio fue
+           el usuario y no el tipo. */
+        const elegidoA = String(scriptCardPreferences.gradA || '').trim();
+        const elegidoB = String(scriptCardPreferences.gradB || '').trim();
+        const esHex = v => /^#[0-9a-f]{6}$/i.test(v);
+        const colA = esHex(elegidoA) ? elegidoA : c1;
+        const colB = esHex(elegidoB) ? elegidoB : c2;
+        /* Degradado tematico: tonal del primer color, mestruje con el segundo y
            cierre oscuro para que el borde inferior no compita con la card. */
-        const tint = `linear-gradient(165deg, rgba(${toRgb(c1)},.34) 0%, rgba(${toRgb(c2)},.17) 45%, rgba(7,12,20,.92) 100%)`;
+        const tint = `linear-gradient(165deg, rgba(${toRgb(colA)},.34) 0%, rgba(${toRgb(colB)},.17) 45%, rgba(7,12,20,.92) 100%)`;
         /* La escena es una data URL y tiene que ir envuelta en url(...): suelta no es
            una capa de background valida, el navegador descartaria la declaracion
            entera y el fondo se quedaria sin pintar. Si el lienzo no llegara a
@@ -445,6 +479,19 @@
             case 'plain':    return [CC_STAGE_SCRIM, 'linear-gradient(160deg,#12202f 0%,#0b1420 55%,#070c14 100%)'].join(', ');
             case 'dither':   return [CC_STAGE_SCRIM, 'radial-gradient(rgba(148,190,240,.11) 1px, transparent 1px)'].join(', ');
             case 'gradient': return [CC_STAGE_SCRIM, tint].join(', ');
+            /* Tramas geometricas. Todas van DEBAJO del velo de legibilidad (el
+               primero de la lista), igual que los puntitos, para que el texto de
+               la card siga leyendose sobre cualquier fondo. */
+            case 'diagonal': return [CC_STAGE_SCRIM,
+                'repeating-linear-gradient(45deg, rgba(148,190,240,.10) 0 2px, transparent 2px 13px)'].join(', ');
+            case 'rejilla':  return [CC_STAGE_SCRIM,
+                'repeating-linear-gradient(0deg, rgba(148,190,240,.09) 0 1px, transparent 1px 16px)',
+                'repeating-linear-gradient(90deg, rgba(148,190,240,.09) 0 1px, transparent 1px 16px)'].join(', ');
+            case 'rombos':   return [CC_STAGE_SCRIM,
+                'repeating-linear-gradient(60deg, rgba(148,190,240,.10) 0 1px, transparent 1px 15px)',
+                'repeating-linear-gradient(-60deg, rgba(148,190,240,.10) 0 1px, transparent 1px 15px)'].join(', ');
+            case 'ondas':    return [CC_STAGE_SCRIM,
+                'repeating-radial-gradient(circle at 50% 118%, rgba(148,190,240,.11) 0 10px, transparent 10px 24px)'].join(', ');
             case 'scenecard':return [CC_STAGE_SCRIM_SOFT, scene].filter(Boolean).join(', ');
             default:         return [CC_STAGE_SCRIM, scene].filter(Boolean).join(', ');
         }
@@ -560,6 +607,14 @@
            via catch-result.ballId. */
         theme: '3', sprite: 'dream3d', bg: 'none',
         showPct: true, hitFx: true, glow: false, memoOpen: false,
+        /* Fuerza del temblor al recibir un golpe, EN PORCENTAJE. 100 es como
+           estaba. Van separadas la del aliado y la del salvaje porque no molesta
+           igual ver temblar tu card que las del area, que pueden ser varias a la
+           vez. */
+        shakeHero: 100, shakeWild: 100,
+        /* Colores del fondo Degradado. Vacios = se usan los del tipo del Pokemon,
+           que es como estaba. En cuanto se elige uno a mano, manda el elegido. */
+        gradA: '', gradB: '',
         /* Ajustes del escenario 2D. Solo se leen con theme = 'esc'. El modo
            en si ya no es una preferencia: lo decide theme. */
         sceneScroll: true,     /* el fondo y el suelo se desplazan en loop */
@@ -1435,6 +1490,18 @@
         if (!card) return;
         const clase = fuerte ? 'cc-temblor-fuerte' : 'cc-temblor';
         card.classList.remove('cc-temblor', 'cc-temblor-fuerte');
+        /* La fuerza sale del ajuste, y cual de los dos ajustes se usa lo dice la
+           propia card: la del aliado es la de id conocido; cualquier otra es un
+           salvaje. Se lee asi y no por parametro para que no haya que ir pasando
+           el dato por toda la cadena de llamadas. */
+        const esHeroe = card.id === 'my-custom-poke-card';
+        const pct = Number(esHeroe ? scriptCardPreferences.shakeHero
+                                   : scriptCardPreferences.shakeWild);
+        const factor = Number.isFinite(pct) ? Math.max(0, Math.min(200, pct)) / 100 : 1;
+        card.style.setProperty('--cc-shake', String(factor));
+        /* Con la fuerza a cero no se anima: ahorra el trabajo y evita que quede
+           una clase puesta para nada. */
+        if (factor <= 0) { card.classList.remove('cc-temblor', 'cc-temblor-fuerte'); return; }
         /* El reflow vacio reinicia la animacion: sin el, si la clase ya estaba
            puesta el navegador no la vuelve a ejecutar y el segundo golpe
            seguido no se ve. */
@@ -2378,31 +2445,45 @@
             background: #0a1220 !important;
             border: 1px solid #1c3659 !important;
             border-radius: 6px !important;
-            padding: 0 !important; 
+            padding: 0 !important;
             margin: 0 !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
-            transition: all 0.2s ease !important;
+            /* Solo color. Con transition:all se animaba tambien el tamano y la
+               posicion, que es parte de lo que hacia que el dock pareciera
+               moverse al pasar el raton. */
+            transition: background-color .15s ease, border-color .15s ease, color .15s ease !important;
             color: #94a3b8 !important;
             text-decoration: none !important;
-            width: auto !important;  
-            height: auto !important; 
-            min-width: 26px !important;
-            min-height: 26px !important;
-            max-width: 140px !important;
-            max-height: 42px !important;
-            flex: 0 1 auto !important;
+            /* TAMANO UNICO PARA TODOS.
+
+               El dock es flex-wrap y lleva 34 botones. Con ancho automatico y
+               topes de 26 a 42 px, cada uno media lo que le pidiera su
+               contenido: las filas salian desiguales y el punto de salto de
+               linea se movia en cuanto un boton cambiaba de tamano, con lo que
+               parecia que el dock se reordenaba solo. Fijando los 30 px, el
+               salto no puede moverse. */
+            width: 30px !important;
+            height: 30px !important;
+            min-width: 30px !important;
+            min-height: 30px !important;
+            max-width: 30px !important;
+            max-height: 30px !important;
+            flex: 0 0 30px !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
             cursor: pointer !important;
-            position: relative !important; 
+            position: relative !important;
         }
         
         .game-dock > *:hover, .game-dock .dock-btn:hover {
             background: rgba(59, 130, 246, 0.2) !important;
             border-color: #3b82f6 !important;
-            transform: translateY(-2px) !important;
+            /* Sin movimiento: el hover se queda en el color. Subir el boton
+               cambiaba su capa y, con las filas tan justas, se notaba como si la
+               barra se recolocara. */
+            transform: none !important;
             z-index: 100 !important; 
         }
         
@@ -2450,12 +2531,26 @@
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
         }
         /* Hover contenido: el juego lo subia 2px y lo ponia azul brillante, eso
-           era demasiado. Aqui solo se aclara un poco y sube 1px. */
+           era demasiado. Aqui solo se aclara, sin moverlo: un desplazamiento, por
+           pequeno que sea, se nota cuando las filas van tan justas. */
         .game-dock .dock-btn:hover {
             background: rgba(38, 54, 77, 0.62) !important;
             border-color: rgba(148, 178, 214, 0.3) !important;
-            transform: translateY(-1px) !important;
+            transform: none !important;
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
+        }
+        /* Y el icono de dentro tampoco crece.
+
+           El script de mercado tiene una regla de hover que escala el emoji del
+           boton del 8 % (#dock-btn-shops:hover .script-dock-emoji). Como el dock
+           va tan apretado, ese crecimiento se ve como si el boton cambiara de
+           tamano. Aqui se deja plano. No se toca SU hoja: se neutraliza desde la
+           nuestra, asi que si algun dia ellos lo cambian, esto sigue valiendo. */
+        .game-dock .dock-btn:hover img,
+        .game-dock .dock-btn:hover svg,
+        .game-dock .dock-btn:hover .script-dock-emoji,
+        .game-dock .dock-btn:hover span {
+            transform: none !important;
         }
         /* La flecha de plegar no es un boton de accion: se queda en cristal neutro. */
         .game-dock > *:not(.dock-btn):not(.dock-scroll) {
@@ -2693,19 +2788,35 @@
            Se deja el origen de la transformacion abajo porque el natural de la
            regla no es el de la card (cada tema coloca el suyo), y sin fijarlo el
            giro sale alrededor del centro y parece que la card flota. */
+        /* El temblor, con su fuerza en una variable.
+
+           Los fotogramas llevan los angulos de siempre y var(--cc-shake, 1) los
+           multiplica. Asi el ajuste (0 a 200 %) escala el MISMO movimiento en vez
+           de tener dos juegos de fotogramas, que se desincronizarian en cuanto se
+           tocara uno. Con 0 la card no se mueve; con 2 gira el doble. */
         .custom-poke-card.cc-temblor { transform-origin:50% 100%;
             animation:ccTambalear .38s cubic-bezier(.36,.07,.19,.97); }
         .custom-poke-card.cc-temblor-fuerte { transform-origin:50% 100%;
             animation:ccTambalearFuerte .5s cubic-bezier(.36,.07,.19,.97); }
         @keyframes ccTambalear { 0% { transform:rotate(0deg) translateY(0); }
-            18% { transform:rotate(-4.5deg) translateY(-1px); }
-            38% { transform:rotate(3.8deg); } 58% { transform:rotate(-2.6deg); }
-            78% { transform:rotate(1.5deg); } 100% { transform:rotate(0deg); } }
-        @keyframes ccTambalearFuerte { 0% { transform:rotate(0deg) translateY(0); }
-            15% { transform:rotate(-8.5deg) translateY(-2px); }
-            32% { transform:rotate(6.5deg); } 50% { transform:rotate(-4.5deg); }
-            68% { transform:rotate(2.8deg); } 85% { transform:rotate(-1.4deg); }
+            18% { transform:rotate(calc(-4.5deg * var(--cc-shake,1))) translateY(calc(-1px * var(--cc-shake,1))); }
+            38% { transform:rotate(calc(3.8deg * var(--cc-shake,1))); }
+            58% { transform:rotate(calc(-2.6deg * var(--cc-shake,1))); }
+            78% { transform:rotate(calc(1.5deg * var(--cc-shake,1))); }
             100% { transform:rotate(0deg); } }
+        @keyframes ccTambalearFuerte { 0% { transform:rotate(0deg) translateY(0); }
+            15% { transform:rotate(calc(-8.5deg * var(--cc-shake,1))) translateY(calc(-2px * var(--cc-shake,1))); }
+            32% { transform:rotate(calc(6.5deg * var(--cc-shake,1))); }
+            50% { transform:rotate(calc(-4.5deg * var(--cc-shake,1))); }
+            68% { transform:rotate(calc(2.8deg * var(--cc-shake,1))); }
+            85% { transform:rotate(calc(-1.4deg * var(--cc-shake,1))); }
+            100% { transform:rotate(0deg); } }
+        /* Con movimiento reducido no se sacude nada: es movimiento decorativo, no
+           informa de nada que no diga ya la barra de vida. */
+        @media (prefers-reduced-motion:reduce) {
+            .custom-poke-card.cc-temblor,
+            .custom-poke-card.cc-temblor-fuerte { animation:none !important; }
+        }
         @keyframes ccBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 
         .cc-ic { width:1em; height:1em; flex:0 0 auto; stroke:currentColor; fill:none;
@@ -2858,11 +2969,26 @@
         .cc-theme-3 .cc-ribbon { position:absolute; top:7px; left:0; z-index:2; padding:2px 12px 2px 9px;
             font-size:8px; font-weight:800; letter-spacing:.14em; text-transform:uppercase;
             color:#0b1220; background:var(--tier); clip-path:polygon(0 0,100% 0,calc(100% - 7px) 100%,0 100%); }
-        .cc-theme-3 .cc-hp { display:flex; align-items:center; gap:8px; padding:8px 9px 2px; }
-        .cc-theme-3 .cc-hp .k { font-size:9px; font-weight:800; letter-spacing:.1em; color:#8ea5bf; }
-        .cc-theme-3 .cc-hp .cpc-bar-wrapper { flex:1; height:11px;
+        /* Las DOS filas, HP y EXP, se visten igual y en el mismo selector.
+
+           .cc-xprow no tenia NINGUNA regla: el tema solo estilizaba .cc-hp,
+           asi que la fila de experiencia salia sin maquetar. Sin display:flex, el
+           carril (que es un bloque) forzaba salto de linea y el rotulo y el
+           porcentaje se descolgaban, con la tipografia heredada en vez de la de
+           la card. Es el fallo que se veia en la captura.
+
+           Agrupadas, no pueden volver a separarse. */
+        .cc-theme-3 .cc-hp, .cc-theme-3 .cc-xprow {
+            display:flex; align-items:center; gap:8px; padding:8px 9px 2px; }
+        .cc-theme-3 .cc-xprow { padding-top:4px; }
+        .cc-theme-3 .cc-hp .k, .cc-theme-3 .cc-xprow .k {
+            flex:0 0 auto; font-size:9px; font-weight:800; letter-spacing:.1em;
+            color:#8ea5bf; font-family:inherit; text-transform:uppercase; }
+        .cc-theme-3 .cc-hp .cpc-bar-wrapper, .cc-theme-3 .cc-xprow .cpc-bar-wrapper {
+            flex:1; min-width:0; height:11px;
             background:var(--cc-bar-track,#0a1018);
             border:1px solid var(--cc-bar-track-b,rgba(148,178,214,.28)); }
+        .cc-theme-3 .cc-xprow .cpc-bar-wrapper { height:8px; }
         /* Las barras de este tema, con su propia paleta. El marco es de los mas
            planos que hay (superficie opaca y un borde duro), asi que el canal
            tambien: nada de translucidez que deja ver el fondo de la card a
@@ -2870,7 +2996,10 @@
         .cc-theme-3 { --cc-bar-track:#080e16; --cc-bar-track-b:rgba(148,178,214,.3);
             --cc-bar-hp:#22c55e; --cc-bar-hp-mid:#eab308; --cc-bar-hp-low:#ef4444;
             --cc-bar-xp:#3b82f6; --cc-bar-gloss:rgba(255,255,255,.34); }
-        .cc-theme-3 .cc-hp .v { font-size:10.5px; font-weight:800; }
+        .cc-theme-3 .cc-hp .v, .cc-theme-3 .cc-xprow .v {
+            flex:0 0 auto; min-width:46px; text-align:right;
+            font-size:10.5px; font-weight:800; font-family:inherit;
+            color:#dce8f7; font-variant-numeric:tabular-nums; }
         .cc-theme-3 .cpc-stats-grid { grid-template-columns:repeat(3,1fr); margin:7px 9px 0; }
         .cc-theme-3 .cpc-stat-item { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.07); }
         .cc-theme-3 .cc-foot { display:flex; gap:4px; justify-content:center; padding:8px 9px 9px; flex-wrap:wrap; }
@@ -3476,11 +3605,6 @@
         /* CONFIGURACIÓN PROPIA DEL REDISEÁO: vive como pestaña dentro de la
            ventana de ajustes del juego, no como modal propio. */
         .cfg-window .cfg-body > .cc-scale-pane { display:block !important; }
-        .cc-scale-pane .cc-settings-copy {
-            margin:0 !important;padding:12px 4px !important;color:#94a3b8 !important;
-            font-size:11px !important;line-height:1.5 !important;border-bottom:1px solid rgba(148,178,214,.14) !important;
-        }
-        .cc-scale-pane .cc-settings-list { display:grid !important;grid-template-columns:1fr !important;gap:8px !important;padding:12px 0 !important; }
         .cc-scale-row {
             display:grid !important;grid-template-columns:minmax(0,1fr) 96px !important;gap:10px !important;
             align-items:center !important;padding:10px 11px !important;
@@ -3540,16 +3664,6 @@
         .cc-mini-card { zoom:.58; margin:0 !important; pointer-events:none; }
         .cc-mini-card .cc-btn { pointer-events:none; }
 
-        /* acordeones */
-        .cc-accordion { border-top:1px solid rgba(148,178,214,.12); }
-        .cc-accordion > summary { list-style:none; cursor:pointer; padding:9px 11px;
-            display:flex; align-items:center; gap:8px; font-size:11px; font-weight:700; color:#e2e8f0; }
-        .cc-accordion > summary::-webkit-details-marker { display:none; }
-        .cc-accordion > summary::before { content:""; width:0; height:0; flex:0 0 auto;
-            border-left:4px solid #7f96ae; border-top:3.5px solid transparent; border-bottom:3.5px solid transparent;
-            transition:transform .18s ease; }
-        .cc-accordion[open] > summary::before { transform:rotate(90deg); }
-        .cc-accordion > summary .cc-badge { margin-left:auto; }
         .cc-hint { margin:0 11px 8px; font-size:9px; color:#7890a2; line-height:1.4; }
 
         /* rejilla de temas: mini-preview real de cada card */
@@ -3559,9 +3673,27 @@
             border:1px solid rgba(148,178,214,.13); transition:background .15s,border-color .15s; }
         .cc-theme-tile:hover { background:rgba(38,54,77,.7); border-color:rgba(148,178,214,.34); }
         .cc-theme-tile.on { background:rgba(120,180,255,.18); border-color:rgba(140,190,255,.6); }
-        .cc-tt-art { height:46px; display:flex; align-items:flex-end; justify-content:center;
+        /* La casilla ensena la card ENTERA, no solo la cabecera. Con el recorte a
+           46 px y el zoom a .26 se veia el trozo de arriba y el sprite no llegaba
+           a entrar, que es justo lo que se quiere comparar. */
+        .cc-tt-art { height:62px; display:flex; align-items:center; justify-content:center;
             overflow:hidden; width:100%; }
-        .cc-tt-art .cc-mini-card { zoom:.26; }
+        .cc-tt-art .cc-mini-card { zoom:.215; }
+
+        /* Vista previa propia del Escenario 2D, que no es una card: un mini
+           escenario con cielo, suelo y dos Pokemon encima. */
+        .cc-mini-esc { position:relative; width:100%; height:62px; overflow:hidden;
+            border-radius:4px; border:1px solid rgba(148,178,214,.14);
+            background:linear-gradient(180deg,#2b3a5c 0,#4a5f86 46%,#6d7f9e 62%); }
+        .cc-mini-esc-sol { position:absolute; top:7px; right:11px; width:11px; height:11px;
+            border-radius:50%; background:#f2d27a; box-shadow:0 0 10px #f2d27a; }
+        .cc-mini-esc-suelo { position:absolute; left:0; right:0; bottom:0; height:15px;
+            background:linear-gradient(180deg,#d3dae4 0,#9aa6b8 3px,#6d7889 60%,#47505e 100%);
+            box-shadow:0 -2px 4px rgba(0,0,0,.45); }
+        .cc-mini-esc-spr { position:absolute; bottom:11px; width:26px; height:26px;
+            object-fit:contain; }
+        .cc-mini-esc-spr.cc-l { left:24%; }
+        .cc-mini-esc-spr.cc-r { left:56%; }
         .cc-tt-label { font-size:8px; font-weight:700; color:#9fb0c4; text-align:center; line-height:1.15; }
         .cc-theme-tile.on .cc-tt-label { color:#dbe7f5; }
 
@@ -3578,6 +3710,28 @@
         .cc-bg-tile .cc-bt-label { position:absolute; left:0; right:0; bottom:0; padding:3px 4px;
             font-size:8px; font-weight:800; letter-spacing:.04em; text-align:center; color:#e6eef8;
             background:linear-gradient(180deg, rgba(7,12,20,0) 0%, rgba(7,12,20,.92) 60%); }
+
+        /* ---------- colores del fondo Degradado ---------- */
+        .cc-grad { padding:0 11px 11px; }
+        .cc-grad-row { display:flex; align-items:center; gap:8px; }
+        .cc-grad-row .cc-tg-label { flex:0 0 auto; }
+        .cc-grad-color { width:36px; height:24px; padding:0; cursor:pointer;
+            background:transparent; border:1px solid rgba(148,178,214,.3); border-radius:6px; }
+        .cc-grad-color::-webkit-color-swatch-wrapper { padding:2px; }
+        .cc-grad-color::-webkit-color-swatch { border:none; border-radius:3px; }
+        .cc-grad-color::-moz-color-swatch { border:none; border-radius:3px; }
+        .cc-grad-rec { margin-left:auto; padding:5px 10px; border-radius:6px; cursor:pointer;
+            font-size:9.5px; font-weight:800; font-family:inherit; color:#dce8ef;
+            background:rgba(15,23,42,.6); border:1px solid rgba(148,178,214,.22); }
+        .cc-grad-rec:hover { background:rgba(38,54,77,.8); border-color:rgba(148,178,214,.4); }
+        .cc-grad-presets { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
+        .cc-grad-preset { position:relative; height:34px; border-radius:7px; cursor:pointer;
+            border:1px solid rgba(148,178,214,.16); overflow:hidden;
+            display:flex; align-items:flex-end; padding:0; }
+        .cc-grad-preset:hover { border-color:rgba(148,178,214,.45); }
+        .cc-grad-preset.on { border-color:#9dc6ff; box-shadow:inset 0 0 0 1px #9dc6ff; }
+        .cc-grad-preset span { width:100%; padding:2px 4px; font-size:7.5px; font-weight:800;
+            text-align:center; color:#fff; background:rgba(7,12,20,.72); }
         .cc-sprite-tile { position:relative; display:flex; align-items:center; gap:5px; padding:5px; min-width:0;
             border-radius:7px; cursor:pointer; background:rgba(8,13,20,.5);
             border:1px solid rgba(148,178,214,.13); transition:background .15s,border-color .15s; }
@@ -3606,8 +3760,74 @@
             border-radius:50%; background:#94a3b8; transition:transform .18s,background .18s; }
         .cc-toggle.on .cc-switch { background:rgba(96,165,250,.55); border-color:rgba(96,165,250,.7); }
         .cc-toggle.on .cc-switch::after { transform:translateX(16px); background:#fff; }
+        /* Filas de ajuste dentro de las opciones de la card: la etiqueta necesita
+           mas sitio que las del escenario, que son de una palabra. */
+        .cc-opt-field { padding:5px 2px; border-top:1px solid rgba(148,178,214,.09); }
+        .cc-opt-field .cc-tg-label { flex:0 0 104px; }
+        .cc-opt-field .cc-range { flex:1; min-width:0; }
+        .cc-opt-field .cc-tg-desc { min-width:42px; text-align:right; flex:0 0 auto; }
+
         .cc-tg-label { display:block; font-size:10.5px; font-weight:700; color:#dce8ef; line-height:1.25; }
         .cc-tg-desc { display:block; font-size:8.5px; color:#7890a2; margin-top:1px; line-height:1.3; }
+
+        /* ---------- PANEL: PAGINA UNICA CON INDICE FIJO ----------
+           El panel es su PROPIO contenedor de desplazamiento. Asi el indice
+           pegajoso funciona siempre y no depende de que el cuerpo de la ventana
+           del juego scrollee, que no es nuestro. El tope de alto deja sitio para
+           la cabecera y los botones de la ventana. */
+        .cc-scale-pane { position:relative; max-height:min(70vh,640px); overflow-y:auto;
+            overscroll-behavior:contain; scrollbar-width:thin; }
+        .cc-sticky { position:sticky; top:0; z-index:3;
+            background:#0d141e; border-bottom:1px solid rgba(148,178,214,.18); }
+
+        .cc-nav { display:flex; gap:4px; padding:8px 11px 0; flex-wrap:wrap; }
+        .cc-nav-chip { padding:5px 10px; border-radius:999px; cursor:pointer;
+            font-size:10px; font-weight:800; letter-spacing:.04em;
+            color:#9fb0c4; background:rgba(8,13,20,.6);
+            border:1px solid rgba(148,178,214,.16); text-decoration:none; }
+        .cc-nav-chip:hover { background:rgba(38,54,77,.7); color:#dbe7f5; }
+        .cc-nav-chip.on { color:#0b1220; background:#9dc6ff; border-color:#9dc6ff; }
+
+        .cc-sec { padding:2px 0 6px; }
+        .cc-sec-h { margin:0; padding:13px 11px 7px; font-size:11px; font-weight:800;
+            letter-spacing:.08em; text-transform:uppercase; color:#7f96ae; }
+
+        /* Los bloques plegables se ven como las tarjetas de al lado. */
+        .cc-fold { margin-top:8px; }
+        .cc-fold > summary { cursor:pointer; list-style:none; }
+        .cc-fold > summary::-webkit-details-marker { display:none; }
+        .cc-fold > summary::after { content:""; width:0; height:0; margin-left:auto;
+            border-left:4px solid #7f96ae; border-top:3.5px solid transparent;
+            border-bottom:3.5px solid transparent; transition:transform .18s ease; }
+        .cc-fold[open] > summary::after { transform:rotate(90deg); }
+
+        /* Los tamaños, agrupados por zona de la pantalla. */
+        .cc-size-group { margin:0 11px; }
+        .cc-size-group--sep { margin-top:10px; padding-top:10px;
+            border-top:1px solid rgba(148,178,214,.12); }
+        .cc-size-h { margin:0 0 6px; font-size:10px; font-weight:800;
+            letter-spacing:.06em; text-transform:uppercase; color:#8ea5bf; }
+        .cc-sec .cc-scale-row + .cc-scale-row { margin-top:6px; }
+
+        /* Nota del escenario: se ve cuando el modo no es el 2D, para que la
+           seccion no parezca rota con los controles ocultos. */
+        .cc-scene-nota { margin:0; padding:11px; font-size:10px; line-height:1.5;
+            color:#8ea5bf; }
+
+        /* La vista previa, compacta: va pegada arriba y si ocupa mucho se come el
+           sitio de los ajustes. Medido en el panel del juego, con el tamano
+           anterior llegaba a ser un tercio de la altura util. */
+        .cc-sticky .cc-preview { padding:6px 10px 5px; gap:10px; }
+        .cc-sticky .cc-mini-card { zoom:.4; }
+        .cc-nav { padding-top:6px; }
+        .cc-nav-chip { padding:4px 9px; }
+        /* En pantallas bajas la cabecera pegajosa pesa mas: se encoge otra vez. */
+        @media (max-height:780px) {
+            .cc-sticky .cc-mini-card { zoom:.32; }
+            .cc-sticky .cc-preview { padding:4px 10px 3px; }
+        }
+        .cc-build-tag { margin-right:auto; font-style:normal; font-size:9px;
+            color:#5c6f85; align-self:center; }
 
 /* ============================================================
            ESCENARIO 2D  (modo de visualizacion, no un interruptor)
@@ -3884,99 +4104,92 @@
             border-radius:3px; background:#12161f; color:#f4f8fd;
             border:1px solid var(--ac,#fb7185);
             box-shadow:3px 3px 0 rgba(0,0,0,.55); z-index:2;
-            display:flex; flex-direction:column; align-items:stretch; gap:2px; }
+            display:flex; flex-direction:column; align-items:stretch; gap:2px;
+            /* ANCHO MINIMO Y MAXIMO DEL CARTEL.
+
+               El minimo es lo que garantiza que el carril tenga siempre 72 px o
+               mas: 108 menos el rotulo HP, los espacios y el relleno deja el
+               carril por encima de esa cifra. El maximo evita que un nombre largo
+               estire el cartel por toda la escena; a partir de ahi, el nombre se
+               mueve con la marquesina en vez de ensanchar la barra. */
+            box-sizing:border-box; min-width:108px; max-width:146px; }
         /* El texto va en un <b> propio para poder reescribirlo sin cargarse la
            punta de abajo ni las barras. */
         /* La fila agrupa nombre y nivel: una linea, centrada, y por debajo las barras.
            Sin ella el nivel caeria en su propia linea y el recuadro se mediria
-           por el texto mas corto de los dos. */
-        .cc-nmrow { display:flex; justify-content:center; align-items:baseline; gap:4px; }
-        .cc-esc-nmtxt { font-weight:inherit; }
+           por el texto mas corto de los dos.
+
+           RECORTA: si el nombre no cabe, se corta y se mueve en vez de empujar el
+           cartel y con el la barra. */
+        .cc-nmrow { display:flex; justify-content:center; align-items:baseline;
+            gap:4px; overflow:hidden; max-width:100%; }
+        .cc-esc-nmtxt { font-weight:inherit; white-space:nowrap; }
+        .cc-nmlv { white-space:nowrap; }
+        /* LA MARQUESINA la enciende el script, y solo cuando el texto desborda de
+           verdad: si cabe, no se mueve nada. El recorrido va en --cc-marq, que el
+           script calcula como los pixeles que sobran (en negativo). */
+        .cc-nmrow.cc-marquesina { justify-content:flex-start; }
+        .cc-nmrow.cc-marquesina .cc-esc-nmtxt,
+        .cc-nmrow.cc-marquesina .cc-nmlv {
+            animation:ccMarquesina 5s linear infinite alternate; }
+        @keyframes ccMarquesina {
+            0%, 10% { transform:translateX(0); }
+            90%, 100% { transform:translateX(var(--cc-marq,0px)); } }
+        /* Con movimiento reducido no se mueve: se deja el recorte. Es preferible
+           un nombre cortado a una linea desplazandose sola. */
+        @media (prefers-reduced-motion:reduce) {
+            .cc-nmrow.cc-marquesina .cc-esc-nmtxt,
+            .cc-nmrow.cc-marquesina .cc-nmlv { animation:none; transform:none; }
+        }
         /* El nivel va detras del nombre. Mismo motivo que el texto: hijo aparte
            para poder reescribirlo sin tocar lo de al lado. */
         .cc-nmlv { font-weight:inherit; color:#93a7bd; font-size:9.5px; }
 
-        /* BARRAS DEL ESCENARIO — MEDIDOR SEGMENTADO
-           ---------------------------------------
-           El estilo que se pidio: segmentos EN DIAGONAL, relleno solido con
-           brillo alrededor, y una LINEA FINA debajo de cada barra. No es una
-           pastilla lisa con un relleno continuo, que es lo que habia.
+        /* BARRAS DEL ESCENARIO - PLANAS, CON ANCHO MINIMO GARANTIZADO
+           ---------------------------------------------------------
+           Se pidio pasar del medidor segmentado con brillo a un estilo mas plano.
 
-           Todo se consigue con gradientes repetidos en diagonal y nada de
-           imagenes. Tres piezas:
+           Ahora: carril de una sola pieza, con borde fino y relleno SOLIDO del
+           color del tipo. Sin segmentos en diagonal y sin brillo alrededor. La
+           unica concesion al original es la linea fina de debajo, que se queda
+           porque separa la barra del fondo sin ser un efecto.
 
-             - el CARRIL dibuja las rayas claras de los segmentos VACIOS sobre
-               fondo muy oscuro: es lo que da el aire de medidor segmentado;
-             - el RELLENO dibuja segmentos del color del tipo con un hueco oscuro
-               entre uno y otro, y lleva un brillo alrededor;
-             - la LINEA de debajo es un ::after del propio renglon.
+           ANCHO MINIMO. La etiqueta lleva min-width (108 px) y max-width (146).
+           Con el rotulo HP a la izquierda y los espacios, al carril le quedan
+           SIEMPRE 72 px o mas: una barra mas corta no deja leer el progreso.
 
-           El angulo es 115 grados, NO 45. En el original los segmentos van casi
-           verticales, inclinados hacia la derecha. La inclinacion sale de
-           quedarse cerca de 90 grados (vertical); a 45 saldrian a mitad de
-           camino y el resultado seria otro.
+           El nombre, si no cabe en ese ancho, se mueve con una marquesina. Asi se
+           lee entero SIN tocar el tamano de la barra, que es lo que se pedia. La
+           clase que la enciende la pone el script, que es el unico que puede
+           medir si el texto desborda.
 
-           El carril no recorta (overflow visible) porque el brillo del relleno
-           tiene que poder salir por los lados. El relleno siempre mide lo mismo
-           o menos que el carril, asi que no se sale.
-
-           HP: la llevan todos (aliado + salvajes). Color = tipo principal del
-           Pokemon, via --cc-bar-fill.
-           XP: solo el aliado. Algo mas fina y siempre azul.
+           HP: la llevan todos. Color = tipo principal, via --cc-bar-fill.
+           XP: solo el aliado, mas fina y azul.
            Critico (25 % o menos): el relleno pasa a rojo. */
         .cc-bar-line { position:relative; display:flex; align-items:center;
-            gap:5px; width:100%; padding-bottom:4px; }
-        .cc-bar-line + .cc-bar-line { margin-top:4px; }
+            gap:5px; width:100%; padding-bottom:3px; }
+        .cc-bar-line + .cc-bar-line { margin-top:3px; }
 
-        /* La linea fina de debajo, del color del indicador del original. Se apaga
-           hacia la derecha para no competir con el relleno. */
+        /* La linea de debajo: un solo tono apagado, no un degradado. */
         .cc-bar-line::after { content:""; position:absolute; left:0; right:0; bottom:0;
-            height:2px;
-            background:linear-gradient(90deg,#f5b301 0,#f97316 45%,
-                       rgba(249,115,22,.42) 78%,rgba(249,115,22,0) 100%); }
+            height:1px; background:rgba(245,179,1,.5); }
 
         .cc-bar-tag { flex:0 0 auto; font-size:8px; font-weight:800;
-            font-style:italic; letter-spacing:.06em; color:#e8eefc;
-            text-transform:uppercase; font-family:inherit; }
+            letter-spacing:.06em; color:#c8d6e6; text-transform:uppercase;
+            font-family:inherit; }
 
-        /* El carril: los segmentos SIN rellenar. Rayas claras finas sobre fondo
-           oscuro. Las dos rayas por periodo son los dos cantos de cada segmento,
-           que es como se lee el original: huecos con contorno. */
         .cc-nmbar { position:relative; flex:1 1 auto; min-width:0; display:block;
-            height:9px; border-radius:0; overflow:visible;
-            background-color:#0b1017;
-            background-image:
-                repeating-linear-gradient(115deg,
-                    rgba(255,255,255,.26) 0 1px,
-                    transparent 1px 5px,
-                    rgba(255,255,255,.12) 5px 6px,
-                    transparent 6px 10px);
-            box-shadow:inset 0 0 0 1px rgba(255,255,255,.07); }
-
-        /* El relleno: segmentos del color del tipo, con hueco oscuro entre uno y
-           otro, y un brillo alrededor. El color sale de --cc-bar-fill.
-           Mismo angulo y mismo periodo que el carril (115 grados, 9 px), asi que
-           los huecos del relleno caen encima de las rayas del carril y el
-           conjunto se lee como UNA fila de segmentos que se va llenando. */
-        .cc-nmbar i { display:block; height:100%; width:0; border-radius:0;
-            background-image:
-                repeating-linear-gradient(115deg,
-                    var(--cc-bar-fill,#22c55e) 0 7px,
-                    rgba(5,8,13,.92) 7px 10px);
-            box-shadow:0 0 9px 0 var(--cc-bar-fill,#22c55e);
+            height:8px; border-radius:2px; overflow:hidden;
+            background:#0a1018; border:1px solid rgba(255,255,255,.10); }
+        .cc-nmbar i { display:block; height:100%; width:0; border-radius:1px;
+            background:var(--cc-bar-fill,#22c55e);
             transition:width .18s ease-out; }
-
-        /* Critico: al 25 % o menos el relleno pasa a rojo. Se cambia la VARIABLE
-           y no background, porque el fondo es un patron: pisarlo con un color
-           plano dejaria los huecos del patron del color del tipo. */
+        /* Critico: al 25 % o menos el relleno pasa a rojo. */
         .cc-nmbar i.cc-crit { --cc-bar-fill:#ef4444; }
-
-        /* La de VIDA: la mas gruesa. No declara color: lo pone el tipo. Esta
-           regla existe para darle su altura y para que la clase quede declarada
-           donde se lee. */
-        .cc-nmbar-hp { height:9px; }
-        /* XP: solo el aliado. Algo mas fina y azul fijo. */
-        .cc-nmbar-xp { height:8px; --cc-bar-fill:#3b82f6; }
+        /* La de VIDA: no declara color, lo pone el tipo. */
+        .cc-nmbar-hp { height:8px; }
+        /* XP: solo el aliado, mas fina y azul fijo. */
+        .cc-nmbar-xp { height:6px; --cc-bar-fill:#3b82f6; }
 
         /* La punta del cartel, del color del marco, para que se vea de donde
            sale el nombre. Sin difuminado: es un triangulo opaco. */
@@ -4257,7 +4470,6 @@
             100% { opacity:0; transform:translate(var(--sx), var(--sy)) scale(.3); } }
 
         @media (max-width:700px) {
-            .cc-scale-pane .cc-settings-list { grid-template-columns:1fr !important; }
             .cc-theme-grid { grid-template-columns:repeat(3,1fr); }
             .cc-sprite-grid { grid-template-columns:repeat(3,1fr); }
         }
@@ -4312,14 +4524,43 @@
        pestaña se vuelve a inyectar en cada refresco. */
     const SCRIPT_TAB_KEY = 'script-cc-tab';
     const SCRIPT_TAB_HIDDEN = 'ccTabHidden';
+    /* Para reponer la pestaña si el juego reconstruye la barra: se vigila el
+       contenedor y se vuelve a colocar en su sitio. Se guardan el observador y el
+       nodo observado para no dejar uno vivo sobre un contenedor que ya no esta. */
+    let tabsObserver = null;
+    let tabsObserved = null;
 
-    function ccPreviewMarkup(isMob) {
+    /* Vista previa de una card.
+
+       `themeForzado` es el tema de la CASILLA que se esta pintando, NO el activo.
+       Antes ese parametro no existia y la funcion leia siempre
+       scriptCardPreferences.theme, asi que las 8 casillas de la rejilla de temas
+       ensenaban todas la misma card: la del tema puesto en ese momento. No
+       servian para elegir, porque no se veia como quedaba cada estilo.
+
+       Para el tema `esc` no hay card que pintar (no es un tema de card: su clase
+       va vacia), asi que tiene su propia vista: un mini escenario de plataformas
+       con suelo y dos sprites. Antes caia en el `default` de ccThemeMarkup, que
+       devuelve el marcado del tema 7 SIN sus estilos, y salia una card desnuda. */
+    function ccPreviewMarkup(isMob, themeForzado) {
         const sample = {
             name: 'Golem', level: 324, iv: 152, power: 7047,
             stats: { hp: 728, atk: 841, def: 911, spa: 586, spd: 606, vel: 418 }
         };
-        const theme = themeById(scriptCardPreferences.theme);
+        const theme = themeForzado || themeById(scriptCardPreferences.theme);
         const tier = getTierInfo(1.8);
+
+        /* El escenario no es una card: tiene su propia vista previa. */
+        if (!isMob && theme.id === 'esc') {
+            const url = id => spriteById(scriptCardPreferences.sprite).url(id);
+            return `<div class="cc-mini-esc">
+                <span class="cc-mini-esc-sol"></span>
+                <span class="cc-mini-esc-suelo"></span>
+                <img class="cc-mini-esc-spr cc-l" src="${url(76)}" alt="Golem">
+                <img class="cc-mini-esc-spr cc-r" src="${url(6)}" alt="Charizard">
+            </div>`;
+        }
+
         if (isMob) {
             return `<div class="cc-mini-card custom-poke-card cc-mob ${theme.cls}" style="--tier:#ef4444">
                 <div class="cc-mob-name">Charizard</div>
@@ -4330,8 +4571,12 @@
                 </div></div>`;
         }
         const p = { ...sample, speciesId: 76, shiny: true };
+        /* Los tipos van en serio. Antes ponia ['poke-xp'], que no es un tipo sino
+           el nombre del evento de socket que se colo como tipo en una version
+           anterior; ccTypesHtml lo descarta y la vista previa salia sin insignias
+           y sin el color del tipo. El ejemplo es un Golem: ROCA/TIERRA. */
         return `<div class="cc-mini-card custom-poke-card ${theme.cls} ${scriptCardPreferences.memoOpen ? 'open' : ''}" style="--tier:${tier.color}">${ccThemeMarkup(theme.id, {
-            p, stats: sample.stats, tierInfo: tier, types: ['poke-xp'],
+            p, stats: sample.stats, tierInfo: tier, types: ['ROCK', 'GROUND'],
             level: sample.level, iv: sample.iv, power: sample.power, hpPct: 72
         })}</div>`;
     }
@@ -4346,73 +4591,147 @@
         });
     }
 
+    /* Las 8 zonas de la interfaz, agrupadas por DONDE estan en pantalla y no por
+       el orden en que se dieron de alta. Cuando quieres agrandar algo sabes donde
+       esta, no como se llama su clave, asi que el panel se ordena como la pantalla
+       y no como el codigo. */
+    const CC_SIZE_GROUPS = [
+        { title: 'Panel del jugador', keys: ['hud', 'battle', 'helper'] },
+        { title: 'Pantalla de juego', keys: ['dock', 'enemy', 'capture'] },
+        { title: 'Avisos',            keys: ['victory', 'events'] }
+    ];
+
     function buildScriptSettingsBody() {
         const wrap = document.createElement('div');
         wrap.className = 'cc-scale-pane';
-        /* Sello de version. Permite comprobar desde la consola que la copia
-           que se esta ejecutando es la del archivo en disco, porque con
-           Tampermonkey el resincronizado del archivo no siempre es inmediato. */
+        /* Sello de version. Permite comprobar desde la consola que la copia que
+           se esta ejecutando es la del archivo en disco, porque con Tampermonkey
+           el resincronizado del archivo no siempre es inmediato. */
         wrap.dataset.ccBuild = CARD_BUILD;
+
+        /* PAGINA UNICA CON INDICE FIJO.
+
+           Se probaron los grupos en pestañas y se descartaron: escondian la mitad
+           de los ajustes y volvian a obligar a buscar. Aqui esta todo a la vista,
+           arriba hay un indice que salta a cada bloque y se marca solo segun te
+           desplazas, y la vista previa queda pegada arriba para que se vea el
+           efecto de lo que tocas sin subir.
+
+           El panel es su PROPIO contenedor de desplazamiento (max-height +
+           overflow en el CSS). Asi el sticky funciona siempre y no depende de que
+           el cuerpo de la ventana del juego scrollee, que no es cosa nuestra. */
         wrap.innerHTML = `
-            <p class="cc-settings-copy">Personaliza el aspecto de las cards del modo Card y ajusta el tamaño de cada parte rediseñada. Si una escala no cabe en la pantalla, el ajuste responsivo la reduce únicamente lo necesario.</p>
-
-            <section class="cc-card-block">
-                <header class="cc-card-block-h">
-                    <svg class="cc-ic" viewBox="0 0 24 24"><path d="M14.5 3H21v6.5L11 19.5 4.5 13zM3 21l4-4M7 17l-2 2"/></svg>
-                    <span>Card mode</span>
-                    <em class="cc-badge" data-cc-theme-badge></em>
-                </header>
-
+            <div class="cc-sticky">
+                <nav class="cc-nav" data-cc-nav aria-label="Secciones de los ajustes">
+                    <a class="cc-nav-chip" href="#sec-aspecto">Card</a>
+                    <a class="cc-nav-chip" href="#sec-escenario">Escenario</a>
+                    <a class="cc-nav-chip" href="#sec-tamanos">Tamaños</a>
+                </nav>
                 <div class="cc-preview" data-cc-preview></div>
+            </div>
 
-                <details class="cc-accordion" open>
-                    <summary>Tema de la card<em data-cc-theme-badge></em></summary>
-                    <p class="cc-hint">Elige la silueta. El borde y el color siguen al tier del Pokémon.</p>
+            <section class="cc-sec" id="sec-aspecto">
+                <h3 class="cc-sec-h">Card</h3>
+
+                <section class="cc-card-block">
+                    <header class="cc-card-block-h">
+                        <svg class="cc-ic" viewBox="0 0 24 24"><path d="M14.5 3H21v6.5L11 19.5 4.5 13zM3 21l4-4M7 17l-2 2"/></svg>
+                        <span>Tema</span>
+                        <em class="cc-badge" data-cc-theme-badge></em>
+                    </header>
                     <div class="cc-theme-grid" data-cc-themes></div>
-                </details>
+                </section>
 
-                <details class="cc-accordion" open>
-                    <summary>Versión de imagen<em data-cc-sprite-badge></em></summary>
-                    <p class="cc-hint">Fuente del sprite. Las dos con punto verde son animadas.</p>
+                <details class="cc-card-block cc-fold" open>
+                    <summary class="cc-card-block-h">Versión de imagen
+                        <em class="cc-badge" data-cc-sprite-badge></em></summary>
+                    <p class="cc-hint">Fuente del sprite. Las dos que llevan punto verde son animadas.</p>
                     <div class="cc-sprite-grid" data-cc-sprites></div>
                 </details>
 
-                <details class="cc-accordion">
-                    <summary>Fondo del escenario<em data-cc-bg-badge></em></summary>
+                <details class="cc-card-block cc-fold">
+                    <summary class="cc-card-block-h">Fondo
+                        <em class="cc-badge" data-cc-bg-badge></em></summary>
                     <p class="cc-hint">Fondo de la pantalla en modo Card. Los colores y el pixel art salen del tipo del Pokémon equipado.</p>
                     <div class="cc-bg-grid" data-cc-bgs></div>
+
+                    <div class="cc-grad" data-cc-grad>
+                        <div class="cc-grad-row">
+                            <span class="cc-tg-label">Colores</span>
+                            <input type="color" class="cc-grad-color" data-cc-grad-a aria-label="Color de arriba del degradado">
+                            <input type="color" class="cc-grad-color" data-cc-grad-b aria-label="Color de abajo del degradado">
+                            <button type="button" class="cc-grad-rec" data-cc-grad-rec>Recomendado</button>
+                        </div>
+                        <div class="cc-grad-presets" data-cc-grad-presets></div>
+                        <p class="cc-hint">Solo afectan al fondo Degradado. «Recomendado» toma los colores del tipo del Pokémon equipado.</p>
+                    </div>
                 </details>
 
-                <details class="cc-accordion">
-                    <summary>Escenario 2D</summary>
-                    <p class="cc-hint">Una vista de plataformas aparte de las cards. Apagada, no cambia nada de lo que hay.</p>
-                    <div class="cc-scene-box" data-cc-scene></div>
-                </details>
-
-                <details class="cc-accordion">
-                    <summary>Opciones</summary>
+                <details class="cc-card-block cc-fold">
+                    <summary class="cc-card-block-h">Opciones de la card</summary>
                     <div class="cc-toggles" data-cc-toggles></div>
                 </details>
             </section>
 
-            <p class="cc-settings-copy" style="margin-top:14px">Tamaño de cada zona</p>
-            <div class="cc-settings-list">
-                ${SCRIPT_SCALE_AREAS.map(area => `
-                    <label class="cc-scale-row">
-                        <span><b>${area.label}</b><p>${area.description}</p>
-                            <em class="cc-scale-status" data-scale-effective="${area.key}"></em></span>
-                        <span class="cc-scale-control">
-                            <select data-scale-key="${area.key}" aria-label="Tamaño de ${area.label}">
-                                ${SCRIPT_SCALE_OPTIONS.map(value => `<option value="${value}">${value}%</option>`).join('')}
-                            </select>
-                        </span>
-                    </label>`).join('')}
-            </div>
-            <footer class="cc-settings-actions"><button class="cc-settings-reset" type="button">Restablecer 100%</button></footer>`;
+            <section class="cc-sec" id="sec-escenario">
+                <h3 class="cc-sec-h">Escenario 2D</h3>
+                <div class="cc-card-block">
+                    <div class="cc-scene-box" data-cc-scene></div>
+                </div>
+            </section>
 
-        /* ---------- vista previa ---------- */
+            <section class="cc-sec" id="sec-tamanos">
+                <h3 class="cc-sec-h">Tamaños de la interfaz</h3>
+                <div data-cc-sizes></div>
+            </section>
+
+            <footer class="cc-settings-actions">
+                <em class="cc-build-tag">build ${CARD_BUILD}</em>
+                <button class="cc-settings-reset" type="button" data-cc-reset-aspecto>Restablecer aspecto</button>
+                <button class="cc-settings-reset" type="button" data-cc-reset-tamanos>Restablecer tamaños</button>
+            </footer>`;
+
         const preview = wrap.querySelector('[data-cc-preview]');
         ccRenderPreview(preview);
+
+        /* ---------- constructores unicos ----------
+           Habia CUATRO patrones distintos para dos conceptos: interruptor y
+           ajuste con valor. Y los interruptores del escenario se construian SIN
+           el .cc-switch, que es lo unico que pinta el estado, asi que no se veia
+           si estaban encendidos. Aqui se unifica todo en dos constructores. */
+
+        /* Un interruptor. Siempre con su .cc-switch. */
+        const mkToggle = (option) => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'cc-toggle' + (scriptCardPreferences[option.key] ? ' on' : '');
+            row.dataset.ccToggle = option.key;
+            row.setAttribute('role', 'switch');
+            row.setAttribute('aria-checked', String(!!scriptCardPreferences[option.key]));
+            row.innerHTML = `<span class="cc-tx"><b>${option.label}</b><i>${option.desc}</i></span><span class="cc-switch"></span>`;
+            row.addEventListener('click', () => {
+                scriptCardPreferences[option.key] = !scriptCardPreferences[option.key];
+                saveCardPreferences();
+                const on = !!scriptCardPreferences[option.key];
+                row.classList.toggle('on', on);
+                row.setAttribute('aria-checked', String(on));
+                /* Cada interruptor dice que hay que refrescar al cambiar. */
+                if (typeof option.after === 'function') option.after(on);
+            });
+            return row;
+        };
+
+        /* Una fila de ajuste: etiqueta a la izquierda y el control a continuacion.
+           El valor lo añade quien la usa. */
+        const mkField = (label) => {
+            const row = document.createElement('div');
+            row.className = 'cc-esc-field';
+            const lbl = document.createElement('span');
+            lbl.className = 'cc-tg-label';
+            lbl.textContent = label;
+            row.appendChild(lbl);
+            return row;
+        };
 
         /* ---------- temas ---------- */
         const themeGrid = wrap.querySelector('[data-cc-themes]');
@@ -4421,7 +4740,10 @@
             tile.type = 'button';
             tile.className = `cc-theme-tile${theme.id === scriptCardPreferences.theme ? ' on' : ''}`;
             tile.dataset.ccTheme = theme.id;
-            tile.innerHTML = `<span class="cc-tt-art">${ccPreviewMarkup(false)}</span><span class="cc-tt-label">${theme.name}</span>`;
+            /* Se le pasa SU tema, no el activo: antes todas las casillas pintaban
+               la card del tema puesto y no servian para elegir. */
+            tile.innerHTML = `<span class="cc-tt-art">${ccPreviewMarkup(false, theme)}</span><span class="cc-tt-label">${theme.name}</span>`;
+            tile.title = `${theme.name} · ${theme.desc}`;
             tile.addEventListener('click', () => {
                 scriptCardPreferences.theme = theme.id;
                 saveCardPreferences();
@@ -4455,7 +4777,7 @@
             spriteGrid.appendChild(tile);
         });
 
-        /* ---------- fondos del escenario ---------- */
+        /* ---------- fondos ---------- */
         const bgGrid = wrap.querySelector('[data-cc-bgs]');
         CARD_BACKGROUNDS.forEach(bg => {
             const tile = document.createElement('button');
@@ -4478,55 +4800,136 @@
             bgGrid.appendChild(tile);
         });
 
-/* ---------- escenario 2D ----------
-           El 2D es un valor mas de `theme`, asi que ya no hay interruptor
-           propio: se elige en la rejilla de arriba y estos son sus ajustes.
-           Se ocultan cuando el modo no es el 2D, para no ensuciar el panel. */
-        const sceneOpts = document.createElement('div');
-        sceneOpts.className = 'cc-scene-opts';
-        [
-            { key: 'sceneScroll', label: 'Escenario en marcha',
-              desc: 'El fondo y el suelo se desplazan en loop.' },
-            { key: 'sceneWalk', label: 'Caminata de los sprites',
-              desc: 'Solo con los estilos GIF animados.' },
-            { key: 'sceneSuelo', label: 'Suelo de HTML',
-              desc: 'La banda de piedra que tapa el terreno de la foto. Apagada se ve la imagen limpia.' },
-            { key: 'sceneGuia', label: 'Ver medidas',
-              desc: 'La linea de suelo y las marcas de medicion.' }
-        ].forEach(option => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = `cc-toggle${scriptCardPreferences[option.key] ? ' on' : ''}`;
-            row.dataset.ccToggle = option.key;
-            row.innerHTML = `<span class="cc-tg-label">${option.label}</span><span class="cc-tg-desc">${option.desc}</span>`;
-            row.addEventListener('click', () => {
-                scriptCardPreferences[option.key] = !scriptCardPreferences[option.key];
+        /* ---------- colores del degradado ----------
+           Dos selectores de color, un boton de recomendado y la rejilla de presets.
+           Afectan solo al fondo Degradado. */
+        const gradA = wrap.querySelector('[data-cc-grad-a]');
+        const gradB = wrap.querySelector('[data-cc-grad-b]');
+        const gradPresets = wrap.querySelector('[data-cc-grad-presets]');
+        const esColor = v => /^#[0-9a-f]{6}$/i.test(String(v || ''));
+        /* El color del tipo, que es lo que se propone por defecto. */
+        const coloresDelTipo = () => {
+            const keys = ccStageTypeList().map(ccTypeKey).filter(Boolean);
+            return [TYPE_COLORS[keys[0] || 'normal'], TYPE_COLORS[keys[1] || 'normal']];
+        };
+        /* Los selectores nunca se quedan vacios: si no hay color elegido muestran
+           el del tipo, que es el que se esta viendo en pantalla. */
+        const pintarSelectores = () => {
+            const [a, b] = coloresDelTipo();
+            gradA.value = esColor(scriptCardPreferences.gradA) ? scriptCardPreferences.gradA : a;
+            gradB.value = esColor(scriptCardPreferences.gradB) ? scriptCardPreferences.gradB : b;
+        };
+        const aplicarColor = (key, valor) => {
+            scriptCardPreferences[key] = valor;
+            saveCardPreferences();
+            applyCardPreferences();
+        };
+        gradA.addEventListener('input', () => aplicarColor('gradA', gradA.value));
+        gradB.addEventListener('input', () => aplicarColor('gradB', gradB.value));
+        wrap.querySelector('[data-cc-grad-rec]').addEventListener('click', () => {
+            /* Recomendado = volver al color del tipo. Vaciar los dos ajustes es
+               exactamente decir "sigue al tipo", y ademas hace que el degradado
+               siga cambiando con el Pokemon, que es la gracia de la sugerencia. */
+            scriptCardPreferences.gradA = '';
+            scriptCardPreferences.gradB = '';
+            saveCardPreferences();
+            pintarSelectores();
+            applyCardPreferences();
+        });
+        CC_GRAD_PRESETS.forEach(preset => {
+            const tile = document.createElement('button');
+            tile.type = 'button';
+            tile.className = 'cc-grad-preset';
+            tile.dataset.ccGradPreset = preset.name;
+            tile.title = preset.name;
+            /* La muestra es el degradado de verdad, asi se ve antes de elegirlo. */
+            tile.style.backgroundImage = `linear-gradient(160deg, ${preset.a}, ${preset.b})`;
+            tile.innerHTML = `<span>${preset.name}</span>`;
+            tile.addEventListener('click', () => {
+                scriptCardPreferences.gradA = preset.a;
+                scriptCardPreferences.gradB = preset.b;
                 saveCardPreferences();
-                row.classList.toggle('on', scriptCardPreferences[option.key]);
-                if (!escenaActiva()) return;
-                if (option.key === 'sceneScroll') {
-                    /* El loop se congela quitando la clase, no cambiando la
-                       duracion: asi al volver a encender no reinicia el
-                       recorrido desde el principio. */
-                    const col = sceneState.col;
-                    if (col) scenePausarSegunAjuste();
-                }
-                if (option.key === 'sceneSuelo') {
-                    document.body?.classList.toggle('cc-esc-suelo-off', !scriptCardPreferences.sceneSuelo);
-                }
-                if (option.key === 'sceneGuia') {
-                    document.body?.classList.toggle('cc-esc-guia-on', !!scriptCardPreferences.sceneGuia);
-                }
-                if (option.key === 'sceneWalk') sceneSpriteHunters(sceneState.hunters);
+                pintarSelectores();
+                applyCardPreferences();
             });
-            sceneOpts.appendChild(row);
+            gradPresets.appendChild(tile);
+        });
+        pintarSelectores();
+
+        /* ---------- opciones de la card ---------- */
+        const togglesHost = wrap.querySelector('[data-cc-toggles]');
+        [
+            { key: 'showPct', label: 'Mostrar % de HP en la enemiga',
+              desc: 'Hoy la card del enemigo no enseña la proporción de vida.' },
+            { key: 'hitFx', label: 'Efecto de golpe y daño',
+              desc: 'La card entera avanza al golpear y se sacude al recibir daño.' },
+            { key: 'glow', label: 'Halo de color en el borde',
+              desc: 'Resplandor del tier. Desactivado por defecto.' },
+            { key: 'memoOpen', label: 'Recordar card desplegada',
+              desc: 'Solo afecta al tema compacto.' }
+        ].forEach(option => {
+            togglesHost.appendChild(mkToggle({
+                key: option.key, label: option.label, desc: option.desc,
+                after: () => applyCardPreferences()
+            }));
         });
 
-        /* Pantalla, cuanto hay en el area y velocidad: un selector y cuatro
-           deslizadores. */
-        const sizeRow = document.createElement('div');
-        sizeRow.className = 'cc-esc-field';
-        sizeRow.innerHTML = `<span class="cc-tg-label">Pantalla</span>`;
+        /* ---------- fuerza del temblor ----------
+           Dos deslizadores, uno por card. Van aqui, con las opciones de la card, y
+           no en el escenario: lo que ajustan es el golpe de las cards. */
+        const mkDeslizador = (host, key, label, min, max) => {
+            const row = mkField(label);
+            row.classList.add('cc-opt-field');
+            const rng = document.createElement('input');
+            rng.type = 'range';
+            rng.className = 'cc-range';
+            rng.dataset.ccRange = key;
+            rng.min = min; rng.max = max;
+            rng.value = scriptCardPreferences[key];
+            const val = document.createElement('span');
+            val.className = 'cc-tg-desc';
+            val.textContent = rng.value + '%';
+            rng.addEventListener('input', () => {
+                scriptCardPreferences[key] = Number(rng.value);
+                val.textContent = rng.value + '%';
+                saveCardPreferences();
+            });
+            row.append(rng, val);
+            host.appendChild(row);
+        };
+        mkDeslizador(togglesHost, 'shakeHero', 'Temblor: tu card', 0, 200);
+        mkDeslizador(togglesHost, 'shakeWild', 'Temblor: salvajes', 0, 200);
+
+        /* ---------- escenario 2D ----------
+           El 2D es un valor mas de `theme`, asi que no hay interruptor propio: se
+           elige en la rejilla de temas. Estos son sus ajustes, y se ocultan
+           cuando el modo no es el escenario. La nota se queda visible para que la
+           seccion no parezca vacia cuando esta apagado. */
+        const sceneOpts = document.createElement('div');
+        sceneOpts.className = 'cc-scene-opts';
+
+        [
+            { key: 'sceneScroll', label: 'Escenario en marcha',
+              desc: 'El fondo y el suelo se desplazan en loop.',
+              after: () => { const col = sceneState.col; if (col) scenePausarSegunAjuste(); } },
+            { key: 'sceneWalk', label: 'Caminata de los sprites',
+              desc: 'Solo con los estilos GIF animados.',
+              after: () => sceneSpriteHunters(sceneState.hunters) },
+            { key: 'sceneSuelo', label: 'Suelo de piedra',
+              desc: 'La banda que tapa el terreno de la foto. Apagada se ve la imagen limpia.',
+              after: on => document.body?.classList.toggle('cc-esc-suelo-off', !on) },
+            { key: 'sceneGuia', label: 'Ver medidas',
+              desc: 'La linea de suelo y las marcas de medicion.',
+              after: on => document.body?.classList.toggle('cc-esc-guia-on', !!on) }
+        ].forEach(option => {
+            sceneOpts.appendChild(mkToggle({
+                key: option.key, label: option.label, desc: option.desc,
+                after: on => { if (escenaActiva()) option.after(on); }
+            }));
+        });
+
+        /* Pantalla: recuadro centrado o completa. */
+        const sizeRow = mkField('Pantalla');
         const sizeSel = document.createElement('select');
         sizeSel.className = 'cc-select';
         [['recuadro', 'Recuadro centrado'], ['full', 'Pantalla completa']].forEach(([v, t]) => {
@@ -4544,11 +4947,7 @@
         sceneOpts.appendChild(sizeRow);
 
         const mkRange = (key, label, min, max, sufijo) => {
-            const row = document.createElement('div');
-            row.className = 'cc-esc-field';
-            const lbl = document.createElement('span');
-            lbl.className = 'cc-tg-label';
-            lbl.textContent = label;
+            const row = mkField(label);
             const rng = document.createElement('input');
             rng.type = 'range';
             rng.className = 'cc-range';
@@ -4570,54 +4969,77 @@
                    cualquiera de los dos tiene que recalcular los dos. */
                 if (key === 'sceneWidth' || key === 'sceneHeight') sceneAjustarTamano();
                 if (key === 'sceneSpeed') sceneAjustarLoop();
-                /* El tope de salvajes puede estar por debajo de los que hay, asi que
-                   hay que reconstruir la fila entera. */
+                /* El tope de salvajes puede estar por debajo de los que hay, asi
+                   que hay que reconstruir la fila entera. */
                 if (key === 'sceneCount') {
                     sceneState.firma = '';
                     sceneState.cuenta = 0;
                     sceneSyncHunters();
                 }
             });
-            row.append(lbl, rng, val);
+            row.append(rng, val);
             sceneOpts.appendChild(row);
         };
-        /* El ancho por defecto baja a 70%: a 88 el recuadro se comia
-           practicamente toda la pantalla del juego.
-
-           «En el area» ya no es el numero de salvajes: es un tope, por si el
-           juego llegara a publicar una lista disparatada. La cantidad la pone
-           lo que hay en pantalla. */
         mkRange('sceneCount', 'Máximo', 1, 8, '');
         mkRange('sceneWidth', 'Ancho', 40, 100);
         mkRange('sceneHeight', 'Alto', 30, 100);
         mkRange('sceneSpeed', 'Velocidad', 0, 100);
 
-        wrap.querySelector('[data-cc-scene]')?.appendChild(sceneOpts);
-        const syncSceneOpts = () => { sceneOpts.style.display = escenaActiva() ? '' : 'none'; };
-        syncSceneOpts();
+        const cajaEscena = wrap.querySelector('[data-cc-scene]');
+        const notaEscena = document.createElement('p');
+        notaEscena.className = 'cc-scene-nota';
+        notaEscena.textContent = 'Estos ajustes son del modo Escenario 2D. Elige ese modo en la rejilla de temas para usarlos.';
+        cajaEscena?.append(notaEscena, sceneOpts);
 
-        /* ---------- opciones ---------- */
-        const togglesHost = wrap.querySelector('[data-cc-toggles]');
-        [
-            { key: 'showPct', label: 'Mostrar % de HP en la enemiga', desc: 'Hoy la card del enemigo no enseña la proporción de vida.' },
-            { key: 'hitFx', label: 'Efecto de golpe y daño', desc: 'La card entera avanza al golpear y se sacude al recibir daño.' },
-            { key: 'glow', label: 'Halo de color en el borde', desc: 'Resplandor del tier. Desactivado por defecto.' },
-            { key: 'memoOpen', label: 'Recordar card desplegada', desc: 'Solo afecta al tema compacto.' }
-        ].forEach(option => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = `cc-toggle${scriptCardPreferences[option.key] ? ' on' : ''}`;
-            row.dataset.ccToggle = option.key;
-            row.innerHTML = `<span class="cc-tx"><b>${option.label}</b><i>${option.desc}</i></span><span class="cc-switch"></span>`;
-            row.addEventListener('click', () => {
-                scriptCardPreferences[option.key] = !scriptCardPreferences[option.key];
-                saveCardPreferences();
-                applyCardPreferences();
+        /* ---------- tamaños de la interfaz ---------- */
+        const sizesHost = wrap.querySelector('[data-cc-sizes]');
+        const areaByKey = new Map(SCRIPT_SCALE_AREAS.map(a => [a.key, a]));
+        const usadas = new Set();
+        const grupos = CC_SIZE_GROUPS.map(g => {
+            const areas = g.keys.map(k => areaByKey.get(k)).filter(Boolean);
+            areas.forEach(a => usadas.add(a.key));
+            return { title: g.title, areas };
+        });
+        /* Cualquier zona que no este en un grupo entra igualmente: si mañana se
+           anade una, no se queda sin salir en el panel. */
+        const sobrantes = SCRIPT_SCALE_AREAS.filter(a => !usadas.has(a.key));
+        if (sobrantes.length) grupos.push({ title: 'Otros', areas: sobrantes });
+
+        grupos.forEach(g => {
+            if (!g.areas.length) return;
+            const box = document.createElement('div');
+            box.className = 'cc-size-group';
+            const h = document.createElement('h4');
+            h.className = 'cc-size-h';
+            h.textContent = g.title;
+            box.appendChild(h);
+            g.areas.forEach(area => {
+                const row = document.createElement('label');
+                row.className = 'cc-scale-row';
+                row.innerHTML = `<span><b>${area.label}</b><p>${area.description}</p>
+                        <em class="cc-scale-status" data-scale-effective="${area.key}"></em></span>
+                    <span class="cc-scale-control">
+                        <select data-scale-key="${area.key}" aria-label="Tamaño de ${area.label}">
+                            ${SCRIPT_SCALE_OPTIONS.map(v => `<option value="${v}">${v}%</option>`).join('')}
+                        </select>
+                    </span>`;
+                box.appendChild(row);
             });
-            togglesHost.appendChild(row);
+            sizesHost.appendChild(box);
         });
 
-        /* ---------- escalas (comportamiento previo) ---------- */
+        /* Un `<details>` dentro de la seccion de tamaños lleva su propio separado,
+           para no confundir un grupo con una zona. */
+        sizesHost.querySelectorAll('.cc-size-group').forEach((box, i) => {
+            if (i > 0) box.classList.add('cc-size-group--sep');
+        });
+
+        /* ---------- escalas: enlazar los desplegables ---------- */
+        const sincronizarSelects = () => {
+            wrap.querySelectorAll('[data-scale-key]').forEach(select => {
+                select.value = String(scriptScalePreferences[select.dataset.scaleKey]);
+            });
+        };
         wrap.querySelectorAll('[data-scale-key]').forEach(select => {
             select.value = String(scriptScalePreferences[select.dataset.scaleKey]);
             select.addEventListener('change', () => {
@@ -4626,11 +5048,18 @@
                 applyScriptScales();
             });
         });
-        wrap.querySelector('.cc-settings-reset').addEventListener('click', () => {
+
+        /* ---------- restablecer ---------- */
+        wrap.querySelector('[data-cc-reset-tamanos]')?.addEventListener('click', () => {
             scriptScalePreferences = { ...SCRIPT_SCALE_DEFAULTS };
-            wrap.querySelectorAll('[data-scale-key]').forEach(select => { select.value = '100'; });
+            sincronizarSelects();
             saveScriptScalePreferences();
             applyScriptScales();
+        });
+        wrap.querySelector('[data-cc-reset-aspecto]')?.addEventListener('click', () => {
+            Object.assign(scriptCardPreferences, CARD_PREFS_DEFAULTS);
+            saveCardPreferences();
+            applyCardPreferences();
         });
 
         /* ---------- badges de estado ---------- */
@@ -4642,42 +5071,114 @@
                 const s = spriteById(scriptCardPreferences.sprite);
                 node.textContent = s.anim ? `${s.short} · animada` : s.short;
             });
-            /* El fondo enseña tambien el tipo que esta mandando el color, para
-               que se vea de un vistazo que sigue al Pokemon del equipo. */
+            /* El fondo enseña tambien el tipo que esta mandando el color, para que
+               se vea de un vistazo que sigue al Pokemon del equipo. */
             wrap.querySelectorAll('[data-cc-bg-badge]').forEach(node => {
                 const bg = backgroundById(scriptCardPreferences.bg);
                 const type = (ccLastTypes || []).map(ccTypeKey).filter(Boolean)[0];
                 node.textContent = bg.id === 'none' ? bg.name : (type ? `${bg.name} · ${type}` : bg.name);
             });
         };
+
+        /* Muestra los ajustes del escenario solo con ese modo activo. La nota
+           explica por que estan apagados en vez de dejar la seccion en blanco. */
+        const syncSceneOpts = () => {
+            const on = escenaActiva();
+            sceneOpts.style.display = on ? '' : 'none';
+            notaEscena.style.display = on ? 'none' : '';
+        };
+
         syncBadges();
+        syncSceneOpts();
+
         wrap._ccSync = () => {
             syncBadges();
-            wrap.querySelectorAll('[data-cc-theme]').forEach(node => node.classList.toggle('on', node.dataset.ccTheme === scriptCardPreferences.theme));
-            wrap.querySelectorAll('[data-cc-sprite]').forEach(node => node.classList.toggle('on', node.dataset.ccSprite === scriptCardPreferences.sprite));
+            wrap.querySelectorAll('[data-cc-theme]').forEach(node =>
+                node.classList.toggle('on', node.dataset.ccTheme === scriptCardPreferences.theme));
+            wrap.querySelectorAll('[data-cc-sprite]').forEach(node =>
+                node.classList.toggle('on', node.dataset.ccSprite === scriptCardPreferences.sprite));
             wrap.querySelectorAll('[data-cc-bg]').forEach(node => {
                 node.classList.toggle('on', node.dataset.ccBg === scriptCardPreferences.bg);
-                /* Las muestras se repintan porque el tipo del Pokemon puede
-                   haber cambiado desde que se abrio el menu. */
+                /* Las muestras se repintan porque el tipo del Pokemon puede haber
+                   cambiado desde que se abrio el menu. */
                 node.style.backgroundImage = ccBackgroundLayers(backgroundById(node.dataset.ccBg), ccStageTypeList());
                 node.style.backgroundSize = ccBackgroundSize(backgroundById(node.dataset.ccBg));
                 node.style.backgroundRepeat = ccBackgroundRepeat(backgroundById(node.dataset.ccBg));
             });
-            wrap.querySelectorAll('[data-cc-toggle]').forEach(node => node.classList.toggle('on', !!scriptCardPreferences[node.dataset.ccToggle]));
-            /* Los ajustes del escenario solo tienen sentido con ese modo. Aqui y
-               no en applyCardPreferences porque wrap es local a este
-               constructor. */
-            sceneOpts.style.display = escenaActiva() ? '' : 'none';
-            /* El select y los deslizadores tambien han de reflejar lo guardado,
-               no solo los interruptores. */
+            wrap.querySelectorAll('[data-cc-toggle]').forEach(node => {
+                const on = !!scriptCardPreferences[node.dataset.ccToggle];
+                node.classList.toggle('on', on);
+                node.setAttribute('aria-checked', String(on));
+            });
+            /* El select, los deslizadores y los desplegables de escala tambien
+               han de reflejar lo guardado, no solo los interruptores. */
             sizeSel.value = scriptCardPreferences.sceneSize;
-            sceneOpts.querySelectorAll('input[type=range]').forEach(r => {
+            /* TODOS los deslizadores del panel, no solo los del escenario: los de
+               la fuerza del temblor viven en las opciones de la card. */
+            wrap.querySelectorAll('input[type=range]').forEach(r => {
                 r.value = scriptCardPreferences[r.dataset.ccRange];
                 const out = r.parentElement?.querySelector('.cc-tg-desc');
                 if (out) out.textContent = r.value + (r.dataset.ccUnit || '%');
             });
-            ccRenderPreview(wrap.querySelector('[data-cc-preview]'));
+            sincronizarSelects();
+            /* Los colores del degradado: el selector muestra el elegido o, si no
+               hay, el del tipo; y la rejilla marca el preset que coincide. */
+            pintarSelectores();
+            wrap.querySelectorAll('[data-cc-grad-preset]').forEach(node => {
+                const preset = CC_GRAD_PRESETS.find(p => p.name === node.dataset.ccGradPreset);
+                node.classList.toggle('on', !!preset &&
+                    preset.a === scriptCardPreferences.gradA &&
+                    preset.b === scriptCardPreferences.gradB);
+            });
+            syncSceneOpts();
+            ccRenderPreview(preview);
         };
+
+        /* ---------- indice: saltar y marcar ---------- */
+        const nav = wrap.querySelector('[data-cc-nav]');
+        const chips = Array.from(nav.querySelectorAll('.cc-nav-chip'));
+        const secciones = chips.map(c => wrap.querySelector(c.getAttribute('href'))).filter(Boolean);
+
+        const marcarChip = (activo) => {
+            chips.forEach(c => c.classList.toggle('on', c === activo));
+        };
+
+        chips.forEach(chip => {
+            chip.addEventListener('click', ev => {
+                ev.preventDefault();
+                const destino = wrap.querySelector(chip.getAttribute('href'));
+                if (!destino) return;
+                /* Se descuenta el alto de lo que queda pegado arriba; si no, el
+                   titulo de la seccion acaba debajo de la cabecera. */
+                const pegajoso = wrap.querySelector('.cc-sticky');
+                const alto = pegajoso ? pegajoso.offsetHeight : 0;
+                wrap.scrollTop = Math.max(0, destino.offsetTop - alto - 6);
+                marcarChip(chip);
+            });
+        });
+
+        /* El chip activo se calcula por POSICION, no con un observador.
+
+           Con IntersectionObserver el resultado dependia de cuando llegara su
+           aviso, que va en diferido: al saltar al final del panel el chip se
+           quedaba marcando la seccion anterior hasta el siguiente frame. Leido de
+           la posicion es inmediato y no tiene ese desfase. El escucha va con
+           requestAnimationFrame para no medir mas de una vez por fotograma. */
+        const calcularChipActivo = () => {
+            if (!secciones.length) return;
+            const alto = (wrap.querySelector('.cc-sticky')?.offsetHeight || 0) + 20;
+            const y = wrap.scrollTop + alto;
+            let actual = secciones[0];
+            for (const s of secciones) if (s.offsetTop <= y) actual = s;
+            marcarChip(chips[secciones.indexOf(actual)]);
+        };
+        let rafChip = 0;
+        wrap.addEventListener('scroll', () => {
+            if (rafChip) return;
+            rafChip = requestAnimationFrame(() => { rafChip = 0; calcularChipActivo(); });
+        }, { passive: true });
+        calcularChipActivo();
+
         return wrap;
     }
 
@@ -4724,29 +5225,121 @@
     }
 
     /* El juego guarda en .cfg-body las secciones de Video y Password y solo
-       alterna su visibilidad. Por eso NO se vacía con replaceChildren: eso las
-       borraba y dejaba las pestañas del juego rotas para siempre. En vez de
-       eso se ocultan y se restituyen al salir de la nuestra. */
+       alterna su visibilidad. Por eso NO se vacia con replaceChildren: eso las
+       borraba y dejaba las pestañas del juego rotas para siempre. En vez de eso
+       se ocultan y se restituyen al salir de la nuestra.
+
+       Y hay un SEGUNDO INQUILINO en esa ventana: el script de mercado
+       (Better Market and More) mete su propia pestaña en la misma barra y
+       envuelve todo lo que habia en .cfg-original-content, con un
+       .cfg-mods-content al lado. Los arreglos de aqui abajo son para convivir
+       con el, y son justo los que resuelven los dos sintomas reportados: que el
+       panel apareciera abajo y que la pestaña se moviera de sitio. */
+
+    /* Los dos bloques que inyecta el script de mercado dentro de .cfg-body. Hay
+       que ocultarlos y restaurarlos junto con los hijos directos, porque el suyo
+       NO se apaga al pulsar nuestra pestaña: su manejador esta atado a la suya. */
+    const CC_BLOQUES_MERCADO = ['.cfg-original-content', '.cfg-mods-content'];
+
+    function ccOcultarBloquesMercado(body, ocultar) {
+        CC_BLOQUES_MERCADO.forEach(sel => {
+            const node = body.querySelector(sel);
+            if (!node) return;
+            if (ocultar) {
+                node.dataset.ccTabHidden = SCRIPT_TAB_HIDDEN;
+                node.style.setProperty('display', 'none', 'important');
+            } else if (node.dataset.ccTabHidden === SCRIPT_TAB_HIDDEN) {
+                delete node.dataset.ccTabHidden;
+                node.style.removeProperty('display');
+            }
+        });
+    }
+
     function showScriptSettingsPane(cfgWindow, body) {
+        /* 1. Ocultar lo que no es nuestro, los bloques del script de mercado
+           incluidos. Antes solo se ocultaban los hijos directos, y el
+           .cfg-mods-content se quedaba ocupando sitio y empujaba el panel hacia
+           abajo: de ahi que hubiera que desplazarse para verlo. */
         Array.from(body.children).forEach(child => {
             if (child.classList.contains('cc-scale-pane')) return;
             child.dataset.ccTabHidden = SCRIPT_TAB_HIDDEN;
             child.style.setProperty('display', 'none', 'important');
         });
-        if (!body.querySelector('.cc-scale-pane')) body.appendChild(buildScriptSettingsBody());
+        ccOcultarBloquesMercado(body, true);
+
+        /* 2. El panel va el PRIMERO de .cfg-body. Antes se anadia al final, y por
+           eso nacia por detras de todo lo demas. */
+        let pane = body.querySelector('.cc-scale-pane');
+        if (!pane) pane = buildScriptSettingsBody();
+        if (body.firstChild !== pane) body.insertBefore(pane, body.firstChild || null);
+        /* Se muestra quitando el display en linea: la hoja de estilos ya lo pone
+           en block con important, que es lo que permite apagarlo desde aqui. */
+        pane.style.removeProperty('display');
+
         cfgWindow.querySelectorAll('.cfg-tab').forEach(other => other.classList.remove('on'));
         const tab = cfgWindow.querySelector(`[data-tab="${SCRIPT_TAB_KEY}"]`);
         if (tab) tab.classList.add('on');
         applyScriptScales();
+
+        /* 3. Empezar por arriba. Con el panel ya el primero casi no hace falta,
+           pero si el contenedor venia desplazado de antes, se corrige. */
+        if (pane.scrollTop) pane.scrollTop = 0;
+        if (body.scrollTop) body.scrollTop = 0;
     }
 
+    /* Oculta el panel; NO lo destruye.
+
+       Antes hacia pane.remove(), asi que cada vez que mirabas otra pestaña y
+       volvias el panel se reconstruia desde cero: se perdian el desplazamiento y
+       los desplegables abiertos, y se volvian a pedir todos los sprites de la
+       vista previa. */
     function hideScriptSettingsPane(body) {
-        body.querySelectorAll('.cc-scale-pane').forEach(pane => pane.remove());
+        const pane = body.querySelector('.cc-scale-pane');
+        if (pane) pane.style.setProperty('display', 'none', 'important');
         Array.from(body.children).forEach(child => {
+            if (child.classList.contains('cc-scale-pane')) return;
             if (child.dataset.ccTabHidden !== SCRIPT_TAB_HIDDEN) return;
             delete child.dataset.ccTabHidden;
             child.style.removeProperty('display');
         });
+        ccOcultarBloquesMercado(body, false);
+    }
+
+    /* Crea la pestaña si no esta y la deja SIEMPRE en el mismo sitio.
+
+       El script de mercado anade la suya a la misma barra, y el juego
+       reconstruye .cfg-tabs al cerrar la ventana. Como las dos se anadian con
+       appendChild, el orden dependia de quien llegara antes en cada reapertura:
+       de ahi que la pestaña pareciera moverse de lugar. Aqui se fija el sitio:
+       justo ANTES de la del mercado si esta, y si no al final. */
+    function asegurarPestana(cfgWindow, tabs, body) {
+        let tab = cfgWindow.querySelector(`[data-tab="${SCRIPT_TAB_KEY}"]`);
+        if (!tab) {
+            tab = document.createElement('button');
+            tab.type = 'button';
+            tab.className = 'cfg-tab';
+            tab.dataset.tab = SCRIPT_TAB_KEY;
+            tab.textContent = 'Custom Card';
+            tab.addEventListener('click', () => showScriptSettingsPane(cfgWindow, body));
+        }
+        const mods = tabs.querySelector('.cfg-tab-mods');
+        if (mods && mods.parentElement === tabs) {
+            if (tab.nextElementSibling !== mods) tabs.insertBefore(tab, mods);
+        } else if (tab !== tabs.lastElementChild) {
+            tabs.appendChild(tab);
+        }
+        /* El manejador de las otras pestañas se pone UNA vez por barra. Va en
+           fase de captura para ejecutarse antes que el de la propia pestaña del
+           juego. */
+        if (tabs.dataset.ccCloser !== '1') {
+            tabs.dataset.ccCloser = '1';
+            tabs.addEventListener('click', event => {
+                const target = event.target.closest('.cfg-tab');
+                if (!target || target.dataset.tab === SCRIPT_TAB_KEY) return;
+                hideScriptSettingsPane(body);
+            }, true);
+        }
+        return tab;
     }
 
     function setupScriptScaleSettings() {
@@ -4757,28 +5350,23 @@
         const body = cfgWindow.querySelector('.cfg-body');
         if (!tabs || !body) return;
 
-        let tab = cfgWindow.querySelector(`[data-tab="${SCRIPT_TAB_KEY}"]`);
-        if (!tab) {
-            tab = document.createElement('button');
-            tab.type = 'button';
-            tab.className = 'cfg-tab';
-            tab.dataset.tab = SCRIPT_TAB_KEY;
-            tab.textContent = 'Custom Card';
-            tab.addEventListener('click', () => showScriptSettingsPane(cfgWindow, body));
-            tabs.appendChild(tab);
+        const tab = asegurarPestana(cfgWindow, tabs, body);
 
-            /* Al pulsar cualquier otra pestaña se retira nuestro contenido para
-               que el juego recupere el suyo. Va en fase de captura para
-               ejecutarse antes que el manejador de la propia pestaña. */
-            tabs.addEventListener('click', event => {
-                const target = event.target.closest('.cfg-tab');
-                if (!target || target.dataset.tab === SCRIPT_TAB_KEY) return;
-                hideScriptSettingsPane(body);
-            }, true);
+        /* Si el juego (o el script de mercado) reconstruye la barra, la nuestra
+           desaparece: se vigila el contenedor para reponerla en su sitio.
+           asegurarPestana es idempotente, asi que cuando ya esta bien no toca
+           nada y el observador no se realimenta. */
+        if (tabsObserved !== tabs) {
+            if (tabsObserver) { tabsObserver.disconnect(); tabsObserver = null; }
+            tabsObserved = tabs;
+            tabsObserver = new MutationObserver(() => {
+                asegurarPestana(cfgWindow, tabs, body);
+            });
+            tabsObserver.observe(tabs, { childList: true });
         }
 
-        /* El juego reconstruye la ventana al cerrarla: si nuestra pestaña
-           seguía activa, se repone su contenido. */
+        /* El juego reconstruye la ventana al cerrarla: si nuestra pestaña seguia
+           activa, se repone su contenido. */
         if (tab.classList.contains('on') && !body.querySelector('.cc-scale-pane')) {
             showScriptSettingsPane(cfgWindow, body);
         }
@@ -7494,6 +8082,48 @@
     function scenePonerNombre(nm, texto) {
         const txt = nm?.querySelector('.cc-esc-nmtxt');
         if (txt) txt.textContent = texto;
+        sceneAjustarMarquesina(nm);
+    }
+
+    /* ENCIENDE LA MARQUESINA DEL NOMBRE, Y SOLO SI HACE FALTA.
+
+       El cartel tiene un ancho maximo para que un nombre largo no estire la barra
+       de vida, que tiene un minimo que hay que respetar. Cuando el nombre no cabe,
+       en vez de ensanchar el cartel se mueve: se calcula lo que sobra y se le pasa
+       al fotograma en --cc-marq, en negativo. Si cabe, no se pone la clase y no se
+       mueve nada.
+
+       Se mide con la clase QUITADA a proposito: con la animacion puesta, el
+       transform desplaza el contenido y scrollWidth ya no seria el ancho real del
+       texto. */
+    function sceneAjustarMarquesina(nm) {
+        const fila = nm?.querySelector('.cc-nmrow');
+        if (!fila) return;
+        fila.classList.remove('cc-marquesina');
+        /* Sin medidas todavia (la fila aun no esta colocada) no se puede decidir:
+           se prueba en el siguiente fotograma, que ya tiene caja. */
+        if (!fila.clientWidth) {
+            if (!fila.dataset.ccMarqPend) {
+                fila.dataset.ccMarqPend = '1';
+                window.requestAnimationFrame(() => {
+                    delete fila.dataset.ccMarqPend;
+                    sceneAjustarMarquesina(nm);
+                });
+            }
+            return;
+        }
+        const sobra = fila.scrollWidth - fila.clientWidth;
+        if (sobra <= 2) return;
+        fila.style.setProperty('--cc-marq', (-sobra) + 'px');
+        fila.classList.add('cc-marquesina');
+    }
+
+    /* Repasa la marquesina de todos los carteles del escenario y del aliado. Se
+       llama tras colocar la fila, que es cuando ya hay anchos que medir. */
+    function sceneAjustarMarquesinas() {
+        const col = sceneState.col;
+        if (!col) return;
+        col.querySelectorAll('.cc-esc-nm').forEach(nm => sceneAjustarMarquesina(nm));
     }
 
     function sceneCrearNombre(nombre, barras) {
@@ -7758,6 +8388,9 @@
             window.requestAnimationFrame(() => {
                 sceneState.colocadoEnElFrame = false;
                 sceneColocar();
+                /* Ya hay anchos que medir: es el momento de decidir que nombres
+                   necesitan marquesina. Antes de colocar, la fila mide cero. */
+                sceneAjustarMarquesinas();
             });
         });
     }
