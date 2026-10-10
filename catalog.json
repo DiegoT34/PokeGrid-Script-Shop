@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-10-10T06:25:49Z",
+    "updatedAt":  "2026-10-10T06:28:45Z",
     "scripts":  [
                     {
                         "id":  "custom-hub-game",
@@ -88,37 +88,6 @@
                         "icon":  "✈️",
                         "featured":  false,
                         "publishedAt":  "2026-08-24T10:08:35Z"
-                    },
-                    {
-                        "id":  "breeding-center-calculator",
-                        "name":  "Breeding Center - Breeding calculator",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "3.0.1",
-                        "author":  "Phoslead / DiegoT34",
-                        "summary":  "Calculadora y planificador para el centro de crianza.",
-                        "description":  "Analiza los Pokémon disponibles para proponer padres compatibles, calidad, IVs, resultados del huevo y precios relacionados.",
-                        "category":  "Crianza",
-                        "tags":  [
-                                     "breeding",
-                                     "crianza",
-                                     "calculadora",
-                                     "ivs"
-                                 ],
-                        "games":  [
-                                      "Poke Idle World"
-                                  ],
-                        "permissions":  [
-                                            "Lee Pokémon visibles del centro de crianza",
-                                            "Calcula combinaciones y recomendaciones de padres"
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/breeding-center-calculator.user.js",
-                        "sha256":  "084d3479810a08028c802da4642302f33e15c01dbc0648f892b6c77ff5e9cbcb",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 3.0.1",
-                        "icon":  "🥚",
-                        "featured":  false,
-                        "publishedAt":  "2026-08-24T17:55:40Z"
                     },
                     {
                         "id":  "poke-idle-world-profesiones-es-y-asistente-botanica",
