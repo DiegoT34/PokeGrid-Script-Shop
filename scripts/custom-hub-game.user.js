@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.0.5
+// @version      5.0.6
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -568,10 +568,14 @@
         sceneSize: 'recuadro', /* 'recuadro' centrado o 'full' a pantalla */
         sceneWidth: 70,        /* ancho del recuadro, 40-100 % */
         sceneHeight: 52,       /* alto del recuadro, 30-100 % */
-        sceneCount: 4,         /* tope de salvajes en la fila, 1-4. Cuantos hay los
+        sceneCount: 8,         /* tope de salvajes en la fila, 1-8. Cuantos hay los
                             pone el juego; esto solo evita que se llene */
         sceneSuelo: true,      /* la banda de suelo HTML, que tapa la foto */
         sceneGuia: false       /* guia y marcas de medicion */
+    /* Se acabaron scenePanelOculto y scenePanelPos, que guardaban si el panel de
+       salvajes estaba oculto y donde se habia arrastrado. El panel ya no existe.
+       Sus valores siguen en el almacenamiento del navegador, sin efecto: borrarlos
+       de ahi uno a uno no compensa y se dejarian. */
     });
     const CARD_PREF_KEYS = Object.keys(CARD_PREFS_DEFAULTS);
 
@@ -595,10 +599,13 @@
                     const n = Number(value);
                     if (!Number.isFinite(n)) return [key, CARD_PREFS_DEFAULTS[key]];
                     const min = key === 'sceneWidth' ? 40 : key === 'sceneHeight' ? 30 : key === 'sceneCount' ? 1 : 0;
-                    const max = key === 'sceneCount' ? 4 : 100;
+                    const max = key === 'sceneCount' ? 8 : 100;
                     return [key, Math.max(min, Math.min(max, Math.round(n)))];
                 }
-                return [key, typeof value === 'boolean' ? value : CARD_PREFS_DEFAULTS[key]];
+                /* Ya no queda ninguna preferencia de texto: scenePanelPos era la
+           unica y se fue con el panel de salvajes. El typeof boolean de abajo
+           sirve para todo lo que queda. */
+            return [key, typeof value === 'boolean' ? value : CARD_PREFS_DEFAULTS[key]];
             }));
         } catch (_) {
             return { ...CARD_PREFS_DEFAULTS };
@@ -634,7 +641,20 @@
            donde salen los datos de la card enemiga;
          - autohelper: la configuracion del Auto-Helper (se lee para saber que
            bola usa, por si se quiere mostrar). */
-    const CAPTURE_SOCKET_MARKERS = ['"balls"', '"inventory"', '"field-kill"', '"catch-result"', '"pending"', '"autohelper"'];
+    /* Marcadores que dejan pasar por la cola los mensajes que el script necesita.
+       Los de la barra de captura son tipos propios del juego.
+
+       Los dos del final son la CLAVE de los golpes. El juego registra su manejador
+       como `H("field", ...)` y dentro lee `s.hits`: el array de golpes viene en el
+       mensaje del campo y se llama HITS, en plural. Por eso, hasta ahora, el
+       mensaje entero se descartaba en el filtro: se buscaba "hit" y el campo
+       real es "hits", asi que la busqueda no encontraba nada. Sin esto los
+       efectos de ataque no pueden llegar a la escena ni a las cards.
+
+       El tipo del mensaje es "field" a secas. Las demas etiquetas del juego
+       ("field-hp", "field-name", "field-init", "field-kill") no coinciden con
+       "field" a secas porque llevan texto detras, asi que la busqueda es exacta. */
+    const CAPTURE_SOCKET_MARKERS = ['"balls"', '"inventory"', '"field-kill"', '"catch-result"', '"pending"', '"autohelper"', '"hits"', '"field"', '"fxHit"'];
     /* Catalogo estatico de items para nombre e icono. Solo se usa la categoria
        'heal', que son las 6 pociones de curacion (las de revive se descartan). */
     const CAPTURE_POTION_CATEGORY = 'heal';
@@ -713,6 +733,678 @@
     }
 
     /* --------------------------------------------------------------- */
+    /* EFECTOS DE ATAQUE DEL JUEGO                                     */
+    /* --------------------------------------------------------------- */
+    /* El juego publica sus propios efectos de golpe en
+       /assets/effects/moves/, con un indice que los describe:
+
+         https://poke.idleworld.online/assets/effects/moves/index.json
+
+       Cada entrada trae el nombre del fichero, el tamano del fotograma, cuantos fotogramas
+       tiene, a cuantos ms va cada uno y una escala. Hay 86, y cada uno con su
+       propia forma: el de FIRE son 16 fotogramas de 100x100 y el de NORMAL 10 de
+       64x54. No se pueden tratar igual entre si.
+
+       LO MAS IMPORTANTE: las hojas son VERTICALES. El fichero de FIRE mide
+       100x1600, y no son 16 fotogramas en horizontal sino 16 apilados: el alto
+       dividido entre los fotogramas da el lado. Si se tratara como horizontal, sale
+       una sola imagen estirada y el efecto no se ve.
+
+       Este indice se descarga una vez y se guarda en memoria. Si no se puede
+       leer, los efectos se desactivan y el script sigue con los suyos de siempre:
+       nada de esto puede romper el juego. */
+    const MOVES_INDEX_URL = '/assets/effects/moves/index.json';
+    const MOVES_BASE_URL = '/assets/effects/moves/';
+
+    let movesIndice = null;
+    let movesCarga = null;
+
+    /* Pide el indice una sola vez. La promesa se GUARDA y se devuelve SIEMPRE esa
+       misma, para que dos golpes seguidos no lancen dos descargas.
+
+       Antes se devolvia `movesIndice || Promise.resolve(null)`, y ese
+       `movesIndice` era NULL mientras la descarga seguia en marcha: la segunda
+       llamada recibia null en vez de una promesa y al hacer `.then` reventaba con
+       "movesCargar(...).then is not a function". El error salia dentro del
+       refresco de la interfaz, asi que no se caia solo el efecto: el script se
+       detenia entero ahi, y por eso tras el primer golpe no aparecian ni los
+       Pokemon siguientes ni sus animaciones. */
+    function movesCargar() {
+        if (movesCarga) return movesCarga;
+        movesCarga = fetch(MOVES_INDEX_URL)
+            .then(r => (r.ok ? r.json() : null))
+            .then(j => { movesIndice = j && typeof j === 'object' ? j : null; return movesIndice; })
+            .catch(() => { movesIndice = null; return null; });
+        return movesCarga;
+    }
+
+    /* El efecto de un Pokemon se busca por el TIPO de su ataque, no por el de la
+       especie: hay hojas para los 18 tipos mas unas pocas de los ataques
+       especiales. Si el tipo no tiene hoja propia se recurre a NORMAL, que
+       siempre esta. */
+    function movesHoja(tipo, variante) {
+        if (!movesIndice) return null;
+        if (variante === 'hit' && movesIndice[tipo + '_HIT']) return movesIndice[tipo + '_HIT'];
+        if (movesIndice[tipo]) return movesIndice[tipo];
+        if (movesIndice.NORMAL) return movesIndice.NORMAL;
+        return null;
+    }
+
+    /* Que grande se ve el efecto.
+
+       En el juego TODAS las hojas se ven del mismo tamano sobre el Pokemon,
+       aunque sus fotogramas midan cosas muy distintas:
+
+         FLYING   61x81      WATER   243x246     FIGHTING 181x185
+         POISON   60x40      FIRE    100x100     BUG      80x96
+
+       El indice trae una `scale` propia de cada hoja (de 0,43 a 3) pensada para
+       que asi queden todas iguales. Aplicarla tal cual aqui no funcionaba: con el
+       factor de antes, FLYING se quedaba en 38 px de ancho, que es media
+       cabeza del Pokemon, y las grandes se veian bien. De ahi que salieran
+       «muy pequenos».
+
+       La escala sale ahora de dejar la hoja un poco MAS ANCHA que el Pokemon al
+       que se le pone, que es como se ve en el juego. Se pasa el ancho real del
+       sprite cuando se sabe, y si no, uno de referencia. */
+    function movesEscalaPantalla(desc, anchoSprite) {
+        const fw = Number(desc?.frameW) || 1;
+        const referencia = Number(anchoSprite) > 0 ? Number(anchoSprite) : 110;
+        /* 1,45 es lo que hace que el efecto abrape al Pokemon sin tragarselo. */
+        const escala = (referencia * 1.45) / fw;
+        return Math.max(0.5, Math.min(2.4, escala));
+    }
+
+    /* Pinta una hoja de efecto encima de un elemento, durante una sola pasada.
+
+       El elemento es un <span> con el que se hace el recorte: lleva la hoja
+       entera de fondo y se desplaza verticalmente fotograma a fotograma.
+
+       LO IMPORTANTE, Y POR QUE HACE FALTA EL Math.round: el alto del fotograma se
+       escala y se redondea a entero ANTES de calcular los desplazamientos, y se
+       calculan los desplazamientos con ese mismo entero. Si se deja el alto en
+       coma y el navegador redondea cada fotograma por su cuenta, el error se
+       acumula: medido con un alto de 61,97 px, los desplazamientos salian de
+       58 en 58 y el ultimo fotograma acababa 8 px desviado.
+
+       Los offsets van todos a i/frames y el ultimo se repite en el 100%, para
+       que con steps(frames) salten los frames y no frames-1: el ultimo
+       fotograma es el de mayor efecto y no puede perderse. */
+    function movesReproducir(hoja, capa, escala, anchoSprite) {
+        if (!hoja || !capa) return;
+        const fw = Number(hoja.frameW) || 0;
+        const fh = Number(hoja.frameH) || 0;
+        const frames = Math.max(1, Number(hoja.frames) || 1);
+        if (!fw || !fh) return;
+
+        const esc = escala === undefined ? movesEscalaPantalla(hoja, anchoSprite) : escala;
+        const ancho = Math.round(fw * esc);
+        const alto = Math.round(fh * esc);
+        const [ox, oy] = Array.isArray(hoja.offset) ? hoja.offset : [0, 0];
+        const offY = Math.round(oy * esc);
+
+        capa.style.width = ancho + 'px';
+        capa.style.height = alto + 'px';
+        capa.style.backgroundImage = `url("${MOVES_BASE_URL}${hoja.file}")`;
+        /* La hoja completa al ancho de un fotograma y de alto todos ellos. */
+        capa.style.backgroundSize = `${ancho}px ${alto * frames}px`;
+        capa.style.backgroundPosition = `${-Math.round(ox * esc)}px ${-offY}px`;
+
+        if (!capa.animate) return null;
+        const frameMs = Number(hoja.frameMs) || 50;
+        const kf = [];
+        for (let i = 0; i < frames; i++) {
+            kf.push({ backgroundPositionY: (-offY - i * alto) + 'px', offset: i / frames });
+        }
+        kf.push({ backgroundPositionY: (-offY - (frames - 1) * alto) + 'px', offset: 1 });
+        /* Se devuelve la animacion: quien la lanza necesita saber cuando acaba
+           para quitar la capa. Sin esto habia que adivinarlo con un temporizador
+           demsiado largo o fijo, y la capa se quedaba en pantalla. */
+        return capa.animate(kf, {
+            duration: frames * frameMs, iterations: 1,
+            easing: `steps(${frames}, end)`
+        });
+    }
+
+    /* Lanza el efecto de golpe sobre un elemento, si hay hoja para ese tipo.
+
+       Devuelve la promesa de la animacion, o false si no habia hoja. Un fallo
+       aqui nunca debe interrumpir lo que ya funciona, asi que todo va envuelto
+       en cadena. */
+    function movesAtaque(capa, tipo, variante, escala, anchoSprite) {
+        return movesCargar().then(j => {
+            if (!j) return false;
+            const hoja = movesHoja(String(tipo || 'NORMAL').toUpperCase(), variante);
+            if (!hoja) return false;
+            return movesReproducir(hoja, capa, escala, anchoSprite) || false;
+        }).catch(() => false);
+    }
+
+    /* Crea la capa de efecto. Es un span con overflow:hidden, porque la hoja es
+       mucho mas alta que el fotograma y si no se recorta se veria entera. */
+    function movesCapa(clase) {
+        const capa = document.createElement('span');
+        capa.className = 'cc-move ' + (clase || '');
+        capa.setAttribute('aria-hidden', 'true');
+        return capa;
+    }
+
+    /* El tipo del golpe solo se usa como ULTIMO recurso, igual que hace el juego:
+       si el servidor no manda fx ni fxHit, se cae a la hoja del tipo. */
+    function movesTipoDe(tipos) {
+        return (tipos && tipos[0]) ? String(tipos[0]).toUpperCase() : 'NORMAL';
+    }
+
+    /* Que hoja se pinta, segun el MOVIMIENTO y no segun el Pokemon.
+
+       Un golpe llega con `move` (el nombre, tipo "Stone Edge") y `type` (el tipo
+       del movimiento, "ROCK"). El indice de hojas esta escrito con el nombre del
+       movimiento en mayusculas y con guiones bajos ("METEOR_FISTS"), asi que se
+       normaliza el nombre y se busca.
+
+       Si el movimiento no tiene hoja propia se cae a la del TIPO del movimiento,
+       que es lo que hace el juego: "Stone Edge" no tiene hoja propia y se pinta
+       la de ROCK.
+
+       Esto es mejor que usar el tipo del Pokemon, que es lo que se hacia antes y
+       por eso dos Pokemon del mismo tipo se veian siempre igual: el Ancient
+       Pinsir es de tipo BUG pero pega con Brick Break (FIGHTING) y con Guillotine
+       (NORMAL), y cada una se ve distinto. */
+    function movesClaveDe(move, tipo) {
+        const nombre = String(move || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+        if (nombre && movesIndice && movesIndice[nombre]) return nombre;
+        const t = String(tipo || '').trim().toUpperCase();
+        return t || 'NORMAL';
+    }
+
+    /* --------------------------------------------------------------- */
+    /* GOLPES RECIENTES                                                  */
+    /* --------------------------------------------------------------- */
+    /* Que tan reciente es el golpe de un slot, para subir a la fila a quien esta
+       recibiendo ahora mismo: ese es el combate de verdad. La cuenta es propia:
+       se apunta el momento en que llega cada golpe y se considera "reciente" lo
+       que ha ocurrido en los ultimos 6 s, que es lo que dura un intercambio.
+
+       ESTA DECLARACION VA AQUI, AL PRINCIPIO, Y NO MAS ABAJO. Es un "const" y lo
+       usan dos funciones que estan mas abajo en el archivo: "applyHitEvent", que
+       corre con cada golpe, y el filtro de "sceneHuntersFromSocket". Con el
+       "const" mas abajo se leia una variable sin iniciar (temporal dead zone) y
+       fallaba en silencio: "applyHitEvent" no anotaba el golpe y la fila no se
+       montaba, asi que no se veia ningun salvaje y las barras no tenian a quien
+       bajarle la vida.
+
+       El comprobador de sintaxis no dice nada, porque el codigo es valido: solo
+       falla al ejecutarse. La prueba de "probar-golpes.js" mira expressly que la
+       declaracion este antes que los usos. */
+    const SCENE_GOLPE_MS = 6000;
+    const sceneUltimoGolpe = new Map();
+
+    function sceneGolpeReciente(slot) {
+        const n = Number(slot);
+        if (!isFinite(n)) return 0;
+        const t = sceneUltimoGolpe.get(n);
+        if (!t) return 0;
+        return Date.now() - t <= SCENE_GOLPE_MS ? 1 : 0;
+    }
+
+    function sceneGolpeAnotar(slot) {
+        const n = Number(slot);
+        if (isFinite(n) && n >= 0) sceneUltimoGolpe.set(n, Date.now());
+        /* La tabla no crece sin limite: se limpia lo que ya no sirve. */
+        if (sceneUltimoGolpe.size > 40) {
+            const ahora = Date.now();
+            for (const [k, v] of sceneUltimoGolpe) {
+                if (ahora - v > SCENE_GOLPE_MS) sceneUltimoGolpe.delete(k);
+            }
+        }
+    }
+
+    /* --------------------------------------------------------------- */
+    /* GOLPES: EL EVENTO DEL SERVIDOR, LEIDO COMO LO RESUELVE EL JUEGO    */
+    /* --------------------------------------------------------------- */
+
+    /* La pagina real, no la sandbox: lo que se guarda para poder mirarlo desde
+       la consola del navegador tiene que vivir en unsafeWindow, porque dentro del
+       script `window` es una ventana distinta y no se ve desde fuera. */
+    function ccVentanaReal() {
+        return (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+    }
+
+    /* REGISTRO DE GOLPES. Es temporal: guarda el ultimo golpe y cuantas veces ha
+       llegado, en la pagina real, para poder comprobar con datos de verdad si el
+       evento entra y que campos trae. No hace nada mas que apuntar el objeto, asi
+       que no afecta a nada aunque se deje puesto. */
+    function ccTrazaGolpe(hits) {
+        const w = ccVentanaReal();
+        w.ccUltimoGolpe = hits;
+        w.ccGolpesVistos = (w.ccGolpesVistos || 0) + hits.length;
+    }
+
+    /* Una lista de golpes se reconoce por los campos PROPIOS de un golpe. Un
+       golpe real de este servidor es tal cual:
+
+         {"slot":5,"amount":3616,"eff":2.5,"move":"Stone Edge","type":"ROCK"}
+
+       O sea: quien recibe (slot), el dano (amount), el multiplicador (eff), el
+       movimiento (move) y su tipo (type). NO viene `fx` ni `fxHit`: el efecto se
+       deduce del movimiento, no lo manda el servidor.
+
+       OJO: `slot` NO vale como prueba, porque los salvajes de `mobs[]` tambien
+       lo llevan y con el se confundirian los golpes con la lista de salvajes,
+       que ademas suele venir antes en el mensaje. */
+    function pareceGolpe(x) {
+        return !!x && typeof x === 'object' && !Array.isArray(x) &&
+            ('move' in x || 'amount' in x || 'eff' in x ||
+             'fx' in x || 'fxHit' in x || 'dmg' in x || 'fxAt' in x || 'shakeMs' in x);
+    }
+
+    function buscarGolpes(data, profundidad) {
+        if (!data || typeof data !== 'object') return null;
+        const nivel = profundidad || 0;
+        if (Array.isArray(data)) {
+            return data.length && data.some(pareceGolpe) ? data : null;
+        }
+        /* El nombre que usa el juego es "hits". Se prueba primero ese, que es
+           exacto, y solo si no esta se busca por la forma de los objetos. */
+        if (Array.isArray(data.hits) && data.hits.some(pareceGolpe)) return data.hits;
+        if (nivel >= 2) return null;
+        for (const clave in data) {
+            if (clave === 'hits') continue;
+            const valor = data[clave];
+            if (!valor || typeof valor !== 'object') continue;
+            const hallado = buscarGolpes(valor, nivel + 1);
+            if (hallado) return hallado;
+        }
+        return null;
+    }
+
+    /* El servidor manda `hit[]`, un objeto por golpe, con estos campos:
+
+         fx, fx2        efecto del ATACANTE (fx2 con retardo fx2DelayMs)
+         fxHit, fxHit2  efecto del que RECIBE (con retardo fxHitDelayMs)
+         slot           a quien golpea: negativo = heroe, >= 0 = indice de fila
+         type           tipo del atacante, solo como ultimo recurso
+         fxAt           donde ancla el efecto del atacante
+         shakeMs        cuanto tiembla la pantalla
+
+       Reglas que copia el juego y que aqui importan:
+
+       1. El efecto NO se deduce del tipo. Cada movimiento tiene su propia hoja y
+          es el servidor quien dice cual. Por eso un Pokemon puede golpear
+          distinto en cada ataque.
+
+       2. Un MISMO efecto no se repite en el mismo golpe. El juego lleva un Set
+          de los ya usados dentro del golpe; sin eso, un ataque con fx y fxHit
+          iguales los pinta dos veces encima.
+
+       3. Si el efecto ya esta en pantalla, no se vuelve a pintar.
+
+       4. `slot` negativo significa que golpea el heroe.
+
+       ESTE PROTOCOLO NO LO USA EL SERVIDOR. El que llega de verdad, copiado del
+       socket, es otro y va en el array `hits` del mensaje del campo:
+
+         {"slot":5,"amount":3616,"eff":2.5,"move":"Stone Edge","type":"ROCK"}
+
+       Ahi el efecto lo decide el MOVIMIENTO (`move`) y su tipo (`type`), y el
+       `slot` dice quien RECIBE, no quien ataca. Se admiten los dos: si llega
+       `fx`/`fxHit` se pintan esos, y si no, la hoja del movimiento. Ver
+       applyHitEvent y movesClaveDe.
+
+       Antes se creia que solo existia el primero, y como el servidor manda el
+       segundo, todos los golpes se descartaban por no encontrar `fx`.
+
+       Esto sustituye a la eleccion por tipo que habia antes, que por eso
+       fallaba: todos los golpes del mismo Pokemon salian iguales. */
+
+    /* --------------------------------------------------------------- */
+    /* GOLPES: EL EVENTO DEL SERVIDOR, LEIDO COMO LO RESUELVE EL JUEGO    */
+    /* --------------------------------------------------------------- */
+    /* Los golpes vienen DENTRO del mensaje del campo, en el array `hits`. Un
+       golpe real, copiado del socket:
+
+         {"slot":5,"amount":3616,"eff":2.5,"move":"Stone Edge","type":"ROCK"}
+
+         slot    QUIEN RECIBE. Un numero es el indice del salvaje de la fila y
+                 en negativo es el heroe. El que ataca es el otro.
+         amount  el dano
+         eff     el multiplicador de efectividad
+         move    el nombre del movimiento
+         type    el tipo del MOVIMIENTO, no el del Pokemon
+
+       Lo importante es que el efecto lo decide el movimiento y no el Pokemon.
+       "Stone Edge" no tiene hoja propia en el indice y se pinta la de ROCK; un
+       movimiento con hoja propia ("Meteor Fists") pinta la suya. Por eso dos
+       Pokemon del mismo tipo pueden verse distintos: el Ancient Pinsir es BUG
+       pero pega con Brick Break (FIGHTING) y con Guillotine (NORMAL).
+
+       Antes se creia que el servidor mandaba `fx` y `fxHit` con el nombre de la
+       hoja, y se descartaban todos los golpes por no encontrar esos campos. Se
+       admite tambien ese protocolo, por si aparece, pero el de aqui manda. */
+
+    /* Recoge los golpes del servidor y los reproduce en el escenario o en las
+       cards. El indice de hojas se pide aqui para que el primer golpe ya tenga
+       hoja disponible y no se pierda. */
+    function applyHitEvents(hits) {
+        if (!Array.isArray(hits) || !hits.length) return;
+        movesCargar();
+        hits.forEach((hit, i) => {
+            try { applyHitEvent(hit, i); } catch (e) {
+                console.warn('[CUSTOM HUB] golpe:', e);
+            }
+        });
+    }
+
+    /* Que Pokemon de la fila corresponde al slot del golpe.
+
+       El area puede tener MAS salvajes de los que se pintan: una hunt trae 14
+       puntos de aparicion y la fila enseña 4. Asi que el slot del golpe puede
+       ser de un salvaje de verdad y no estar en pantalla.
+
+       Antes, si no habia coincidencia, se caia al heroe y el efecto le salia
+       encima a el, que es lo que mas se nota: un golpe dirigido a un salvaje
+       aparecia sobre el aliado. Ahora, si el slot es de un|area, aunque no este
+       pintado, se busca al que se esta atacando, que es el que dice el
+       servidor con `targetSlot`, y si tampoco, al primero de la fila.
+
+       Lo que no se hace nunca es inventarse un heroe: si el slot es del heroe
+       lo trata el llamante, y si es de un salvaje, el efecto se ve sobre un
+       salvaje. */
+    function sceneWildPorSlot(slot) {
+        const fila = sceneState.hunters;
+        if (!fila || !fila.length) return null;
+        const n = Number(slot);
+        if (!isFinite(n)) return fila[0] || null;
+
+        const porSlot = fila.find(h => h.slot === n);
+        if (porSlot) return porSlot;
+
+        /* No esta en pantalla. Se comprueba que sea un salvaje del area y no un
+           numero que no significa nada. */
+        const delArea = Array.isArray(ccFieldState.mobs)
+            ? ccFieldState.mobs.find(m => Number(m?.slot) === n)
+            : null;
+        if (!delArea) return null;
+
+        /* Se dibuja sobre elEquivalentE mas cercano en el mapa. Antes caia
+           siempre sobre el primero de la fila, que era un Pokemon cualquiera: el
+           equipado reparte los ataques por todo el area y con 4 de 15 salvajes en
+           pantalla casi ningun slot caia donde tocaba. Elijo el que mas se le
+           parece en posicion, que es lo mas cerca que se puede llegar. */
+        const fila0 = delArea.row || 0;
+        const col0 = delArea.col || 0;
+        let mejor = null, mejorDist = Infinity;
+        for (const h of fila) {
+            const d = Math.abs((h.mapaFila || 0) - fila0) + Math.abs((h.mapaCol || 0) - col0);
+            if (d < mejorDist) { mejorDist = d; mejor = h; }
+        }
+        if (mejor) return mejor;
+
+        /* Sin datos de posicion se cae al que se esta atacando, que es lo mejor
+           que se puede saber. */
+        const objetivo = Number(ccFieldState.targetSlot);
+        if (isFinite(objetivo)) {
+            const porObjetivo = fila.find(h => h.slot === objetivo);
+            if (porObjetivo) return porObjetivo;
+        }
+        return fila[0] || null;
+    }
+
+    /* Resuelve UN golpe del servidor.
+
+       Un golpe real es {"slot":5,"amount":3616,"eff":2.5,"move":"Stone Edge",
+       "type":"ROCK"}. El `slot` dice QUIEN RECIBE, no quien ataca: con numero
+       es el indice del salvaje de la fila y en negativo es el heroe. El que
+       ataca es el otro.
+
+       El efecto lo decide el MOVIMIENTO, no el Pokemon: "Stone Edge" no tiene
+       hoja propia y se pinta la de ROCK, que es lo que hace el juego. */
+    function applyHitEvent(hit) {
+        if (!hit || typeof hit !== 'object') return;
+
+        const slot = Number(hit.slot);
+        const recibeHeroe = isFinite(slot) && slot < 0;
+        const heroeEl = sceneState.hero?.el || sceneState.col?.querySelector('.cc-hero') || null;
+        const heroeSpr = sceneState.hero?.spr || null;
+
+        /* Si el escenario 2D no esta montado se delega en las cards. Y si no hay
+           ninguna de las dos, no se hace nada: seria pintar un golpe donde nadie
+           lo espera. */
+        if (!escenaActiva() || !sceneState.col) { movesCardHit(hit, recibeHeroe); return; }
+
+        const wild = recibeHeroe ? sceneWildPorSlot(0) : sceneWildPorSlot(slot);
+        /* Quien recibe y quien ataca, cada uno con su elemento y su sprite. */
+        const dstEl = recibeHeroe ? heroeEl : (wild?.el || null);
+        const dstSpr = recibeHeroe ? heroeSpr : sceneSpriteEl(wild);
+        const atkEl = recibeHeroe ? (wild?.el || null) : heroeEl;
+        const atkSpr = recibeHeroe ? sceneSpriteEl(wild) : heroeSpr;
+
+        /* Que hoja se pinta: la del movimiento y, si no tiene, la de su tipo. El
+           indice se pide aqui porque `movesClaveDe` lo necesita para saber si el
+           movimiento tiene hoja propia. */
+        const clave = movesClaveDe(hit.move, hit.type ||
+            movesTipoDe(recibeHeroe ? (wild?.types) : sceneState.hero?.types));
+        /* Un mismo efecto no se repite dentro del mismo golpe. El juego lleva
+           un Set para eso: sin el, un ataque cuyo fx y fxHit coinciden se
+           pintaria dos veces encimado. */
+        const usados = new Set();
+
+        /* Se lanza un efecto sobre un elemento, respetando el retardo.
+
+           Cada efecto necesita SU PROPIA capa. Si dos compartieran capa, el
+           segundo reiniciaria la animacion del primero y de un golpe con dos
+           efectos solo se veria el ultimo: es justo el caso de `fx` y `fx2`, que
+           el juego pinta a la vez sobre el mismo Pokemon. */
+        const lanzar = (nombre, retardo, destino, sprite) => {
+            if (!nombre || usados.has(nombre) || !destino) return;
+            usados.add(nombre);
+            const go = () => {
+                const capa = sceneMoveCapa(destino, 'cc-move-esc');
+                if (!capa) return;
+                /* La hoja se mide contra el ancho del Pokemon que la recibe, que
+                   es lo que hace que unas se vean enormes y otras en un pixelo. */
+                movesAtaque(capa, nombre, null, undefined, sprite?.offsetWidth || 0)
+                    .then(anim => sceneMoveLimpiar(capa, anim));
+            };
+            if (retardo > 0) window.setTimeout(go, retardo); else go();
+        };
+
+        /* El protocolo antiguo (fx del atacante, fxHit del que recibe) se pinta
+           en los dos sitios. El de este servidor trae un solo efecto y va en el
+           que recibe. */
+        if (hit.fx || hit.fx2) {
+            lanzar(hit.fx, 0, atkEl);
+            lanzar(hit.fx2, Number(hit.fx2DelayMs) || 0, atkEl);
+            const retardoHit = Number(hit.fxHitDelayMs) || 0;
+            lanzar(hit.fxHit, 0, dstEl);
+            lanzar(hit.fxHit2, Number(hit.fxHit2DelayMs) ?? retardoHit, dstEl);
+        } else {
+            /* El protocolo de este servidor trae UN solo efecto por golpe, el del
+               movimiento, y se pinta sobre QUIEN RECIBE, que es donde se ve el
+               impacto y donde el jugador mira.
+
+               Antes se pintaba tambien sobre el atacante, y eso era un desastre:
+               cuando el heroe golpeaba se veia la hoja encima del propio heroe y
+               tapaba la de verdad, que caia sobre el salvaje. Con dos hojas por
+               golpe era imposible saber cual era cual. El atacante no necesita un
+               efecto encima: se le ve la animacion de advance. */
+            lanzar(clave, 0, dstEl, dstSpr);
+        }
+
+        /* El dano lo manda el servidor en `amount`. */
+        const dano = Number(hit.amount) || Number(hit.dmg) || 0;
+
+        /* Si el golpe es para un salvaje, su vida baja en la cuenta propia y la
+           fila se repinta. `sceneRefreshHp` pinta lo que hay en cada etiqueta; el
+           `hpPct` de cada hunter se actualiza antes, que es de donde lee.
+
+           El servidor NO baja el `hp` del savage en su mensaje, asi que sin esto
+           la barra se quedaba llena mientras le pegaban: es lo que se veia. */
+        if (slot >= 0 && dano > 0) {
+            /* Se anota el momento del golpe. Con eso la fila sube a quien esta
+               recibiendo AHORA, que es el combate de verdad, por delante de los
+               que solo estan cerca pero no estan pelando. */
+            sceneGolpeAnotar(slot);
+            const pct = ccVidaGolpe(slot, dano);
+
+            /* Se le baja la barra AL SALVAJE DE ESE SLOT, y solo a el.
+
+               `sceneWildPorSlot` localiza el node por slot, con la distancia en
+               el mapa como criterio si no esta en pantalla. Y la fila se
+               construye de forma que quien recibe un golpe SIEMPRE esta
+               pintado, asi que normalmente es una busqueda directa.
+
+               Antes caia en el de delante cuando el slot no se encontraba, y eso
+               es justo lo que se reportaba: el efecto y la baja de vida salian
+               en un Pokemon que no lo estaba recibiendo. Con la fila corregida
+               ese caso ya no se da; si aun asi faltara el node, no se toca la
+               barra de nadie, porque bajarle la de un vecino es peor que no
+               bajarla. */
+            if (pct !== null && wild) {
+                wild.hpPct = Math.max(0, Math.min(100, pct));
+                sceneRefreshHp();
+            }
+        }
+
+        /* Quien ataca se echa hacia delante, como en el juego.
+           Quien recibe retrocede, y si es el heroe se encarga sceneHeroHurt, que
+           ademas tiembla la pantalla y levanta el numero del dano.
+
+           No se le puede aplicar las dos cosas al heroe: antes se le ponia
+           "cc-hurt" aqui y 260 ms despues otra vez dentro de sceneHeroHurt, con
+           lo que la animacion de retroceso se reiniciaba a media vuelta y se
+           leia como un tirón en vez de como un golpe. Y el temblor de pantalla
+           salia dos veces seguidas. Aqui solo se hace el retroceso de los
+           salvajes; el del heroe lo lleva su propia via. */
+        if (atkSpr) sceneReanimar(atkSpr, 'cc-atk', 420);
+        if (recibeHeroe) {
+            window.setTimeout(() => sceneHeroHurt(dano), 200);
+        } else if (dstSpr) {
+            sceneReanimar(dstSpr, 'cc-hurt', 420);
+        }
+
+        /* La pantalla tiembla con la fuerza del golpe. El juego lo hace con la
+           magnitud del dano, asi que se calcula igual. Al heroe no se le anade
+           aqui porque sceneHeroHurt ya la tiembla. */
+        const sacudida = Number(hit.shakeMs) || Math.min(420, 120 + dano / 12);
+        if (sacudida > 0 && dstEl && !recibeHeroe) {
+            const col = sceneState.col;
+            col.classList.remove('cc-shake');
+            void col.offsetWidth;
+            col.classList.add('cc-shake');
+            window.setTimeout(() => col.classList.remove('cc-shake'), Math.min(sacudida, 400));
+        }
+    }
+
+    /* Quita la capa de efecto cuando su animacion acaba. Sin esto se queda el
+       fondo de la hoja pegado encima del Pokemon entre golpe y golpe.
+
+       El aviso de fin se saca de la propia animacion, que es lo exacto. Antes
+       se escuchaba el evento `animationend` del DOM, que es de las animaciones
+       CSS: la hoja se reproduce con la API de Web Animations, y ese evento nunca
+       salia, asi que la capa solo se limpiaba por el temporizador de seguridad. */
+    function sceneMoveLimpiar(capa, anim) {
+        if (!capa) return;
+        const quitar = () => { if (capa.isConnected) capa.remove(); };
+        if (anim && anim.finished && typeof anim.finished.then === 'function') {
+            anim.finished.then(quitar, quitar);
+        }
+        window.setTimeout(quitar, 2500);
+    }
+
+    /* Golpe recibido en los modos de card. No se pinta nada si el escenario 2D
+       esta montado, porque ahi ya se ha pintado y se veria dos veces. */
+    function movesCardHit(hit, recibeHeroe, cardForzado) {
+        /* La hoja es la del movimiento, y si no la tiene, la de su tipo. */
+        const clave = movesClaveDe(hit.move, hit.type);
+        const usados = new Set();
+
+        /* El efecto se pinta donde este DIBUJADO el Pokemon que lo recibe.
+
+           En el modo card hay un problema: la card del salvaje solo esta montada
+           1 s de cada 9 (medido con MutationObserver), asi que en la mayor parte
+           del tiempo no hay donde pintar el golpe a un salvaje y se perdia. La
+           capa de captura, en cambio, esta siempre, y es donde el propio script
+           dibuja al salvaje durante la captura. Ahi se pinta. */
+        const card = cardForzado || (recibeHeroe
+            ? document.getElementById('my-custom-poke-card')
+            : document.getElementById('my-custom-mob-card'));
+        const enCard = card
+            ? (card.querySelector('.cc-mob-art, .cc-art, .cc-stage, .cc-body') || card)
+            : null;
+
+        let destino = enCard;
+        let flotante = false;
+        if (!destino && !recibeHeroe) {
+            const capa = ccCaptureLayer();
+            if (capa && ccEnemigoEnPantalla) {
+                destino = movesCapa('cc-move-flotante');
+                destino.style.left = `${ccEnemigoEnPantalla.x}px`;
+                destino.style.top = `${ccEnemigoEnPantalla.y}px`;
+                capa.appendChild(destino);
+                flotante = true;
+            }
+        }
+        if (!destino) return;
+
+        /* El temblor al recibir el golpe, en los siete temas: se aplica al
+           contenedor del sprite, que es el comun a todos. */
+        if (card && !flotante) ccCardTemblor(card, recibeHeroe);
+
+        /* Cada efecto con su propia capa, para que dos del mismo golpe se vean
+           los dos y no solo el ultimo. */
+        const lanzar = (nombre, retardo) => {
+            if (!nombre || usados.has(nombre)) return;
+            usados.add(nombre);
+            const go = () => {
+                const capa = flotante ? destino : movesCapa('cc-move-card');
+                if (!flotante) destino.appendChild(capa);
+                /* Igual que en el escenario: la hoja se mide contra el ancho del
+                   Pokemon de la card. */
+                movesAtaque(capa, nombre, null, undefined, (flotante ? 118 : destino.offsetWidth) || 0)
+                    .then(anim => {
+                        if (!anim) { capa.remove(); return; }
+                        sceneMoveLimpiar(capa, anim);
+                    });
+            };
+            if (retardo > 0) window.setTimeout(go, retardo); else go();
+        };
+        if (hit.fxHit) {
+            lanzar(hit.fxHit, 0);
+            lanzar(hit.fxHit2, Number(hit.fxHit2DelayMs) ?? Number(hit.fxHitDelayMs) ?? 0);
+        } else {
+            /* Aqui solo hay una card por bando, asi que el efecto va en la que
+               recibe, que es la unica que tiene sentido marcar. */
+            lanzar(clave, 0);
+        }
+    }
+
+    /* El temblor de recibir un golpe, en los siete modos de card.
+
+       Se pone en la CARD ENTERA, no en el contenedor del sprite. Antes se
+       ponia solo en el sprite y el efecto se quedaba a medias: la ficha de
+       nombre, la barra de vida y el marco de la card se quedaban quietos
+       mientras la imagen se balanceaba dentro, y eso no lee como un golpe sino
+       como un dibujo que se ha descuadrado. Si la card da un bote entero, de
+       borde a borde, se lee como que le han dado de lleno.
+
+       El pivote va abajo ("transform-origin: 50% 100%") para que gire sobre su
+       base y no flotando, que es lo que hace un cuerpo al recibir un golpe.
+
+       La duracion es corta a proposito: en el juego los golpes llegan cada poco y
+       un temblor largo se solaparia con el siguiente. */
+    function ccCardTemblor(card, fuerte) {
+        if (!card) return;
+        const clase = fuerte ? 'cc-temblor-fuerte' : 'cc-temblor';
+        card.classList.remove('cc-temblor', 'cc-temblor-fuerte');
+        /* El reflow vacio reinicia la animacion: sin el, si la clase ya estaba
+           puesta el navegador no la vuelve a ejecutar y el segundo golpe
+           seguido no se ve. */
+        void card.offsetWidth;
+        card.classList.add(clase);
+        window.setTimeout(() => card.classList.remove(clase), 420);
+    }
+    /* --------------------------------------------------------------- */
     /* EFECTOS DE GOLPE, DAÑO Y CAPTURA                               */
     /* --------------------------------------------------------------- */
     /* Se aplican como clases sobre la RAÍZ de la card, nunca sobre su CSS
@@ -721,23 +1413,17 @@
 
     function ccCardFx(card, kind) {
         if (!card) return;
-        const className = kind === 'hit' ? 'cc-hit' : 'cc-hurt';
-        card.classList.remove(className);
+        /* Solo el balancedo de recibir. El efecto de golpe antiguo (`cc-hit`) se
+           elimino entero: el efecto de un ataque lo pone la hoja real que manda
+           el servidor, y se pintaba en dos sitios a la vez.
+
+           El parametro `kind` se conserva por si algun dia hace falta distinguir
+           dos reacciones; de momento siempre llega 'hurt'. */
+        if (kind && kind !== 'hurt') return;
+        card.classList.remove('cc-hurt');
         void card.offsetWidth;
-        card.classList.add(className);
-
-        const ring = document.createElement('span');
-        ring.className = `cc-fx-ring go${kind === 'hurt' ? ' red' : ''}`;
-        card.appendChild(ring);
-        ring.addEventListener('animationend', () => ring.remove(), { once: true });
-
-        if (kind === 'hit') {
-            const slash = document.createElement('span');
-            slash.className = 'cc-fx-slash go';
-            card.appendChild(slash);
-            slash.addEventListener('animationend', () => slash.remove(), { once: true });
-        }
-        card.addEventListener('animationend', () => card.classList.remove(className), { once: true });
+        card.classList.add('cc-hurt');
+        card.addEventListener('animationend', () => card.classList.remove('cc-hurt'), { once: true });
     }
 
     function ccWinFlash(card) {
@@ -769,6 +1455,17 @@
        lista en ese mismo instante, asi que para ese caso no hay card a la que
        anclarse y el efecto se dibuja en el punto que se guardo. */
     let ccLastEnemySpot = null;
+
+    /* Donde esta dibujado el salvaje, y este NO se borra cuando la card
+       enemiga desaparece.
+
+       La diferencia con el de arriba es el motivo: ccLastEnemySpot solo hace
+       falta mientras dura una captura, asi que se limpia en cuanto no hay
+       captura en vuelo. Para pintar los golpes hace falta mas tiempo, porque la
+       card del salvaje solo esta montada 1 s de cada 9 (medido con
+       MutationObserver) y sin este punto la mayoria de los golpes al salvaje se
+       quedarian sin sitio donde dibujarse en el modo card. */
+    let ccEnemigoEnPantalla = null;
 
     function ccEnemySpot(enemy, layer) {
         if (!enemy || !layer) return null;
@@ -971,12 +1668,18 @@
                 ccWinFlash(hero);
             }
             window.setTimeout(() => {
-                if (!success) badge.remove();
+                /* La insignia se va SIEMPRE. Antes solo se quitaba cuando la
+                   captura fallaba, y en el acierto se quedaba pegada en la card
+                   para siempre: el texto «Geodude capturado» se acumulaba y
+                   ocupaba el sitio del Pokemon. El nodo se borra siempre; la
+                   animacion de salida la deja desvanecerse, no desaparecer de
+                   golpe. */
+                badge.remove();
                 captureState.busy = false;
                 captureState.ballId = null;
                 captureState.spot = null;
                 captureState.species = '';
-            }, success ? 1800 : 1500);
+            }, success ? 1900 : 1600);
         }, frames * 40 + 40);
     }
 
@@ -1010,48 +1713,43 @@
         const enemy = document.getElementById('my-custom-mob-card');
         if (!hero || !enemy) { ccLastHeroHp = null; ccLastEnemyHp = null; return; }
 
-        /* El aliado. Si baja su vida ha recibido un golpe, y se avisa con la
-           cifra real. Antes solo se animaba cuando al HEROE le SUBIA la vida
-           (o sea, cuando atacaba), y el golpe recibido no tenia nada. */
+        /* Los tipos de cada Pokemon, para elegir la hoja de golpe. Se sacan del
+           nombre que pinta la card NATIVA del juego, que es la unica fuente
+           aqui: la card de este script no guarda los datos de la especie, solo
+           los pinta. Con lo que no haya nombre se usa NORMAL, que siempre tiene
+           hoja. */
+        const tipoDe = (que) => {
+            const nativa = document.querySelector(que + ' .cbt-cardname');
+            const nombre = nativa ? nativa.textContent.trim() : '';
+            return nombre ? ccCreatureTypes(nombre)[0] : 'NORMAL';
+        };
+
+        /* NOTAS SOBRE LOS GOLPES.
+
+           Antes, todo esto comparaba la barra de un ciclo con la del anterior y,
+           si habia bajado, llamaba a sceneAttack: un empujon al de delante, un
+           retroceso al resto y dos avisos («Geodude golpeó a Geodude», «Geodude
+           recibió 7 de daño»).
+
+           Eso era sondeadear la barra, no recibir el golpe. El golpe de verdad
+           llega por el socket, en `hits[]`, con su movimiento, su tipo y su daño,
+           y lo lleva `applyHitEvent`. Los dos caminos se disparaban a la vez y
+           se pisaban: el viejo adivinaba a quien habia sido golpeado (siempre al
+           de delante), inventaba el daño (18 fijo) y hacia retroceder a salvajes
+           que no lo habian recibido.
+
+           Asi que aqui ya no se dispara ningun golpe. Lo unico que queda es leer
+           la vida para tenerla al dia. Las reacciones por golpe salen del socket. */
         const heroHp = ccVidaDe('hero');
-        if (heroHp !== null && ccLastHeroHp !== null && heroHp < ccLastHeroHp - 0.01) {
-            if (escenaActiva() && sceneState.col) {
-                sceneHeroHurt(ccDanoReal(ccLastHeroHp, heroHp));
-            } else {
-                ccCardFx(hero, 'hurt');
-            }
-        }
         if (heroHp !== null) ccLastHeroHp = heroHp;
 
-        /* El salvaje. Solo el de delante recibe golpe: es el indice 0 de la
-           fila, el mas cercano al aliado.
-
-           El numero se saca en HP de verdad, no en puntos de porcentaje: un
-           -18 de porcentaje y un -18 de vida son cosas distintas, y con un
-           maxHp de once mil el segundo es lo que quiere ver el jugador. */
         const objetivo = escenaActiva() && sceneState.col ? sceneState.hunters[0] : null;
         if (objetivo) {
             const vida = ccVidaSalvaje(objetivo);
-            if (vida) {
-                if (ccLastEnemyHp !== null && vida.hp < ccLastEnemyHp - 0.01) {
-                    sceneAttack(ccDanoReal(ccLastEnemyHp, vida.hp));
-                }
-                ccLastEnemyHp = vida.hp;
-                return;
-            }
-            /* Sin dato del servidor se usa el porcentaje que ya tiene la fila,
-               que al menos es coherente consigo mismo. */
-            const pct = Math.round(objetivo.hpPct);
-            if (ccLastEnemyHp !== null && pct < ccLastEnemyHp - 0.01) {
-                sceneAttack(ccDanoReal(ccLastEnemyHp, pct));
-            }
-            ccLastEnemyHp = pct;
+            ccLastEnemyHp = vida ? vida.hp : Math.round(objetivo.hpPct);
             return;
         }
         const enemyHp = ccPctOf(document.querySelector('#my-custom-mob-card .mob-hp-fill'));
-        if (enemyHp !== null && ccLastEnemyHp !== null && enemyHp < ccLastEnemyHp - 0.01) {
-            ccCardFx(enemy, 'hurt');
-        }
         if (enemyHp !== null) ccLastEnemyHp = enemyHp;
     }
 
@@ -1096,6 +1794,10 @@
                 status.textContent = effectivePercent === requestedPercent
                     ? `Aplicado: ${effectivePercent}%`
                     : `Solicitado: ${requestedPercent}% · ajuste responsivo: ${effectivePercent}%`;
+                /* La fila se marca cuando el ajuste responsivo ha recortado lo que
+                   se pidio: es el unico caso en que el valor del desplegable no es
+                   el que se ve en pantalla, y conviene que se note. */
+                status.classList.toggle('is-reduced', effectivePercent !== requestedPercent);
             }
         });
         lastEventSyncAt = 0;
@@ -1920,6 +2622,52 @@
         .cc-spr { display:block; object-fit:contain; }
         .cc-spr.pixel { image-rendering:pixelated; }
         .cc-spr.anim  { animation:ccBob 1.6s ease-in-out infinite; }
+
+        /* El sprite del aliado sale mirando a la IZQUIERDA en los GIF de PokeAPI.
+           Se voltea con la propiedad "scale", que es independiente de
+           "transform": las animaciones de los themes ("ccBob") usan "transform",
+           y si el volteo se hiciera con el se pisarian y el Pokemon quedaria
+           mirando a un lado y de perfil.
+
+           Solo el aliado: la card del salvaje lleva la clase "cc-mob" y se queda
+           como sale, que es como se ve en el juego. */
+        .custom-poke-card:not(.cc-mob) .cc-spr { scale: -1 1; }
+
+        /* TAMBALEO AL RECIBIR UN GOLPE, en los siete modos de card.
+
+           No es una vibracion: el Pokemon se BALANCEA como un pendulo, girando
+           sobre su base. Por eso el pivote va abajo ("transform-origin: 50%
+           100%") y los fotogramas son rotaciones, no desplazamientos laterales:
+           con translateX el dibujo se deslizaba de lado a lado y se leia como un
+           fallo de dibujo; girando sobre los pies se lee como que le han dado un
+           golpe y ha tenido que equilibrare.
+
+           El golpe fuerte se balancea el doble que el normal. La duracion es
+           corta a proposito: los golpes llegan muy seguidos y un balanceo largo
+           se solaparia con el siguiente.
+
+           LAS REGLAS VAN A LA CARD ENTERA, no a un sprite suelto dentro. Antes
+           eran .custom-poke-card .cc-mob-art.cc-temblor y sus hermanas, que
+           solo hacian temblar la imagen: el marco, la barra de vida y el cartel
+           se quedaban clavados y el efecto se leia como un fallo de dibujo. Con
+           la clase en .custom-poke-card da un bote entero, de borde a borde.
+
+           Se deja el origen de la transformacion abajo porque el natural de la
+           regla no es el de la card (cada tema coloca el suyo), y sin fijarlo el
+           giro sale alrededor del centro y parece que la card flota. */
+        .custom-poke-card.cc-temblor { transform-origin:50% 100%;
+            animation:ccTambalear .38s cubic-bezier(.36,.07,.19,.97); }
+        .custom-poke-card.cc-temblor-fuerte { transform-origin:50% 100%;
+            animation:ccTambalearFuerte .5s cubic-bezier(.36,.07,.19,.97); }
+        @keyframes ccTambalear { 0% { transform:rotate(0deg) translateY(0); }
+            18% { transform:rotate(-4.5deg) translateY(-1px); }
+            38% { transform:rotate(3.8deg); } 58% { transform:rotate(-2.6deg); }
+            78% { transform:rotate(1.5deg); } 100% { transform:rotate(0deg); } }
+        @keyframes ccTambalearFuerte { 0% { transform:rotate(0deg) translateY(0); }
+            15% { transform:rotate(-8.5deg) translateY(-2px); }
+            32% { transform:rotate(6.5deg); } 50% { transform:rotate(-4.5deg); }
+            68% { transform:rotate(2.8deg); } 85% { transform:rotate(-1.4deg); }
+            100% { transform:rotate(0deg); } }
         @keyframes ccBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 
         .cc-ic { width:1em; height:1em; flex:0 0 auto; stroke:currentColor; fill:none;
@@ -2270,16 +3018,13 @@
         .custom-poke-card.cc-mob.cc-theme-7 .cc-mobbar { margin:9px 11px 10px; }
 
         /* ================================================================ */
-        /* EFECTOS DE GOLPE Y DAÑO (raíz de la card, válido en los 7 temas) */
+        /* EFECTOS DE DAÑO (raíz de la card, válido en los 7 temas) */
         /* ================================================================ */
-        .custom-poke-card.cc-hit { animation:ccCardHit .44s cubic-bezier(.3,1.45,.5,1), ccFlashWhite .44s ease-out; }
-        @keyframes ccCardHit {
-            0%{transform:translateX(0) scale(1)}
-            18%{transform:translateX(8px) scale(1.04)}
-            40%{transform:translateX(-5px) scale(.985)}
-            64%{transform:translateX(2.5px) scale(1.008)}
-            100%{transform:translateX(0) scale(1)} }
-        @keyframes ccFlashWhite { 0%{filter:brightness(2.6) saturate(.35)} 100%{filter:none} }
+        /* Aqui ya no esta el efecto de golpe antiguo, con su empujon y su destello
+           blanco. El efecto de un ataque lo pone la hoja real que manda el
+           servidor, pintada por "movesCardHit", tanto en las cards como en el
+           escenario 2D. Aqui solo queda el balanceo de recibir, que no es un
+           efecto: es la reaccion del cuerpo. */
         .custom-poke-card.cc-hurt { animation:ccCardHurt .42s ease-out, ccFlashRed .42s ease-out; }
         @keyframes ccCardHurt {
             0%,100%{transform:translateX(0) rotate(0)}
@@ -2292,19 +3037,26 @@
             0%{filter:brightness(1.75) sepia(1) saturate(7) hue-rotate(-38deg)}
             60%{filter:brightness(1.25) sepia(.6) saturate(4) hue-rotate(-38deg)}
             100%{filter:none} }
-        .cc-fx-ring { position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:6;
-            border:2px solid rgba(255,255,255,.9); opacity:0; }
-        .cc-fx-ring.go { animation:ccRingOut .42s cubic-bezier(.2,.8,.3,1); }
-        @keyframes ccRingOut { 0%{opacity:.95;transform:scale(1)} 100%{opacity:0;transform:scale(1.06)} }
-        .cc-fx-ring.red { border-color:rgba(255,90,90,.95); }
-        .cc-fx-slash { position:absolute; left:50%; top:8%; width:2px; height:84%; border-radius:2px;
-            pointer-events:none; z-index:7; opacity:0; transform-origin:50% 50%;
-            background:linear-gradient(180deg,transparent,rgba(255,255,255,.95),transparent);
-            transform:translateX(-50%) rotate(-16deg); }
-        .cc-fx-slash.go { animation:ccSlashOut .3s ease-out; }
-        @keyframes ccSlashOut {
-            0%{opacity:1;transform:translateX(-50%) rotate(-16deg) scaleY(.2)}
-            100%{opacity:0;transform:translateX(-50%) rotate(-16deg) scaleY(1.15)} }
+        /* ---------- EFECTOS DE ATAQUE DEL JUEGO ----------
+           La capa donde se pinta la hoja de fotogramas que el juego publica en
+           /assets/effects/moves/. El recorte lo hace el overflow:hidden, porque
+           la hoja es mucho mas alta que un fotograma y sin esto se veria entera.
+
+           El ancho y el alto los pone movesReproducir con el tamano y la escala
+           que declara el indice de cada hoja, que son distintos en cada una. */
+        .cc-move { position:absolute; left:50%; top:50%; pointer-events:none;
+            transform:translate(-50%,-50%); overflow:hidden;
+            background-repeat:no-repeat; image-rendering:pixelated; }
+        /* En el escenario el efecto se ancla al Pokemon que lo recibe. */
+        .cc-move.cc-move-esc { z-index:11; margin-top:-34%; }
+        /* En la card va centrado sobre el sprite, que es lo que hay. */
+        .cc-move.cc-move-card { z-index:7; }
+        /* Cuando la card del salvaje no esta montada (solo lo esta 1 s de cada 9)
+           el efecto se pinta en la capa de captura, en el punto donde se dibuja
+           el Pokemon. Sin esto los golpes al salvaje se perdian en card. */
+        .cc-move.cc-move-flotante { position:absolute; z-index:11; pointer-events:none;
+            transform:translate(-50%,-50%); overflow:hidden;
+            background-repeat:no-repeat; image-rendering:pixelated; }
 
         /* ================================================================ */
         /* CAPTURA: capa sobre la fila de cards + sprites del juego         */
@@ -2364,7 +3116,9 @@
             background:rgba(8,13,20,.88); border:1px solid rgba(140,190,255,.5);
             box-shadow:0 6px 18px rgba(0,0,0,.5); opacity:0; pointer-events:none; }
         .cc-cap-badge img { width:14px; height:14px; image-rendering:pixelated; }
-        .cc-cap-badge.go { animation:ccBadgeIn .4s cubic-bezier(.3,1.5,.5,1) forwards; }
+        .cc-cap-badge.go { animation:ccBadgeIn .4s cubic-bezier(.3,1.5,.5,1) both,
+                                     ccBadgeFuera .5s ease-in 1.3s forwards; }
+        @keyframes ccBadgeFuera { 0% { opacity:1; } 100% { opacity:0; transform:translate(-50%,-50%) scale(.86); } }
         .cc-cap-badge.fail { border-color:rgba(255,120,120,.55); color:#ffd7d7; }
         .cc-cap-badge.fail.go { animation:ccBadgeOut 1.5s ease-out forwards; }
         @keyframes ccBadgeIn {
@@ -2658,6 +3412,18 @@
         }
         .cc-scale-row b { display:block !important;color:#e2e8f0 !important;font-size:12px !important;font-weight:700 !important; }
         .cc-scale-row p { margin:3px 0 0 !important;color:#7890a2 !important;font-size:9px !important;line-height:1.35 !important; }
+        /* Estado real de cada zona. applyScriptScales lo rellena: "Aplicado: 100%"
+           cuando lo pedido cabe en pantalla, y "Solicitado: 140% · ajuste
+           responsivo: 92%" cuando el ajuste responsivo lo ha recortado. Ese
+           segundo caso se pinta en ambar, que es cuando de verdad conviene
+           saberlo. La regla :empty lo oculta hasta que hay texto, para no dejar
+           un hueco en el panel antes del primer repintado. */
+        .cc-scale-status {
+            display:block !important;margin:5px 0 0 !important;color:#7c8ea1 !important;
+            font-size:9px !important;font-style:normal !important;line-height:1.3 !important;
+        }
+        .cc-scale-status.is-reduced { color:#fbbf24 !important; }
+        .cc-scale-status:empty { display:none !important; }
         .cc-scale-control select {
             width:100% !important;min-height:32px !important;padding:5px 8px !important;
             border:1px solid rgba(148,178,214,.22) !important;border-radius:7px !important;
@@ -2835,7 +3601,7 @@
             box-shadow:0 0 8px rgba(190,215,255,.5); }
         .cc-suelo .cc-cuerpo { position:relative; flex:1 1 auto; min-height:0;
             background:
-                repeating-linear-gradient(90deg, transparent 0 96px, rgba(0,0,0,.42) 96px 98px),
+                repeating-linear-gradient(90deg, transparent 0 99px, rgba(0,0,0,.42) 99px 101px),
                 repeating-linear-gradient(180deg, transparent 0 40px, rgba(0,0,0,.38) 40px 42px,
                                           rgba(255,255,255,.06) 42px 44px),
                 linear-gradient(180deg,#4d5665 0,#39414e 42%,#252b35 74%,#12151b 100%);
@@ -2855,6 +3621,11 @@
             pointer-events:none;
             background:linear-gradient(180deg, transparent, rgba(0,0,0,.66)); }
         @keyframes ccSueloCima { from { background-position:0 0; } to { background-position:78px 0; } }
+        /* El cuerpo recorre 404 px, que es una baldosa entera de la roca. Antes
+           la rejilla horizontal repetia cada 98 px, y 404 no era multiplo de 98:
+           al cerrar el bucle la rejilla saltaba 12 px de golpe, una costura que
+           se veia cada vez que pasaba. Con la rejilla a 101 px, 404 es exactamente
+           cuatrotiles y el salto desaparece. */
         @keyframes ccSueloCuerpo { from { background-position:0 0; } to { background-position:404px 0; } }
         .cc-scene.cc-paused .cc-suelo .cc-cima,
         .cc-scene.cc-paused .cc-suelo .cc-cuerpo,
@@ -2887,88 +3658,17 @@
            reutilizar: cada panel declara su fondo opaco y su borde, y asi se ve
            de un vistazo que panel es cual. */
 
-        /* ---------- paneles ----------
-           Superficie opaca, borde de 1 px del color del tipo y una franja de
-           color de 3 px arriba: eso sustituye al reflejo y al canto del cristal.
-           El texto va claro sobre fondo oscuro, sin text-shadow: con superficie
-           opaca la sombra solo hacia la letra borrosa. */
+        /* ---------- HUD ----------
+        El contenedor se conserva aunque este vacio. Lo que se elimino fue el
+        panel de salvajes que llevaba dentro: con las barras ya en la etiqueta
+        de cada Pokemon, repetia delante de los ojos lo que estaba a la vista y
+        tapaba el terreno de la izquierda.
+
+        Sin hijos, un contenedor vacio no se ve ni intercepta el raton, asi que
+        se deja con sus valores, que no estorban y de los que dependen el alto de
+        la banda de suelo y la colocacion de los sprites. */
         .cc-esc-hud { position:absolute; inset:0; z-index:13; display:flex; justify-content:space-between;
-            align-items:flex-start; gap:10px; padding:9px 10px; pointer-events:none; }
-        .cc-pnl { position:relative; min-width:0; border-radius:4px; padding:9px 11px;
-            background:#12161f; border:1px solid var(--ac,#3b82f6);
-            box-shadow:4px 4px 0 rgba(0,0,0,.55); }
-        .cc-pnl::before { content:""; position:absolute; left:-1px; right:-1px; top:-1px;
-            height:3px; border-radius:3px 3px 0 0; background:var(--ac,#3b82f6); }
-        .cc-pnl-aliado { width:min(272px, 44%); }
-        .cc-pnl-enemigos { width:min(252px, 40%); }
-        .cc-pnl-head { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
-        /* La etiqueta del tipo es un bloque de color SOLIDO con el texto en negro:
-           con la superficie opaca, el negro sobre el color del tipo tiene mucho
-           mas contraste que el blanco que se usaba sobre el cristal. */
-        .cc-pnl-tier { font-size:7.5px; font-weight:800; letter-spacing:.11em; text-transform:uppercase;
-            padding:3px 6px; border-radius:2px; color:#0b0f16; background:var(--ac,#60a5fa);
-            white-space:nowrap; }
-        .cc-pnl-name { font-size:12px; font-weight:800; color:#f4f8fd; white-space:nowrap;
-            overflow:hidden; text-overflow:ellipsis; }
-        .cc-pnl-lv { margin-left:auto; font-size:9.5px; font-weight:800; color:#93a7bd; white-space:nowrap; }
-/* Barras planas: canal hueco con borde duro y relleno de color SOLIDO,
-           sin degradado ni halo. Un degradado sobre fondo opaco no aporta nada
-           y hace la barra mas corta de leer. */
-        .cc-bar { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
-        .cc-bar:last-child { margin-bottom:0; }
-        .cc-bar .cc-blbl { font-size:7.5px; font-weight:800; letter-spacing:.06em; color:#8fa3ba;
-            width:20px; flex:0 0 20px; }
-        .cc-bar .cc-btrack { flex:1; min-width:0; height:9px; border-radius:2px; overflow:hidden;
-            background:#0a0d14; border:1px solid #2a3342; }
-        .cc-bar .cc-btrack i { display:block; height:100%; width:100%; border-radius:1px;
-            background:#22c55e; transition:width .35s ease; }
-        /* Por debajo del 25% la barra pasa al color de alarma: lo pone
-           scenePintarHud cuando lee la vida de la card. */
-        .cc-bar .cc-btrack i.cc-crit { background:#ef4444; }
-        .cc-bar.cc-xp .cc-btrack { height:7px; }
-        .cc-bar.cc-xp .cc-btrack i { background:#3b82f6; }
-        .cc-bar .cc-bval { font-size:8.5px; font-weight:800; color:#93a7bd; width:32px; flex:0 0 32px;
-            text-align:right; }
-        .cc-pnl-foot { margin-top:7px; padding-top:6px; border-top:1px solid #242c39;
-            font-size:8.5px; font-weight:700; color:#7d90a6; display:flex;
-            justify-content:space-between; gap:6px; }
-
-/* ---------- lista de enemigos ----------
-           Filas planas: fondo solido, sin desenfoque. La del objetivo se
-           distingue por el fondo mas claro y el borde del color, no por un
-           brillo encima. */
-        .cc-en-list { display:flex; flex-direction:column; gap:3px; }
-        .cc-en { position:relative; display:flex; align-items:center; gap:6px; padding:5px 7px;
-            border-radius:3px; background:#0e131b; border:1px solid #232c3a; }
-        .cc-en.cc-objetivo { background:#18202b; border-color:var(--ac,#fb7185); }
-        /* Marca de cual es el objetivo: es el unico al que se le lanza la bola.
-           Es un cuadrado relleno, del color del tipo, no un rombo con halo: en
-           plano el simbolo se distingue por la forma y el color solido. */
-        .cc-en.cc-objetivo::before { content:""; position:absolute; left:-1px; top:-1px;
-            bottom:-1px; width:3px; border-radius:3px 0 0 3px; background:var(--ac,#fb7185); }
-        .cc-en-dot { width:8px; height:8px; border-radius:1px; flex:0 0 8px; background:currentColor; }
-        .cc-en-name { font-size:10px; font-weight:700; color:#d7e2ee; white-space:nowrap;
-            overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
-        .cc-en.cc-objetivo .cc-en-name { color:#fff; font-weight:800; }
-        .cc-en-track { width:48px; height:7px; border-radius:2px; flex:0 0 48px; overflow:hidden;
-            background:#0a0d14; border:1px solid #2a3342; }
-        .cc-en-track i { display:block; height:100%; background:#ef4444; transition:width .3s; }
-        .cc-en-pct { font-size:7.5px; font-weight:700; color:#8fa3ba; flex:0 0 auto;
-            min-width:24px; text-align:right; }
-        .cc-en-foot { margin-top:7px; padding-top:6px; border-top:1px solid #242c39;
-            font-size:8.5px; font-weight:700; color:#7d90a6; }
-
-        /* ---------- bolas ----------
-           Pildora opaca. Las esquinas se quedan redondeadas porque una pildora
-           de 999px es un tag, no un panel: aplanar el resto no obliga a
-           hacer un rectangulo. */
-        .cc-esc-balls { position:absolute; left:50%; top:9px; transform:translateX(-50%); z-index:14;
-            display:flex; align-items:center; gap:6px; padding:5px 12px; border-radius:999px;
-            background:#12161f; border:1px solid #2a3342;
-            box-shadow:3px 3px 0 rgba(0,0,0,.55); }
-        .cc-esc-balls img { width:15px; height:15px; image-rendering:pixelated; }
-        .cc-esc-balls span { font-size:10px; font-weight:800; color:#d9e5f2; }
-
+            align-items:flex-end; gap:10px; padding:0 10px 8px; pointer-events:none; }
 /* ---------- notificaciones ----------
            Centradas y cerca del borde superior, no en la esquina. El aviso es
            un bloque opaco con una barra de color a la izquierda y el icono
@@ -2979,78 +3679,171 @@
            que en una maquina sin esa fuente salian como un cuadrado vacio o
            directamente como un glifo de otro idioma. Un SVG se ve igual en
            todas. */
-        .cc-toasts { position:absolute; left:50%; top:48px; transform:translateX(-50%); z-index:16;
-            display:flex; flex-direction:column; align-items:center; gap:4px; pointer-events:none;
-            max-width:74%; }
-        .cc-toast { position:relative; display:flex; align-items:center; gap:8px; padding:7px 13px 7px 11px;
-            border-radius:3px; font-size:11px; font-weight:800; color:#f4f8fd; background:#12161f;
-            border:1px solid var(--ac,#3b82f6); box-shadow:3px 3px 0 rgba(0,0,0,.55);
-            animation:ccToastIn .3s cubic-bezier(.2,1.3,.4,1) both; white-space:nowrap; }
+        .cc-toasts { position:absolute; left:50%; top:34px; transform:translateX(-50%); z-index:16;
+            display:flex; flex-direction:column; align-items:center; gap:3px; pointer-events:none;
+            max-width:76%; }
+        /* Aviso compacto: una sola linea, icono de 14 px, 9 px de cuerpo y
+           padding corto. Antes ocupaba 11 px de cuerpo y 7 px de padding, y con
+           tres avisos a la vez el bloque se comia un cuarto de la escena. */
+        .cc-toast { position:relative; display:flex; align-items:center; gap:6px; padding:4px 9px 4px 8px;
+            border-radius:3px; font-size:9px; font-weight:700; color:#f4f8fd; background:#12161f;
+            border:1px solid var(--ac,#3b82f6); box-shadow:2px 2px 0 rgba(0,0,0,.55);
+            animation:ccToastIn .26s cubic-bezier(.2,1.3,.4,1) both; white-space:nowrap; }
         /* La barra de color es lo que marca el tipo del aviso, sin pintar todo
            el bloque: dos capturas seguidas no se confunden. */
         .cc-toast::before { content:""; position:absolute; left:-1px; top:-1px; bottom:-1px;
-            width:4px; border-radius:3px 0 0 3px; background:var(--ac,#3b82f6); }
-        .cc-toast.cc-out { animation:ccToastOut .3s ease forwards; }
-        @keyframes ccToastIn { 0% { opacity:0; transform:translateY(-16px) scale(.95); }
+            width:3px; border-radius:3px 0 0 3px; background:var(--ac,#3b82f6); }
+        .cc-toast.cc-out { animation:ccToastOut .24s ease forwards; }
+        @keyframes ccToastIn { 0% { opacity:0; transform:translateY(-12px) scale(.96); }
             100% { opacity:1; transform:none; } }
-        @keyframes ccToastOut { to { opacity:0; transform:translateY(-10px) scale(.97); } }
+        @keyframes ccToastOut { to { opacity:0; transform:translateY(-8px) scale(.98); } }
         /* Cuadro del icono: bloque solido del color del aviso, con el dibujo en
-           blanco encima. En plano, el contraste lo da el relleno, no el halo. */
-        .cc-toast .cc-tico { width:18px; height:18px; flex:0 0 18px; display:grid; place-items:center;
+           el blanco encima. En plano, el contraste lo da el relleno, no el halo. */
+        .cc-toast .cc-tico { width:14px; height:14px; flex:0 0 14px; display:grid; place-items:center;
             border-radius:2px; background:var(--ac,#3b82f6); }
-        .cc-toast .cc-tico svg { width:12px; height:12px; display:block; fill:none;
-            stroke:#08111c; stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round; }
+        .cc-toast .cc-tico svg { width:9px; height:9px; display:block; fill:none;
+            stroke:#08111c; stroke-width:2.9; stroke-linecap:round; stroke-linejoin:round; }
         .cc-toast .cc-ttxt { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-        .cc-toast .cc-tsub { font-size:8.5px; font-weight:700; color:#93a7bd;
-            padding-left:7px; white-space:nowrap; }
+        /* El subtitulo va pegado al texto y sin separador: en un aviso tan
+           compacto, la linea vertical de 1 px ocupaba mas que el texto. */
+        .cc-toast .cc-tsub { font-size:8px; font-weight:600; color:#8ea2b8;
+            padding-left:6px; white-space:nowrap; }
         /* Un color por tipo de aviso, el mismo que usa el panel del tipo. */
         .cc-toast.cc-captura { --ac:#22c55e; }
         .cc-toast.cc-dano-dado { --ac:#f59e0b; }
-        .cc-toast.cc-dano-recibido, .cc-toast.cc-fallo { --ac:#ef4444; }
+        .cc-toast.cc-fallo { --ac:#ef4444; }
 
 /* ---------- personajes ----------
            La caja mide solo el sprite y JS le pone el bottom exacto de la
            linea de suelo, ya corregido por el encaje y el margen transparente.
            El nombre va ENCIMA: abajo se perdia contra el suelo. */
         .cc-esc-fighter { position:absolute; z-index:6; display:block; }
+        /* El sprite NO lleva filter:drop-shadow. Un filtro sobre un elemento
+           que se mueve obliga al navegador a repintar su capa entera en cada
+           fotograma, y los sprites del escenario estan siempre animandose. Sin
+           GPU eso es repintar la escena completa decenas de veces por segundo.
+           Antes el apoyo visual lo daba .cc-esc-sombra, que era una elipse
+           solida y no costaba nada de pintar; ahora esa elipse esta apagada y el
+           sprite va sin sombra, tal cual, sin filtro. */
         .cc-esc-spr { display:block; object-fit:contain;
-            filter:drop-shadow(0 5px 4px rgba(0,0,0,.62)); animation:ccBob 1.7s ease-in-out infinite; }
+            animation:ccBob 1.7s ease-in-out infinite; }
         @keyframes ccBob { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-3px); } }
         .cc-esc-spr.cc-walk { animation:ccWalk .56s ease-in-out infinite; }
         @keyframes ccWalk { 0%,100% { transform:translateY(0) scaleY(1); }
             50% { transform:translateY(-3px) scaleY(1.07); } }
 
+        /* El sprite del aliado sale mirando a la IZQUIERDA en los GIF de PokeAPI,
+           y los salvajes tambien. Se voltea con la propiedad "scale", que es
+           independiente de "transform": las animaciones de caminar y de subir
+           usan "transform", y si el volteo se hiciera con el se pisarian y el
+           Pokemon quedaria mirando a un lado y de perfil. Con "scale" las dos
+           cosas se componen.
+
+           Solo el aliado: los salvajes se ven de frente y voltearlos tampoco
+           aporta nada. */
+        .cc-hero .cc-esc-spr { scale: -1 1; }
+
+        /* Al lanzar la bola, el Pokemon atrapado desaparece: el sprite, su sombra
+           y su cartel. Se ocultan por separado y no el elemento entero, porque la
+           silueta del desenlace (el borde verde o rojo que confirma si salio bien)
+           tiene que seguir viéndose: es el elemento que dice que paso algo.
+
+           El "!important" y el "animation:none" son necesarios: el estilo en
+           linea "opacity:0" no basta, porque las animaciones de caminar y de
+           subir tienen prioridad sobre el y el Pokemon se seguia viendo. */
+        .cc-esc-fighter.cc-capturado .cc-esc-spr,
+        .cc-esc-fighter.cc-capturado .cc-esc-sombra,
+        .cc-esc-fighter.cc-capturado .cc-esc-nm { opacity:0 !important; }
+        .cc-esc-fighter.cc-capturado .cc-esc-spr { animation:none !important; }
+
+        /* Sombra de contacto: elipse plana pegada a los pies. Esta APAGADA.
+
+           Se pidio quitar el ovalo oscuro de debajo de cada Pokemon. Antes se
+           veia como un charco negro bajo los pies que tapa el terreno de la
+           foto, y ademas se notaba mas en unos sprites que en otros segun lo
+           claro que era el fondo.
+
+           El elemento se sigue creando y se sigue conservando su sitio: lo
+           usan el estado de captura (.cc-capturado) y el de muerte, que lo
+           referencian por nombre. Lo que se apaga es solo el pintado, con
+           opacity 0 en la regla base. Asi, si algun dia se quiere volver a
+                          ver la sombra, es quitar este cero.
+
+           Por lo mismo se van las reglas de color por bando (la roja del
+           objetivo y la violeta del heroe): con la elipse invisible ya no se
+           ven, asi que son estilo que no llega a pintarse. */
+        .cc-esc-sombra { position:absolute; left:50%; bottom:-2px; transform:translateX(-50%);
+            width:74%; height:11px; border-radius:50%;
+            opacity:0; background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.07);
+            pointer-events:none; }
+
         /* Shiny: el sprite es el de la variante y la estrella lo confirma. El
            marco dorado sustituye al halo. */
-        .cc-esc-fighter.cc-shiny .cc-esc-spr { filter:drop-shadow(0 4px 6px rgba(0,0,0,.6))
-            drop-shadow(0 0 7px rgba(250,204,21,.55)); }
+        .cc-esc-fighter.cc-shiny .cc-esc-spr { outline:2px solid rgba(250,204,21,.85);
+            outline-offset:0; }
         .cc-esc-fighter.cc-shiny .cc-esc-nm { --ac:#facc15; }
         .cc-esc-nm .cc-ic.star { width:11px; height:11px; vertical-align:-1px;
             fill:#facc15; stroke:none; }
 
         /* Nombre: bloque opaco con borde del color, sin desenfoque. Es el
            texto que mas se lee de todo el escenario, y con superficie
-           translucida el texto rosa sobre un mapa claro se perdia. */
+           translucida el texto rosa sobre un mapa claro se perdia.
+
+           Ahora lleva las barras DEBAJO del nombre, en columna: la vida
+           primero y, en el aliado, la experiencia justo debajo. Antes esas
+           barras estaban en un panel aparte, abajo a la izquierda, y el ojo
+           tenia que ir del Pokemon al panel y volver.
+
+           La barra toma el ancho del texto, no un ancho fijo: con nombres
+           largos como «Furious Magmar» un ancho fijo dejaria la barra mas
+           ancha que el nombre y el recuadro descuadrado. */
         .cc-esc-nm { position:absolute; left:50%; bottom:100%; transform:translateX(-50%);
-            font-size:11px; font-weight:800; white-space:nowrap; padding:4px 9px;
+            font-size:11px; font-weight:800; white-space:nowrap; padding:3px 7px 4px;
             border-radius:3px; background:#12161f; color:#f4f8fd;
             border:1px solid var(--ac,#fb7185);
-            box-shadow:3px 3px 0 rgba(0,0,0,.55); z-index:2; }
+            box-shadow:3px 3px 0 rgba(0,0,0,.55); z-index:2;
+            display:flex; flex-direction:column; align-items:stretch; gap:2px; }
         /* El texto va en un <b> propio para poder reescribirlo sin cargarse la
-           punta de abajo. */
+           punta de abajo ni las barras. */
+        /* La fila agrupa nombre y nivel: una linea, centrada, y por debajo las barras.
+           Sin ella el nivel caeria en su propia linea y el recuadro se mediria
+           por el texto mas corto de los dos. */
+        .cc-nmrow { display:flex; justify-content:center; align-items:baseline; gap:4px; }
         .cc-esc-nmtxt { font-weight:inherit; }
+        /* El nivel va detras del nombre. Mismo motivo que el texto: hijo aparte
+           para poder reescribirlo sin tocar lo de al lado. */
+        .cc-nmlv { font-weight:inherit; color:#93a7bd; font-size:9.5px; }
+
+        /* Barras de la etiqueta: canal hueco y relleno solido, sin degradado
+           ni halo, igual que las del panel. La pista es un <span> con un <i>
+           dentro: se localiza por clase y se escribe en el relleno. */
+        .cc-nmbar { display:block; height:5px; border-radius:2px; overflow:hidden;
+            background:#0a0d14; border:1px solid #2a3342; }
+        .cc-nmbar i { display:block; height:100%; width:0; background:#22c55e;
+            transition:width .35s ease; }
+        .cc-nmbar i.cc-crit { background:#ef4444; }
+        /* Las dos variantes, cada una con su color. La de vida la llevan el
+           aliado y los salvajes; la de experiencia es solo del aliado. */
+        .cc-nmbar-hp i { background:#22c55e; }
+        .cc-nmbar-xp { height:4px; }
+        .cc-nmbar-xp i { background:#3b82f6; }
+
         /* La punta del cartel, del color del marco, para que se vea de donde
            sale el nombre. Sin difuminado: es un triangulo opaco. */
         .cc-esc-nm .cc-punta { display:block; position:absolute; left:50%; bottom:-6px;
             transform:translateX(-50%); width:0; height:0; border-left:5px solid transparent;
             border-right:5px solid transparent; border-top:6px solid var(--ac,#fb7185); }
-        .cc-esc-fighter.cc-hero .cc-esc-nm { font-size:11.5px; --ac:#a78bfa; }
-        .cc-esc-fighter:not(.cc-hero) .cc-esc-nm { --ac:#fb7185; }
-        /* El objetivo lleva el marco mas grueso: es el unico al que llega el
-           ataque y la bola. En plano se marca con grosor, no con brillo. */
-        .cc-esc-fighter.cc-objetivo .cc-esc-nm { border-width:2px; color:#fff; }
-            box-shadow:0 6px 22px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.6),
-                       0 0 16px -3px rgba(252,165,165,.9); }
+        .cc-esc-fighter.cc-hero .cc-esc-nm { font-size:11px; --ac:#7c6de8; }
+        .cc-esc-fighter:not(.cc-hero) .cc-esc-nm { --ac:#d9534f; }
+        /* El objetivo lleva el marco mas grueso y el fondo mas claro: es el unico al
+           que llega el ataque y la bola. En plano se marca con grosor y con
+           color, nunca con un halo.
+
+           Antes detras de esta regla habia un bloque suelto que empezaba por
+           box-shadow sin selector: CSS invalido, que el parser descarta
+           entero. Ademas era un brillo rosa. */
+        .cc-esc-fighter.cc-objetivo .cc-esc-nm { border-width:2px; color:#fff;
+            background:#1b2230; }
         /* El salvaje entra por la DERECHA, PEQUEÑO, y crece hasta el tamaño normal
            mientras viaja a su hueco. No aparece de golpe en su sitio: eso era un
            parpadeo. La clase cc-enter se pone al crear y se quita al acabar,
@@ -3062,18 +3855,42 @@
             100% { transform:translateX(0) scale(1); opacity:1; filter:blur(0); }
         }
 
-        /* Ataque */
-        .cc-esc-spr.cc-atk { animation:ccAtk .54s cubic-bezier(.3,1.35,.5,1); }
-        @keyframes ccAtk { 0% { transform:translateX(0) rotate(0); }
-            18% { transform:translateX(10px) rotate(-4deg); }
-            40% { transform:translateX(62px) rotate(5deg) scale(1.12,1.04); }
-            62% { transform:translateX(24px) rotate(-2deg) scale(.98); }
-            100% { transform:translateX(0) rotate(0) scale(1); } }
-        .cc-esc-spr.cc-hurt { animation:ccHurt .46s cubic-bezier(.3,1.2,.4,1); }
-        @keyframes ccHurt { 0%,100% { transform:translateX(0); filter:drop-shadow(0 5px 4px rgba(0,0,0,.62)); }
-            22% { transform:translateX(-11px) rotate(-4deg); filter:brightness(2.1) saturate(.3); }
-            46% { transform:translateX(7px) rotate(3deg); }
-            70% { transform:translateX(-3px); } }
+        /* ---------- ATAQUE ----------
+           El ataque del aliado son CUATRO fases y no un empujon: carga, avance,
+           impacto y vuelta. Lo que falla en un empujon es que el golpe y el
+           retroceso se mezclan en un solo vaiven y no se ve donde impacta; aqui
+           el rostro se queda quieto mientras el cuerpo carga, y el impacto es un
+           salto corto con inclinacion, que es lo que se lee como golpe.
+
+           El avance usa un Bezier que sale lento y llega rapido, que es como se
+           mueve un cuerpo cuando suelta la inercia; el de vuelta es blando, para
+           que el aterrizaje no de un portazo. */
+        .cc-esc-spr.cc-atk { animation:ccAtk .56s cubic-bezier(.34,.9,.4,1); }
+        @keyframes ccAtk {
+            /* Carga: se echa atras y se aplasta un poco, como taking impulso. */
+            0%   { transform:translateX(0) rotate(0) scale(1,1); }
+            22%  { transform:translateX(-9px) rotate(-5deg) scale(1.04,.95); }
+            /* Impulso: sale disparado hacia delante y se estira en el aire. */
+            46%  { transform:translateX(66px) rotate(7deg) scale(1.1,1.05); }
+            /* Impacto: frenado en seco, con el cuerpo e inclinado adelante. */
+            58%  { transform:translateX(58px) rotate(4deg) scale(.94,1.08); }
+            /* Vuelta: el rebote corto y el asentamiento. */
+            78%  { transform:translateX(-6px) rotate(-2deg) scale(1.02,.98); }
+            100% { transform:translateX(0) rotate(0) scale(1,1); }
+        }
+        /* ---------- GOLPE RECIBIDO ----------
+           Este si es de verdad a quien le pegan, y es mas fuerte y mas corto que el
+           retroceso: el destello blanco marca el instante del impacto y la
+           inclinacion hacia atras dice que lo han recibido. */
+        .cc-esc-spr.cc-hurt { animation:ccHurt .42s cubic-bezier(.3,1.25,.4,1); }
+        @keyframes ccHurt {
+            0%,100% { transform:translateX(0) rotate(0); filter:none; }
+            /* El destello va en el primer pico: es el momento en que el golpe
+               conecta y hay que marcarlo. */
+            26% { transform:translateX(-14px) rotate(-6deg); filter:brightness(2.2) saturate(.25); }
+            56% { transform:translateX(9px) rotate(3deg) scale(1.03,.97); }
+            80% { transform:translateX(-4px) rotate(-1deg); }
+        }
 /* ---------- el borde del desenlace sigue la silueta ----------
    El destello tiene que cumplir dos cosas: distinguir acierto de fallo con un
    color, y no ser un rectangulo. Las dos se consiguen con MASCARA: un bloque
@@ -3100,8 +3917,7 @@
             -webkit-mask-image:none; mask-image:none;
             -webkit-mask-size:contain; mask-size:contain;
             -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
-            -webkit-mask-position:center bottom; mask-position:center bottom;
-            filter:drop-shadow(0 0 4px var(--ac,#22c55e)); }
+            -webkit-mask-position:center bottom; mask-position:center bottom; }
         .cc-esc-silueta.cc-res-win { --ac:#4ade80; --desplaza:0px;
             animation:ccSilWin .62s ease-out .1s 1; }
         .cc-esc-silueta.cc-res-lose { --ac:#f87171; --desplaza:0px;
@@ -3130,57 +3946,78 @@
             26% { opacity:1; transform:translateY(-7px) scale(1.12); filter:brightness(2.4) saturate(.2); }
             60% { opacity:.55; transform:translateY(-19px) scale(.8); filter:brightness(1.3) saturate(.6); }
             100% { opacity:0; transform:translateY(-32px) scale(.42); filter:brightness(1) saturate(1); } }
-        /* El nombre se va con el sprite: si se queda, queda una insignia
-           flotando sobre un hueco durante la salida. */
-        .cc-esc-fighter.cc-saliente .cc-esc-nm { animation:ccNombreFuera .6s ease-in forwards; }
-        @keyframes ccNombreFuera { 0% { opacity:1; } 100% { opacity:0; transform:translateY(-16px) scale(.82); } }
+        /* El nombre se va con el sprite. La clase que lo hacia (cc-saliente) ya no
+           se usa: el Pokemon atrapado sale del DOM en el acto, porque si se
+           dejaba puesto el reloj del escenario volvia a construir la fila y
+           reaparecia al lado del efecto de la bola. El nodo entero desaparece
+           con el, y con el su cartel, asi que no hace falta animation ninguna. */
 
-        /* Estela, proyectil, estallido, anillo, dano, hoja y chispas */
-        .cc-trail { position:absolute; z-index:9; height:3px; border-radius:2px; pointer-events:none;
-            background:linear-gradient(90deg, transparent, var(--ac,#fbbf24));
-            animation:ccTrail .32s linear forwards; }
-        @keyframes ccTrail { from { transform:translate(0,0); } to { transform:translate(var(--dx), var(--dy)); } }
-        .cc-proj { position:absolute; z-index:10; width:20px; height:20px; border-radius:50%;
-            pointer-events:none; background:radial-gradient(circle, var(--ac,#fbbf24), transparent 68%);
-            animation:ccProj .32s cubic-bezier(.4,0,.7,1) forwards; }
-        @keyframes ccProj { from { transform:translate(0,0); } to { transform:translate(var(--dx), var(--dy)); } }
-        .cc-burst { position:absolute; z-index:11; width:10px; height:10px; border-radius:50%;
-            margin:-5px 0 0 -5px; pointer-events:none;
-            background:radial-gradient(circle, #fff, var(--ac,#fbbf24) 42%, transparent 72%);
-            animation:ccBurst .42s ease-out forwards; }
-        @keyframes ccBurst { 0% { transform:scale(.4); opacity:1; }
-            100% { transform:scale(3.4); opacity:0; } }
+/* ---------- MUERTE: desvanecido corto EN EL SITIO ----------
+           Cuando el aliado mata a un Pokemon, la lista que publica el juego
+           cambia y la fila entera se reconstruye. Antes el nodo se borraba en
+           el acto: el Pokemon desaparecia de golpe, sin mas, y se leia como un
+           fallo de dibujo en vez de como una muerte.
+
+           Ahora el de delante se apaga en 300 ms donde estaba, con un estiron y
+           una subida corta. Solo transform y opacity: lo resuelve el compositor
+           sin repintar la escena. La silueta destella en rojo por encima, que
+           es lo que marca que ha muerto y no que simplemente se ha ido.
+
+           El nombre y la sombra de contacto se van antes que el cuerpo, para que
+           no quede una etiqueta flotando sobre un hueco mientras dura la salida. */
+        .cc-esc-fighter.cc-muriendo .cc-esc-spr { animation:ccDesvanecer .3s cubic-bezier(.5,0,.75,0) forwards; }
+        @keyframes ccDesvanecer {
+            0%   { opacity:1; transform:translateY(0) scale(1); }
+            26%  { opacity:1; transform:translateY(-4px) scale(1.08); }
+            100% { opacity:0; transform:translateY(-20px) scale(.5); } }
+        .cc-esc-fighter.cc-muriendo .cc-esc-nm { animation:ccNombreMuerte .16s ease-in forwards; }
+        @keyframes ccNombreMuerte { to { opacity:0; transform:translateX(-50%) translateY(5px); } }
+        /* La sombra que se encoge al morir se ha ido con la sombra. Sus fotogramas
+           empiezan en opacity: 1, que gana a la regla base (las animaciones
+           pisan a las declaraciones normales): dejarla habria hecho aparecer el
+           ovalo unicamente durante los 300 ms en que un Pokemon se desvanece,
+           que es justo cuando no se quiere ver. */
+        .cc-esc-fighter.cc-muriendo .cc-esc-silueta { animation:ccSilMuerte .3s ease-out .05s forwards; }
+        @keyframes ccSilMuerte {
+            0% { opacity:0; transform:translate(-50%, var(--desplaza,0px)) scale(1.1); }
+            22% { opacity:.9; transform:translate(-50%, var(--desplaza,0px)) scale(1); }
+            100% { opacity:0; transform:translate(-50%, var(--desplaza,0px)) scale(.7); } }
+
         .cc-ring { position:absolute; z-index:11; width:26px; height:26px; margin:-13px 0 0 -13px;
             border-radius:50%; border:2px solid var(--ac,#fbbf24); pointer-events:none;
             animation:ccRing .46s ease-out forwards; }
         @keyframes ccRing { 0% { transform:scale(.3); opacity:.95; }
             100% { transform:scale(2.2); opacity:0; } }
-        .cc-scene.cc-shake { animation:ccShake .26s cubic-bezier(.36,.07,.19,.97); }
-        @keyframes ccShake { 10%,90% { transform:translate(calc(-50% - 1px), 0); }
+        .cc-scene.cc-shake { animation:ccEscShake .26s cubic-bezier(.36,.07,.19,.97); }
+        /* Los keyframes se llaman ccEscShake y NO ccShake. Los @keyframes son
+           globales por nombre: si dos reglas los definen con el mismo nombre,
+           gana el ULTIMO y el otro se queda sin los suyos. El ccShake de la card
+           usa translateX(0) y este usa translateX(calc(-50% ± 1px)), que es lo
+           que necesita el escenario porque esta centrado con translateX(-50%).
+           Con un solo nombre, la card se iba un 50 % de su ancho al sacudirse. */
+        @keyframes ccEscShake { 10%,90% { transform:translate(calc(-50% - 1px), 0); }
             30%,70% { transform:translate(calc(-50% + 2px), 0); }
             50% { transform:translate(calc(-50% - 1px), 0); } }
         body.cc-esc-full .cc-scene.cc-shake { animation:none; }
+        /* El numero va sobre una PASTILLA opaca con borde, no con un halo difuso.
+           Con text-shadow el numero se emborronaba y ademas era el elemento
+           que mas se repintaba de toda la escena. La pastilla se lee igual de
+           bien sobre el cielo claro y sobre el suelo oscuro. */
         .cc-dmg { position:absolute; z-index:12; transform:translate(-50%,-50%); pointer-events:none;
-            font-size:15px; font-weight:900; color:#ffd7d7; text-shadow:0 2px 5px rgba(0,0,0,.9); }
+            font-size:13px; font-weight:900; color:#f4f8fd; background:rgba(18,22,31,.9);
+            border:1px solid var(--ac,#ef4444); border-radius:2px; padding:0 4px; }
         /* Curacion: mismo numero pero en verde y sin la flecha roja, para que
            subir la vida no se lea como un golpe. */
-        .cc-dmg.heal { color:#bbf7d0; text-shadow:0 2px 5px rgba(0,0,0,.9), 0 0 8px rgba(74,222,128,.5); }
+        .cc-dmg.heal { color:#dcfce7; --ac:#22c55e; }
         .cc-dmg.go { animation:ccDmg .9s ease-out forwards; }
         @keyframes ccDmg { 0% { opacity:0; transform:translate(-50%,-50%) scale(.6); }
             20% { opacity:1; transform:translate(-50%,-90%) scale(1.18); }
             100% { opacity:0; transform:translate(-50%,-190%) scale(1); } }
 
-/* Captura: la hoja real del juego cae girando sobre el objetivo. La insignia
-           va plana como el resto, con el color del resultado en el borde. */
-        .cc-scene-badge { position:absolute; z-index:12; display:flex; align-items:center; gap:6px;
-            padding:5px 10px; border-radius:3px; pointer-events:none;
-            background:#12161f; border:1px solid #22c55e; box-shadow:3px 3px 0 rgba(0,0,0,.55);
-            font-size:11px; font-weight:800; color:#eafff2; white-space:nowrap;
-            animation:ccBadge .3s cubic-bezier(.2,1.4,.4,1) both; }
-        @keyframes ccBadge { 0% { opacity:0; transform:translate(-50%,-50%) scale(.95); }
-            100% { opacity:1; transform:translate(-50%,-50%) scale(1); } }
-        .cc-scene-badge.fail { color:#ffd7d7; border-color:#ef4444; }
-        .cc-scene-badge img { width:14px; height:14px; image-rendering:pixelated; }
+/* Captura: la hoja real del juego cae girando sobre el objetivo. Antes aqui
+           estaba tambien la insignia flotante del resultado, la que salia
+           encima del sprite. Se ha quitado por duplicar el aviso de arriba; su
+           CSS se va con ella para no dejar reglas huerfanas. */
         .cc-scene-leaf { position:absolute; z-index:11; pointer-events:none; width:34px; margin-left:-17px;
             background-repeat:no-repeat; background-position:center;
             animation:ccLeaf 1.05s cubic-bezier(.3,.7,.5,1) forwards; }
@@ -3188,67 +4025,24 @@
             18% { opacity:1; }
             78% { opacity:1; }
             100% { opacity:0; transform:translateY(4px) rotate(180deg) scale(.95); } }
-        .cc-spark { position:absolute; z-index:13; width:5px; height:5px; margin:-2.5px 0 0 -2.5px;
-            border-radius:50%; pointer-events:none; background:#fff;
-            box-shadow:0 0 8px rgba(255,255,255,.9);
-            animation:ccSpark .85s ease-out forwards; }
-        @keyframes ccSpark { 0% { opacity:1; transform:translate(0,0) scale(1); }
-            100% { opacity:0; transform:translate(var(--sx), var(--sy)) scale(.3); } }
-
-        /* Efectos de captura: bola, polvo, hoja y clic. */
-        .cc-ball { position:absolute; z-index:9; pointer-events:none; opacity:0;
-            background-repeat:no-repeat; background-position:center; background-size:contain;
-            filter:drop-shadow(0 3px 4px rgba(0,0,0,.75));
-            animation:ccBallFly 1.05s cubic-bezier(.34,.06,.44,1) forwards; }
-        @keyframes ccBallFly { 0%{opacity:0;transform:translate(0,0) rotate(0) scale(.6)}
-            10%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}
-            52%{transform:translate(calc(var(--dx)*.52),calc(var(--dy)*.52 - 96px)) rotate(540deg) scale(1.1)}
-            85%{transform:translate(calc(var(--dx)*.95),calc(var(--dy)*.95 - 10px)) rotate(1080deg) scale(1)}
-            100%{opacity:1;transform:translate(var(--dx),var(--dy)) rotate(1260deg) scale(.8)} }
-        .cc-dust { position:absolute; z-index:7; width:44px; height:14px; margin:0 0 -7px -22px;
-            border-radius:5px; pointer-events:none;
-            background:radial-gradient(closest-side,rgba(255,240,210,.55),transparent 72%);
-            opacity:0; animation:ccDust .5s ease-out forwards; }
-        @keyframes ccDust { 0%{opacity:.9;transform:scale(.3)} 100%{opacity:0;transform:scale(2.2)} }
-        .cc-sheet { position:absolute; z-index:10; opacity:0; pointer-events:none;
-            background-repeat:no-repeat; background-position:0 0; animation:ccSheetIn .16s ease-out forwards; }
-        @keyframes ccSheetIn { from{opacity:0} to{opacity:1} }
-        .cc-click { position:absolute; z-index:11; width:26px; height:26px; margin:-13px 0 0 -13px;
-            pointer-events:none;
-            background:linear-gradient(45deg,transparent 44%,#fff 44% 56%,transparent 56%),
-                       linear-gradient(-45deg,transparent 44%,#fff 44% 56%,transparent 56%);
-            filter:drop-shadow(0 0 6px #fff); animation:ccClick .45s ease-out forwards; }
-        @keyframes ccClick { 0%{opacity:0;transform:scale(.2) rotate(0)}
-            30%{opacity:1;transform:scale(1.25) rotate(20deg)}
-            100%{opacity:0;transform:scale(.4) rotate(45deg)} }
-        @media (max-width:700px) {
-            .cc-scale-pane .cc-settings-list { grid-template-columns:1fr !important; }
-            .cc-theme-grid { grid-template-columns:repeat(3,1fr); }
-            .cc-sprite-grid { grid-template-columns:repeat(3,1fr); }
-        }
-
-/* Chispas de la captura */
-        .cc-spark { position:absolute; z-index:13; width:5px; height:5px; margin:-2.5px 0 0 -2.5px;
-            border-radius:50%; pointer-events:none; background:#fff;
-            box-shadow:0 0 8px rgba(255,255,255,.9);
-            animation:ccSpark .85s ease-out forwards; }
-        @keyframes ccSpark { 0% { opacity:1; transform:translate(0,0) scale(1); }
-            100% { opacity:0; transform:translate(var(--sx), var(--sy)) scale(.3); } }
 
         /* Efectos de captura: bola, polvo, hoja y clic. La hoja es la tira
            real del juego, medida y escalada por JS. */
         .cc-ball { position:absolute; z-index:9; pointer-events:none; opacity:0;
             background-repeat:no-repeat; background-position:center; background-size:contain;
-            filter:drop-shadow(0 3px 4px rgba(0,0,0,.75));
-            animation:ccBallFly 1.05s cubic-bezier(.34,.06,.44,1) forwards; }
-        @keyframes ccBallFly { 0%{opacity:0;transform:translate(0,0) rotate(0) scale(.6)}
+            animation:ccEscBallFly 1.05s cubic-bezier(.34,.06,.44,1) forwards; }
+        /* Igual que elshake: ccEscBallFly y no ccBallFly, porque el ccBallFly de
+           la capa de captura de la card es OTRO vuelo distinto, con su arco de
+           96 px y translate3d para que lo resuelva la GPU. Compartiendo nombre
+           ganaba el del escenario y la bola de la card salia sin arco. */
+        @keyframes ccEscBallFly { 0%{opacity:0;transform:translate(0,0) rotate(0) scale(.6)}
             10%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}
             52%{transform:translate(calc(var(--dx)*.52),calc(var(--dy)*.52 - 96px)) rotate(540deg) scale(1.1)}
             85%{transform:translate(calc(var(--dx)*.95),calc(var(--dy)*.95 - 10px)) rotate(1080deg) scale(1)}
             100%{opacity:1;transform:translate(var(--dx),var(--dy)) rotate(1260deg) scale(.8)} }
         .cc-dust { position:absolute; z-index:7; width:44px; height:14px; margin:0 0 -7px -22px;
             border-radius:5px; pointer-events:none;
-            background:radial-gradient(closest-side,rgba(255,240,210,.55),transparent 72%);
+            background:rgba(255,240,210,.42);
             opacity:0; animation:ccDust .5s ease-out forwards; }
         @keyframes ccDust { 0%{opacity:.9;transform:scale(.3)} 100%{opacity:0;transform:scale(2.2)} }
         .cc-sheet { position:absolute; z-index:10; opacity:0; pointer-events:none;
@@ -3258,10 +4052,25 @@
             pointer-events:none;
             background:linear-gradient(45deg,transparent 44%,#fff 44% 56%,transparent 56%),
                        linear-gradient(-45deg,transparent 44%,#fff 44% 56%,transparent 56%);
-            filter:drop-shadow(0 0 6px #fff); animation:ccClick .45s ease-out forwards; }
+            animation:ccClick .45s ease-out forwards; }
         @keyframes ccClick { 0%{opacity:0;transform:scale(.2) rotate(0)}
             30%{opacity:1;transform:scale(1.25) rotate(20deg)}
             100%{opacity:0;transform:scale(.4) rotate(45deg)} }
+
+/* Chispas de la captura. Cuadrado plano con borde, sin el halo blanco que
+   antes las hacia parecer una luz. */
+        .cc-spark { position:absolute; z-index:13; width:6px; height:6px; margin:-3px 0 0 -3px;
+            border-radius:1px; pointer-events:none; background:#fff;
+            border:1px solid rgba(18,22,31,.6);
+            animation:ccSpark .85s ease-out forwards; }
+        @keyframes ccSpark { 0% { opacity:1; transform:translate(0,0) scale(1); }
+            100% { opacity:0; transform:translate(var(--sx), var(--sy)) scale(.3); } }
+
+        @media (max-width:700px) {
+            .cc-scale-pane .cc-settings-list { grid-template-columns:1fr !important; }
+            .cc-theme-grid { grid-template-columns:repeat(3,1fr); }
+            .cc-sprite-grid { grid-template-columns:repeat(3,1fr); }
+        }
 
         /* ---------- ajustes del escenario dentro del panel ----------
            El interruptor propio se elimino al pasar el 2D a ser un valor de
@@ -3295,15 +4104,13 @@
    fondo, asi que el problema ya no puede darse y este bloque se queda sin
    trabajo: ademas, sus reglas ::before y ::after apuntaban al reflejo y al canto
    del cristal, que ya no existen, y sus selectores usaban los nombres viejos
-   (.en, .bar) en vez de los actuales (.cc-en, .cc-bar), asi que hacia tiempo
-   que no aplicaba a nada.
+   en vez de los actuales, asi que hacia tiempo que no aplicaba a nada.
 
    Se deja la sombra de la cima del suelo reforzada, que si que hacia falta: es
    la linea contra la que se apoyan los Pokemon y sobre un mapa claro se perdia
    el borde. */
         body.cc-esc-claro .cc-suelo .cc-cima { box-shadow:0 2px 4px rgba(0,0,0,.7),
             inset 0 -1px 0 rgba(0,0,0,.5); }
-            inset 0 -1px 0 rgba(0,0,0,.45); }
     `);
 
     /* --------------------------------------------------------------- */
@@ -3402,7 +4209,8 @@
             <div class="cc-settings-list">
                 ${SCRIPT_SCALE_AREAS.map(area => `
                     <label class="cc-scale-row">
-                        <span><b>${area.label}</b><p>${area.description}</p></span>
+                        <span><b>${area.label}</b><p>${area.description}</p>
+                            <em class="cc-scale-status" data-scale-effective="${area.key}"></em></span>
                         <span class="cc-scale-control">
                             <select data-scale-key="${area.key}" aria-label="Tamaño de ${area.label}">
                                 ${SCRIPT_SCALE_OPTIONS.map(value => `<option value="${value}">${value}%</option>`).join('')}
@@ -3589,7 +4397,7 @@
            «En el area» ya no es el numero de salvajes: es un tope, por si el
            juego llegara a publicar una lista disparatada. La cantidad la pone
            lo que hay en pantalla. */
-        mkRange('sceneCount', 'Máximo', 1, 4, '');
+        mkRange('sceneCount', 'Máximo', 1, 8, '');
         mkRange('sceneWidth', 'Ancho', 40, 100);
         mkRange('sceneHeight', 'Alto', 30, 100);
         mkRange('sceneSpeed', 'Velocidad', 0, 100);
@@ -4329,7 +5137,40 @@
         return document.querySelector('.cap-panel:not(.script-persistent-capture)');
     }
 
+    /* Sprite de reserva para cuando el juego no pinta uno. Antes se componia la
+       URL con el nombre limpio y ya: Showdown no tiene los subnombres de
+       variante que publica el juego ("Furious Magmar", "Brave Blastoise",
+       "Enraged Typhlosion"), asi que el 404 dejaba el chip de kills con un
+       hueco. Se invierte el orden para que mande la misma via que el resto del
+       script:
+
+         1. El catalogo del juego, que ya resuelve las variantes a su especie
+            base por `captureBase` (por eso "Furious Magmar" cae en 126).
+         2. El pixel clasico de PokeAPI, que existe para todas las especies y
+            es justo lo que el chip muestra (`.cc-dock-kill img` va en
+            `image-rendering: pixelated`).
+         3. Showdown con el nombre limpio, como ultimo recurso.
+
+       Si el catalogo aun no esta descargado, ccSpeciesIdFromCatalog devuelve
+       null y se cae al comportamiento anterior sin romper nada. Y como
+       applyFieldKillEvent vuelve a pedir el sprite en cada baja, en cuanto el
+       catalogo llega se corrige solo el chip que quedo con el hueco. */
     function captureFallbackSprite(name) {
+        let especie = ccSpeciesIdFromCatalog(name) || 0;
+        /* Segundo intento: quitar la primera palabra. El catalogo trae la
+           variante cuando la conoce ("Tribal Feraligatr"), pero el nombre que
+           llega desde la captura puede traer otro marcador delante ("Furious
+           Feraligatr") y entonces la busqueda exacta falla. Sin el prefijo, el
+           nombre si es la especie base y se resuelve al instante. */
+        if (!especie && ccCreatureIndex) {
+            const palabras = ccFoldName(name).split(' ').filter(Boolean);
+            if (palabras.length > 1) {
+                const resto = palabras.slice(1).join(' ');
+                const entrada = resto.length > 2 ? ccCreatureIndex.get(resto) : null;
+                if (entrada) especie = Number(entrada.captureBase) || Number(entrada.pokeId) || 0;
+            }
+        }
+        if (especie > 0) return spriteById('pixel').url(especie);
         const clean = String(name || '').toLowerCase().replace(/[^a-z0-9\-]/g, '');
         return clean ? `https://play.pokemonshowdown.com/sprites/dex/${clean}.png` : '';
     }
@@ -5172,7 +6013,422 @@
        PokeAPI con el nombre limpio y se cachea por especie. */
 
     const ccSpeciesCache = new Map();
+
+    /* --------------------------------------------------------------- */
+    /* EL CATALOGO DEL JUEGO: /game/creatures.json                       */
+    /* --------------------------------------------------------------- */
+    /* El juego tiene un catalogo propio con 647 criaturas, y es la unica fuente
+       que sabe como se llama de verdad cada Pokemon y de que tipo es. Hace falta
+       porque las hunts no son solo Pokemon normales:
+
+         127   Pinsir            looktype 53
+         10541 Ancient Pinsir    looktype 53
+         50087 Nightmare Pinsir  looktype 53
+
+       El `speciesId` que manda el socket es el `pokeId` del catalogo, y las
+       variantes tienen uno alto (10541, 50087) que NO existe en el catalogo de
+       sprites: por eso se veian con el nombre perdido y el sprite roto.
+
+       Lo que comparten todas las variantes de un Pokemon es el `looktype`. Y el
+       sprite que hay que pintar es el de la especie BASE, que se obtiene como el
+       `pokeId` mas bajo de ese looktype:
+
+         looktype 53  -> 127  Pinsir
+         looktype 116 -> 76   Golem
+         looktype 80  -> 18   Pidgeot
+
+       Aparte, cada entrada trae `type1` y `type2` exactos, y `attacks[]` con los
+       movimientos que usa. Con los tipos ya no hay que adivinar el tipo del
+       Pokemon mirando su nombre en un catalogo ajeno. */
+    let ccCatalogoCarga = null;
+    const ccCatalogoPorId = new Map();
+    const ccCatalogoBasePorLook = new Map();
+
+    function ccCatalogoCargar() {
+        if (ccCatalogoCarga) return ccCatalogoCarga;
+        ccCatalogoCarga = fetch('/game/creatures.json')
+            .then(r => (r.ok ? r.json() : null))
+            .then(j => {
+                const lista = j && Array.isArray(j.creatures) ? j.creatures : null;
+                if (!lista) return null;
+                ccCatalogoPorId.clear();
+                ccCatalogoBasePorLook.clear();
+                for (const c of lista) {
+                    const id = Number(c?.pokeId);
+                    if (!isFinite(id) || id <= 0) continue;
+                    ccCatalogoPorId.set(id, c);
+                    const look = Number(c?.looktype);
+                    if (!look) continue;
+                    const previo = ccCatalogoBasePorLook.get(look);
+                    if (!previo || id < Number(previo.pokeId)) ccCatalogoBasePorLook.set(look, c);
+                }
+                /* El catalogo llega despues del primer pintado. Como los nombres
+                   y los sprites dependen de el, hay que forzar un repintado: si
+                   no, la fila se queda con lo que se pudo pintar sin el, que era
+                   el Pokemon sin nombre y sin sprite. */
+                if (escenaActiva()) {
+                    sceneState.firma = '';
+                    sceneSyncHunters();
+                }
+                return lista;
+            })
+            .catch(() => null);
+        return ccCatalogoCarga;
+    }
+
+    /* La entrada del catalogo de un pokeId, o null si no esta. */
+    function ccCatalogoDe(speciesId) {
+        const id = Number(speciesId);
+        return isFinite(id) && id > 0 ? (ccCatalogoPorId.get(id) || null) : null;
+    }
+
+    /* El pokeId del sprite que hay que pintar. Para una variante es el de su
+       especie base; si no se sabe nada, se devuelve el mismo id. */
+    function ccEspecieSprite(speciesId) {
+        const id = Number(speciesId);
+        if (!isFinite(id) || id <= 0) return 0;
+        const e = ccCatalogoDe(id);
+        if (!e) return id;
+        const base = ccCatalogoBasePorLook.get(Number(e.looktype));
+        const idBase = base ? Number(base.pokeId) : 0;
+        /* Los pokeId de mas de 1000 son variantes y no existen como sprite. */
+        if (idBase > 0 && idBase <= 1000) return idBase;
+        /* Megas y variantes regionales no tienen especie base en el catalogo:
+           el Mega Blastoise es el unico con looktype 2052. Se busca por el
+           nombre, que ya les quita los prefijos, y si eso tampoco esta se
+           devuelve lo que haya. */
+        const porNombre = ccSpeciesIdFromCatalog(String(e.name || '')) || 0;
+        return porNombre || idBase || id;
+    }
+
+    /* El nombre real. Si el catalogo no esta todavia se devuelve lo que haya. */
+    function ccNombreEspecie(speciesId,aporado) {
+        const e = ccCatalogoDe(speciesId);
+        const delCatalogo = String(e?.name || '').trim();
+        return delCatalogo || String(aporado || '').trim();
+    }
+
+    /* Los tipos, tal cual los publica el juego. Si no hay catalogo, se recurre a
+       los que salen del nombre. */
+    function ccTiposEspecie(speciesId, nombre) {
+        const e = ccCatalogoDe(speciesId);
+        const t = [];
+        if (e?.type1) t.push(String(e.type1).toUpperCase());
+        if (e?.type2) t.push(String(e.type2).toUpperCase());
+        return t.length ? t : ccCreatureTypes(nombre);
+    }
+
+    /* Los movimientos del Pokemon, con su tipo. Es la mejor pista para saber que
+       hoja elegir cuando el servidor no manda `fx`: un Ancient Pinsir pega con
+       Brick Break (FIGHTING) y con Guillotine (NORMAL), no con el tipo del
+       Pokemon (BUG). */
+    function ccAtaquesEspecie(speciesId) {
+        const e = ccCatalogoDe(speciesId);
+        if (!Array.isArray(e?.attacks)) return [];
+        return e.attacks
+            .filter(a => a && a.category !== 'STATUS')
+            .map(a => ({ nombre: String(a.name || ''), tipo: String(a.type || '').toUpperCase() }))
+            .filter(a => a.tipo);
+    }
+
     const ccWildState = { list: [], stamp: 0, identity: '', baseSpecies: 0, baseName: '' };
+
+    /* --------------------------------------------------------------- */
+    /* GRABADOR DE SECUENCIA (diagnostico, apagado por defecto)            */
+    /* --------------------------------------------------------------- */
+    /* El juego no hace una cosa y luego otra: el servidor empuja una
+       instantanea del area cada cierto tiempo (el mensaje `field`) y dentro
+       van los golpes, la vida y los salvajes. Sin ver ESA secuencia es
+       imposible afinar cuando aparece un salvaje, cuando se lanza la bola y
+       cuando desaparece el Pokemon.
+
+       Este grabador la apunta. Apagado por defecto: solo escribe si desde la
+       pagina se pone `ccGrabar = true` (en la ventana real, no en la sandbox).
+       Asi se puede encender y apagar desde la consola sin reinstalar nada, y
+       cuando no se usa no cuesta nada: una comprobacion booleana por
+       mensaje.
+
+       Lo que guarda de cada mensaje son solo los campos que explican la
+       secuencia, no el mensaje entero: 400 entradas de un objeto plano. */
+    const CC_TL_MAX = 400;
+    const CC_TL_TIPOS = { field: 1, 'field-kill': 1, 'catch-result': 1, pending: 1 };
+
+    function ccTlGrabar() {
+        try { return !!ccVentanaReal().ccGrabar; } catch (e) { return false; }
+    }
+
+    function ccTlAnotar(tipo, d) {
+        if (!ccTlGrabar() || !CC_TL_TIPOS[tipo]) return;
+        try {
+            const w = ccVentanaReal();
+            if (!w.ccTimeline) w.ccTimeline = [];
+            const tl = w.ccTimeline;
+            const anterior = tl.length ? tl[tl.length - 1] : null;
+            const e = { t: Date.now(), d: Math.round(performance.now()) };
+            if (anterior) e.ms = e.d - anterior.d;
+            if (tipo === 'field') {
+                e.seq = d.seq;
+                e.fighting = d.fighting ? 1 : 0;
+                e.objetivo = d.targetSlot;
+                e.heroe = d.heroHp + '/' + d.heroMaxHp;
+                e.muertos = d.allMobsDead ? 1 : 0;
+                if (d.waveRespawnAt) e.reaparece = d.waveRespawnAt - d.serverNow;
+                e.mobs = (Array.isArray(d.mobs) ? d.mobs : []).map(m =>
+                    m.slot + ':' + m.speciesId + ' ' + m.hp + '/' + m.maxHp +
+                    (m.dead ? ' M' : '') + (m.respawning ? ' R' : ''));
+                /* Los golpes van aparte: son el corazon de la secuencia. */
+                e.golpes = (Array.isArray(d.hits) ? d.hits : []).map(h =>
+                    'slot ' + h.slot + ' <- ' + h.move + ' (' + h.type + ') ' +
+                    h.amount + ' dmg x' + h.eff);
+            } else if (tipo === 'field-kill') {
+                e.especie = d.speciesId;
+                e.xp = d.xpGained;
+                e.nivel = d.level;
+                e.subio = d.leveledUp ? 1 : 0;
+            } else if (tipo === 'catch-result') {
+                e.ok = d.success ? 1 : 0;
+                e.auto = d.auto ? 1 : 0;
+                e.poke = d.speciesName;
+                e.bola = d.ballName;
+            } else if (tipo === 'pending') {
+                e.lista = (Array.isArray(d.list) ? d.list : [])
+                    .map(p => p.name + ' ' + p.hp + '/' + p.maxHp + ' slot ' + (p.slot ?? '?'));
+            }
+            tl.push(e);
+            while (tl.length > CC_TL_MAX) tl.shift();
+        } catch (err) { /* el diagnostico nunca debe romper nada */ }
+    }
+
+    /* El juego no dibuja los salvajes del mapa adivinando nada: tiene un
+       manejador de socket registrado como H("field", ...) que recibe una
+       instantanea del area de caza. De ahi sale todo:
+
+         mobs[]        un savage por fila, con slot, speciesId, shiny, maxHp,
+                       col y row (su casilla real en la rejilla)
+         hero          casilla del aliado
+         heroHp/heroMaxHp   vida del aliado, ya en numeros
+         targetSlot    a quien se le esta atacando
+         fighting      si hay combate en curso
+         allMobsDead   si ya no queda ninguno en pie
+         hits[]        los golpes del turno, con el efecto de cada uno
+
+       El script solo estaba leyendo `pending`, que es una lista mas pobre y
+       que ademas no llega siempre. Con `field` se sabe exactamente cuantos hay,
+       de que especie y si son shiny, sin raspar el DOM. */
+    const ccFieldState = {
+        mobs: [], firma: '', firmaArea: '', heroHp: 0, heroMaxHp: 0,
+        targetSlot: null, fighting: false, stamp: 0,
+        /* La casilla del aliado en el mapa. Es lo que permite saber que salvajes
+           estan de verdad a su lado y cuales estan al otro extremo del area. */
+        heroRow: 0, heroCol: 0
+    };
+
+    /* La misma firma que usa el juego para decidir si hay que rehacer la fila:
+       una cadena con slot, especie y shiny de cada savage. Es O(numero de
+       salvajes) y evita comparar objetos enteros. El juego la construye con
+       `mobs.map(m => slot + ":" + speciesId + ":" + (shiny ? "s" : "")).join(",")`
+       y solo repinta si el resultado cambia; aqui se copia el criterio tal cual,
+       porque es lo que evita el parpadeo. */
+    /* La misma firma que usa el juego para decidir si hay que rehacer la fila:
+       una cadena con slot, especie y shiny de cada savage. Es O(numero de
+       salvajes) y evita comparar objetos enteros. El juego la construye con
+       `mobs.map(m => slot + ":" + speciesId + ":" + (shiny ? "s" : "")).join(",")`
+       y solo repinta si el resultado cambia; aqui se copia el criterio tal cual,
+       porque es lo que evita el parpadeo.
+
+       OJO: la firma va de QUIEN ES cada Pokemon, no de si esta en pie. La vida no
+       entra a proposito, porque si entrara cada golpe firmaria la fila como
+       distinta y la reconstruiria entera con los Pokemon entrando desde la
+       derecha. Para eso esta `ccFirmaArea`, que si lleva el estado. */
+    function ccFirmaMobs(mobs) {
+        if (!Array.isArray(mobs) || !mobs.length) return '';
+        return mobs.map(m => `${m?.slot ?? '?'}:${m?.speciesId ?? '?'}:${m?.shiny ? 's' : ''}`).join(',');
+    }
+
+    /* Firma del ESTADO del area: cuantos hay en pie y a quien se ataca. Esta si
+       cambia cuando un Pokemon muere o reaparece, que es justo cuando la fila
+       tiene que rehacerse con los salvajes de verdad.
+
+       Sin esto, un salvaje que murio y otro que aparecio no cambiaban la firma
+       (en una hunt todos son el mismo Pokemon), la fila no se reconstruia y lo
+       que se veia era siempre el mismo grupo: uno salia y otro entraba sin que
+       el mapa significara nada. */
+    function ccFirmaArea(mobs, objetivo) {
+        if (!Array.isArray(mobs) || !mobs.length) return '';
+        const vivos = mobs.filter(m => Number(m?.hp) > 0).length;
+        return `${objetivo ?? '?'}#${vivos}`;
+    }
+
+    /* --------------------------------------------------------------- */
+    /* LA VIDA DE LOS SALVAJES: CUENTA PROPIA                           */
+    /* --------------------------------------------------------------- */
+    /* El servidor NO manda la vida del salvaje actualizada con los golpes.
+       Medido: 27 mensajes seguidos con `mobs[].hp` siempre a 120/120 mientras
+       caian golpes de 3 de dano una vez por segundo.
+
+       El juego tampoco lo resuelve: su placa del mapa se arma con la vida del
+       mensaje tal cual (`v[slot] = {..., hp: mob.hp, maxHp: mob.maxHp}`) y pinta
+       `hpPct = hp / maxHp`, sin restar nunca el dano del golpe. Por eso las 17
+       placas del mapa marcan 100% mientras le estas pegando al Pokemon que tienen
+       delante. No es que el script este equivocado: es que el dato no viaja.
+
+       Asi que la cuenta se lleva aqui. La regla es la de "el socket manda cuando
+       puede":
+
+         - se parte de la cifra que manda el servidor;
+         - cada golpe resta su `amount` de la vida de ese slot;
+         - si el servidor manda una cifra MENOR de la que llevamos, se le hace
+           caso: esa es autoritativa (reaparicion, ajuste o corrosion);
+         - si manda una MAYOR, tambien: el salvaje se ha curado o ha reaparecido.
+
+       Solo baja por Golpe, porque es el unico evento que la cambia. */
+    const ccVidaSlots = new Map();
+
+    function ccVidaSync(mobs) {
+        if (!Array.isArray(mobs)) return;
+        for (const m of mobs) {
+            const slot = Number(m?.slot);
+            if (!isFinite(slot)) continue;
+            const maxHp = Number(m?.maxHp) || 0;
+            const delServidor = Number(m?.hp);
+            const previo = ccVidaSlots.get(slot);
+            /* Muerto o reapareciendo: a tope, y SE COMPRUEBA PRIMERO.
+
+               El servidor deja el `hp` a 0 mientras el slot esta vacio, asi que
+               cojer ese 0 deja la cuenta a cero: la barra sale vacia y, cuando el
+               Pokemon reaparece, el primer mensaje util llega con la vida
+               nueva, de modo que se recupera sola pero se ve mal mientras tanto.
+
+               Y el orden importa de verdad: antes esta comprobacion estaba
+               despues de la de «slot nuevo», asi que un slot que aparecia en el
+               area ya muerto se guardaba con el 0 del servidor y nunca llegaba
+               aqui. Medido: un slot que reaparecia se quedaba con la barra a
+               cero. Este es el mismo caso. */
+            if (m?.dead || m?.respawning) {
+                ccVidaSlots.set(slot, { hp: maxHp, maxHp });
+                continue;
+            }
+            /* Un Pokemon distinto en ese slot, o uno que no estaba: se coge tal
+               cual venga, que al entrar en el area es la cifra buena. */
+            if (!previo || previo.maxHp !== maxHp) {
+                ccVidaSlots.set(slot, { hp: isFinite(delServidor) ? delServidor : maxHp, maxHp });
+                continue;
+            }
+            /* El servidor solo manda la vida buena cuando la cambia de verdad, y
+               al morir deja el `hp` a 0 hasta la siguiente oleada: ese 0 es "no
+               esta", no "esta sin vida". Por eso un 0 en un Pokemon vivo no se
+               tiene en cuenta.
+
+               Cuando si manda una cifra, manda: si es MENOR es autoritativa
+               (corrosion o ajuste) y si es MAYOR es que el Pokemon se ha curado.
+               La cuenta propia solo baja por golpes, de modo que una cifra del
+               servidor mas alta no puede venir de un error nuestro. */
+            if (!(delServidor > 0)) continue;
+            ccVidaSlots.set(slot, { hp: delServidor, maxHp });
+        }
+        /* Los slots que ya no estan en el area se olvidan, para que la memoria
+           no crezca con cada caza. */
+        const enArea = new Set(mobs.map(m => Number(m?.slot)));
+        for (const slot of Array.from(ccVidaSlots.keys())) {
+            if (!enArea.has(slot)) ccVidaSlots.delete(slot);
+        }
+    }
+
+    /* Un golpe resta. Devuelve el porcentaje resultante, o null si ese slot no
+       esta en la cuenta (todavia no ha llegado su mensaje). */
+    function ccVidaGolpe(slot, amount) {
+        const n = Number(slot);
+        if (!isFinite(n) || n < 0) return null;
+        const v = ccVidaSlots.get(n);
+        if (!v || !(v.maxHp > 0)) return null;
+        v.hp = Math.max(0, v.hp - (Number(amount) || 0));
+        return (v.hp / v.maxHp) * 100;
+    }
+
+    /* La vida que se pinta de un slot: la de la cuenta propia si la hay, y la del
+       mensaje si todavia no ha entrado en ella. */
+    function ccVidaDeSlot(slot) {
+        const v = ccVidaSlots.get(Number(slot));
+        if (v && v.maxHp > 0) return v;
+        return null;
+    }
+
+
+    function applyFieldEvent(data) {
+        if (!data || typeof data !== 'object') return;
+        ccFieldState.stamp = Date.now();
+
+        /* La vida del heroe es la cifra exacta del servidor. Se guarda aunque no
+           haya salvajes, porque es lo que evita tener que medir la barra. */
+        const hp = Number(data.heroHp);
+        const maxHp = Number(data.heroMaxHp);
+        const antesHp = ccFieldState.heroHp;
+        const antesMax = ccFieldState.heroMaxHp;
+        if (isFinite(hp) && hp >= 0) ccFieldState.heroHp = hp;
+        if (isFinite(maxHp) && maxHp > 0) ccFieldState.heroMaxHp = maxHp;
+
+        /* La barra se repinta en cuanto cambia la vida, sin esperar al proximo
+           retrato del equipo. Antes solo se actualizaba cuando llegaba `pokes`,
+           y como los golpes llegan en `field` cada 800 ms, la barra se quedaba
+           clavada en el ultimo retrato mientras el heroe perdia vida: medido, 20
+           golpes seguidos y la barra sin moverse ni una vez. */
+        if (ccFieldState.heroHp !== antesHp || ccFieldState.heroMaxHp !== antesMax) {
+            updateLiveBars();
+            if (escenaActiva()) sceneRefreshHero();
+        }
+
+        const objetivo = Number(data.targetSlot);
+        ccFieldState.targetSlot = isFinite(objetivo) ? objetivo : null;
+        ccFieldState.fighting = !!data.fighting;
+
+        /* La casilla del aliado. Sin ella no se puede saber que salvajes estan a
+           su lado: es lo que hace el filtro de proximidad de la fila. */
+        if (data.hero) {
+            const hr = Number(data.hero.row);
+            const hc = Number(data.hero.col);
+            if (isFinite(hr)) ccFieldState.heroRow = hr;
+            if (isFinite(hc)) ccFieldState.heroCol = hc;
+        }
+
+        if (!Array.isArray(data.mobs)) return;
+        /* La cuenta de vida se actualiza SIEMPRE, antes de mirar la firma. Si se
+           hiciera despues del `return` de la firma, que es lo que hace el
+           criterio del juego, la cuenta solo se refrescaria cuando cambiara el
+           Pokemon y se quedaria congelada justo cuando bajan las barras. */
+        ccVidaSync(data.mobs);
+
+        /* Se guarda la lista COMPLETA y SIN RECORTAR, y se actualiza SIEMPRE, no
+           solo cuando cambia la firma. Antes se guardaba unicamente si la firma
+           cambiaba, con lo que la lista se quedaba congelada en el ultimo cambio
+           de Pokemon: los slots que aparecian y desaparecian entre medias no
+           llegaban nunca a la fila, y por eso la fila repetia siempre el mismo
+           grupo de salvajes.
+
+           Una hunt trae 14-15 puntos de aparicion; aqui se pintan unos pocos, pero
+           los golpes llegan con el slot de cualquiera de los 15. El recorte se
+           hace al pintar, nunca antes. */
+        ccFieldState.mobs = data.mobs.slice();
+
+        /* Cuantas veces hay que repintar la fila: si cambia quien es cada Pokemon
+           (firma) o si cambia el estado del area (cuantos vivos hay y a quien se
+           ataca). Las dos cosas obligan a rehacer la fila con la lista real.
+
+           Sin lo segundo, un Pokemon que muere y otro que aparece no cambiaban
+           nada: en una hunt todos son el mismo, la firma seguia siendo igual y la
+           fila seguia mostrando los mismos. Medido en partida: el objetivo del
+           servidor daba vueltas (7 -> 10 -> 6 -> 13) y la fila no se enteraba. */
+        const firma = ccFirmaMobs(data.mobs);
+        const firmaArea = ccFirmaArea(data.mobs, ccFieldState.targetSlot);
+        if (firma === ccFieldState.firma && firmaArea === ccFieldState.firmaArea) {
+            /* No cambia el area, pero la fila puede tener la vida vieja: se
+               repinta sin mas, que es barato. */
+            if (escenaActiva()) sceneSyncHunters();
+            return;
+        }
+        ccFieldState.firma = firma;
+        ccFieldState.firmaArea = firmaArea;
+        if (escenaActiva()) { sceneSyncHunters(); sceneDebug(); }
+    }
 
     function applyPendingEvent(data) {
         const list = Array.isArray(data?.list) ? data.list : [];
@@ -5370,6 +6626,11 @@
         hero: null,
         col: null,      /* el contenedor dentro de .cbt-stage */
         observado: null, /* ResizeObserver sobre col, para recolocar al cambiar */
+    /* Px que hay que sumar a la fila Y al aliado para que el conjunto quede
+       centrado en la escena. Lo calcula sceneColumnas() y lo consume
+       sceneColocarHero(): los dos se mueven por el mismo numero, que si no el
+       grupo se abre por la mitad al recentrar la fila. */
+    offsetCentro: 0,
         /* Reloj propio del escenario. El script no tiene ningun ciclo general:
            se limita a reaccionar al socket y a lo que monta el juego. Por eso
            el escenario solo se refrescaba cuando aparecia la card nativa de
@@ -5445,19 +6706,7 @@
     /* --------------------------------------------------------------- */
     /* HUD                                                            */
     /* --------------------------------------------------------------- */
-    /* Nombre, tipo, nivel y vida del aliado, y a la derecha el enemigo que es
-       el objetivo. Las barras se leen de la card real para no duplicar logica:
-       la card ya recibe la vida del socket y la refresca sola. */
-    function sceneText(col, sel, valor) {
-        const el = col?.querySelector(sel);
-        if (el) el.textContent = valor;
-    }
-
-    function scenePct(node) {
-        if (!node) return null;
-        const v = parseFloat(node.style.width);
-        return Number.isFinite(v) ? v : null;
-    }
+    
 
 
     /* Refleja el estado de la escena en atributos del DOM. El modulo corre en el
@@ -5764,7 +7013,18 @@
     /* --------------------------------------------------------------- */
     /* MONTAJE                                                         */
     /* --------------------------------------------------------------- */
-    const SCENE_MAX_MOBS = 4;
+    /* Cuantos salvajes caben en la fila como maximo.
+
+       Antes eran 4, pero el area de una hunt tiene 15 (medido: slots 0..14, con
+       8 vivos en la muestra) y el equipado NO golpea siempre al mismo: reparte
+       los ataques por todo el area, slot tras slot (medido: 0, 3, 4, 5, 9 y 12
+       en 45 s). Con solo 4 en pantalla, once de los quince slots atacados no
+       estaban dibujados y el efecto caia sobre otro Pokemon.
+
+       El reparto en varias lineas que hay mas abajo ya existe y dobla la fila
+       sola cuando no cabe, asi que subir el tope no descuadra nada: se reparte
+       en mas lineas. */
+    const SCENE_MAX_MOBS = 8;
 /* Extremos de la fila de salvajes, en fracciones del ancho. Solo los
        extremos: las posiciones exactas las calcula sceneColumnas() en PIXELES,
        que es lo unico que garantiza que dos Pokemon no se monten uno sobre
@@ -5866,7 +7126,7 @@
            Los indices van de izquierda a derecha y por lineas de delante hacia
            atras, asi que el indice 0 es siempre el de delante: el que recibe el
            ataque y la bola. */
-        return sceneState.hunters.map((_, i) => {
+        const xs = sceneState.hunters.map((_, i) => {
             const linea = Math.floor(i / porLinea);
             const enLinea = i % porLinea;
             /* Los de las lineas de detras empiezan un sprite mas a la derecha,
@@ -5883,6 +7143,43 @@
                 topeCentro);
             return [Math.round(centro - lado / 2), linea];
         });
+
+        /* Y ahora el conjunto se centra. Con la fila repartida entre .34 y .92
+           y el aliado en .11, todo el grupo se arrimaba a la izquierda: con un
+           solo salvaje, el aliado caia en el 11% y el salvage en el 34%, y
+           quedaba media pantalla vacia a la derecha. En una escena de 1366 px
+           medidos eran 840 px de hueco muerto.
+
+           El desplazamiento se calcula sobre el ancho REAL del grupo ya
+           repartido (borde izquierdo del aliado hasta el derecho del ultimo),
+           y se aplica a la fila y al aliado por igual: si solo se moviera la
+           fila, el aliado se separaria de ella.
+
+           Si el grupo ya ocupa mas que la escena no se mueve nada, que es lo
+           que hacia falta cuando se estrecha el recuadro con cuatro salvajes. */
+        const desp = sceneDesplazamientoCentro(xs, W, lado);
+        sceneState.offsetCentro = desp;
+        if (!desp) return xs;
+        return xs.map(([x, linea]) => [Math.round(x + desp), linea]);
+    }
+
+    /* Cuanto hay que empujar el conjunto para que quede centrado en la escena.
+
+       Toma las posiciones ya repartidas (sin desplazar) y devuelve los px a
+       sumar. El ancho del grupo se mide con las cajas reales: medio sprite a
+       cada lado. Con la fila vacia se centra solo el aliado.
+
+       El desplazamiento se guarda en sceneState porque lo necesita tambien el
+       aliado, que se coloca aparte en sceneColocar y no pasa por aqui. */
+    function sceneDesplazamientoCentro(xs, W, lado) {
+        if (!W || !lado) return 0;
+        const izqAliado = SCENE_X_HERO * W - lado / 2;
+        const ultimo = xs.length ? xs[xs.length - 1][0] + lado : izqAliado + lado;
+        const ancho = ultimo - izqAliado;
+        /* Sin margen que repartir (grupo mas ancho que la escena) o sin nada que
+           mover: se deja la fila donde estaba. */
+        if (ancho <= 0 || ancho >= W) return 0;
+        return Math.round((W - ancho) / 2 - izqAliado);
     }
 
     /* Ancho en px del sprite de un salvaje. Si aun no se ha dimensionado, se usa
@@ -5905,23 +7202,69 @@
 
     /* La etiqueta de nombre lleva su texto en un <b> y la punta en un hijo
        aparte: con `textContent =` se borrarian los dos pseudo-elementos del
-       cristal y la punta con ellos. */
-    function sceneCrearNombre(nombre) {
-        const nm = document.createElement('span');
-        nm.className = 'cc-esc-nm';
-        const txt = document.createElement('b');
-        txt.className = 'cc-esc-nmtxt';
-        txt.textContent = nombre;
-        const punta = document.createElement('span');
-        punta.className = 'cc-punta';
-        nm.appendChild(txt);
-        nm.appendChild(punta);
-        return nm;
+       cristal y la punta con ellos.
+
+       Ademas lleva las barras de vida, y las lleva AQUI y no en un panel
+       aparte. Antes el aliado tenia vida y experiencia en el panel de abajo a
+       la izquierda y cada salvaje la suya en la fila del panel de la derecha:
+       tres sitios para leer lo mismo, y el ojo iba al panel y luego al sprite.
+       Con la barra en la etiqueta, el dato esta donde esta el Pokemon.
+
+       `barras`: 'doble' para el aliado (vida y experiencia), 'hp' para los
+       salvajes, y nada para cuando no se quiere ninguna. */
+    /* El nombre de la clase va con classList y no con una cadena construida.
+       Armar el nombre a mano deja el prefijo a medias en el codigo, y el
+       verificador de clases lo lee como un nombre entero: lo daba por una
+       clase usada sin CSS. Con classList cada clase sale entera y sola. */
+    function sceneCrearBarraNombre(clase) {
+        const track = document.createElement('span');
+        track.className = 'cc-nmbar';
+        if (clase === 'xp') track.classList.add('cc-nmbar-xp');
+        else track.classList.add('cc-nmbar-hp');
+        const fill = document.createElement('i');
+        track.appendChild(fill);
+        return track;
     }
 
+    /* Cambia el texto del nombre dentro de la etiqueta.
+
+       El texto va en su propio <b>, y no se escribe en la etiqueta entera, porque
+       la etiqueta lleva tambien el nivel y las barras: reescribirla entera las
+       borraria. Por eso se busca el nodo concreto y se le cambia solo el texto.
+
+       Antes esta funcion vivia dentro del bloque del panel de salvajes, y se fue
+       con el. La repongo aqui, junto a quien construye la etiqueta, que es donde
+       tiene sentido que este. */
     function scenePonerNombre(nm, texto) {
         const txt = nm?.querySelector('.cc-esc-nmtxt');
         if (txt) txt.textContent = texto;
+    }
+
+    function sceneCrearNombre(nombre, barras) {
+        const nm = document.createElement('span');
+        nm.className = 'cc-esc-nm';
+        /* Nombre y nivel van en una FILA propia. Si fueran dos hijos sueltos de la
+           etiqueta, que es una columna, el nivel caeria en su propia linea y el
+           recuadro se mediria por el mas corto de los dos: medido, «Golem
+           Nv. 324» daba un recuadro de 55 px para 77 px de texto, y el nombre
+           se salia por fuera. */
+        const fila = document.createElement('span');
+        fila.className = 'cc-nmrow';
+        const txt = document.createElement('b');
+        txt.className = 'cc-esc-nmtxt';
+        txt.textContent = nombre;
+        fila.appendChild(txt);
+        nm.appendChild(fila);
+        if (barras === 'doble') {
+            nm.appendChild(sceneCrearBarraNombre('hp'));
+            nm.appendChild(sceneCrearBarraNombre('xp'));
+        } else if (barras === 'hp') {
+            nm.appendChild(sceneCrearBarraNombre('hp'));
+        }
+        const punta = document.createElement('span');
+        punta.className = 'cc-punta';
+        nm.appendChild(punta);
+        return nm;
     }
 
     function sceneRebuild() {
@@ -5939,36 +7282,36 @@
                 '<div class="cc-esc-marca" data-cc-marca="3"></div>',
                 '<div class="cc-esc-marca" data-cc-marca="4"></div>',
                 '<div class="cc-esc-marca" data-cc-marca="H"></div>',
-                '<div class="cc-esc-hud">',
-                '<div class="cc-pnl cc-pnl-aliado" data-cc-aliado>',
-                '<div class="cc-pnl-head"><span class="cc-pnl-tier" data-cc-tier></span>',
-                '<span class="cc-pnl-name" data-cc-name></span>',
-                '<span class="cc-pnl-lv" data-cc-lv></span></div>',
-                '<div class="cc-bar"><span class="cc-blbl">HP</span>',
-                '<span class="cc-btrack"><i data-cc-hp></i></span>',
-                '<span class="cc-bval" data-cc-hpval></span></div>',
-                '<div class="cc-bar cc-xp"><span class="cc-blbl">EXP</span>',
-                '<span class="cc-btrack"><i data-cc-xp></i></span>',
-                '<span class="cc-bval" data-cc-xpval></span></div>',
-                '<div class="cc-pnl-foot"><span data-cc-stats"></span><span data-cc-pod></span></div>',
-                '</div>',
-                '<div class="cc-pnl cc-pnl-enemigos" data-cc-enemigos>',
-                '<div class="cc-pnl-head"><span class="cc-pnl-tier">Salvajes</span>',
-                '<span class="cc-pnl-name">en el área</span>',
-                '<span class="cc-pnl-lv" data-cc-cuenta>0</span></div>',
-                '<div class="cc-en-list" data-cc-enlist></div>',
-                '<div class="cc-en-foot">&#9670; solo el de delante recibe el ataque y la bola</div>',
-                '</div>',
-                '</div>',
-                '<div class="cc-esc-balls"><img alt=""><span></span></div>',
+                /* El HUD se queda vacio a proposito.
+
+                   Antes aqui iba el panel con la lista y el contador de salvajes.
+                   Se elimino por completo: la barra de vida de cada Pokemon ya
+                   esta en su propia etiqueta de nombre y el numero total se ve
+                   contando las etiquetas de la fila, asi que el panel repetia
+                   delante de los ojos lo que ya estaba a la vista y tapaba el
+                   terreno de la izquierda. Con el fuera, el escenario respira y
+                   el terreno se ve entero.
+
+                   Tampoco queda el indicador de balls de la parte superior: era
+                   un recuadro fijo que nunca se rellenaba y que, al.throwar una
+                   bola, se quedaba a la vista mientras volaba OTRA bola de 26px.
+                   De ahi que se vieran dos a la vez. La unica bola en pantalla es
+                   la que vuela, con su animacion de exito o de fallo. */
+                '<div class="cc-esc-hud"></div>',
                 '<div class="cc-toasts" data-cc-toasts></div>',
-                '<div class="cc-esc-fighter cc-hero"><img class="cc-esc-spr" alt=""></div>',
+                '<div class="cc-esc-fighter cc-hero"><img class="cc-esc-spr" alt=""><span class="cc-esc-sombra"></span></div>',
                 '</div>',
             ].join(''));
             const hero = stage.querySelector('.cc-hero');
-            hero?.appendChild(sceneCrearNombre('Aliado'));
+            /* El aliado lleva vida y experiencia dentro de su propia etiqueta. El panel
+           de abajo a la izquierda se elimino, asi que la etiqueta es el unico
+           sitio donde se leen. */
+        hero?.appendChild(sceneCrearNombre('Aliado', 'doble'));
         }
         sceneState.col = stage.querySelector('.cc-scene');
+        /* No hay nada que reponer del panel de salvajes: se elimino y con el se
+           fueron sus botones de ocultar y arrastrar. El HUD se monta vacio y la
+           lista se dibuja directamente sobre las etiquetas de cada Pokemon. */
         sceneState.observado?.disconnect();
         sceneState.observado = null;
         /* El reloj arranca al montar la escena, no al detectar la primera fila:
@@ -6003,7 +7346,7 @@
         sceneRelojParar();
         sceneState.observado?.disconnect();
         sceneState.observado = null;
-        sceneState.hunters.forEach(h => { h.row?.remove(); h.el?.remove(); });
+        sceneState.hunters.forEach(h => { h.el?.remove(); });
         sceneState.hunters = [];
         sceneState.hero = null;
         sceneState.firma = '';
@@ -6046,6 +7389,40 @@
         if (hunter.nm) hunter.nm.style.marginBottom = `${corr + 6}px`;
     }
 
+    /* Coloca al ALIADO. Va en su propia funcion, y no dentro de sceneColocar,
+       porque el centrado del conjunto depende de cuantos salvajes hay: al
+       entrar o salir uno, la fila se desplaza y el aliado tiene que moverse con
+       ella. Si solo se colocara dentro de sceneColocar, se quedaria un rato en
+       la posicion de la llamada anterior, separado de la fila.
+
+       Por eso la llama tambien scenePlaceHunter, que es la que repone la fila
+       cuando un Pokemon se va. */
+    function sceneColocarHero(suelo, H) {
+        const col = sceneState.col;
+        if (!col) return;
+        const hero = sceneState.hero?.el || col.querySelector('.cc-hero');
+        if (!hero) return;
+        /* El aliado se mueve el MISMO desplazamiento que la fila. Sin esto se
+           queda clavado en el .11 mientras la fila se centra, y el grupo se abre
+           por la mitad. Y va en px, no en fracciones, porque el centrado depende
+           del ancho real de los sprites. */
+        const W = col.getBoundingClientRect().width || col.offsetWidth || 0;
+        const centroHero = SCENE_X_HERO * W + (sceneState.offsetCentro || 0);
+        hero.style.left = Math.round(centroHero - hero.offsetWidth / 2) + 'px';
+        hero.style.bottom = `${(1 - suelo) * H}px`;
+        const spr = hero.querySelector('.cc-esc-spr');
+        const corr = sceneCorreccionPie(spr);
+        if (spr) spr.style.marginBottom = `${-corr}px`;
+        const nm = hero.querySelector('.cc-esc-nm');
+        if (nm) nm.style.marginBottom = `${corr + 6}px`;
+        const m = col.querySelector('[data-cc-marca="H"]');
+        if (m) {
+            const xFrac = W ? Math.max(0, Math.min(1, centroHero / W)) : SCENE_X_HERO;
+            m.style.left = `calc(${xFrac * 100}% - 6px)`;
+            m.style.top = `${sceneMedirSuelo(sceneState.bg, xFrac) * H - 11}px`;
+        }
+    }
+
     function sceneColocar() {
         const col = sceneState.col;
         if (!col) return;
@@ -6086,21 +7463,7 @@
             if (m) m.style.top = '-20px';
         }
 
-        const hero = sceneState.hero?.el || col.querySelector('.cc-hero');
-        if (hero) {
-            hero.style.left = `calc(${SCENE_X_HERO * 100}% - ${hero.offsetWidth / 2}px)`;
-            hero.style.bottom = `${(1 - suelo) * H}px`;
-            const spr = hero.querySelector('.cc-esc-spr');
-            const corr = sceneCorreccionPie(spr);
-            if (spr) spr.style.marginBottom = `${-corr}px`;
-            const nm = hero.querySelector('.cc-esc-nm');
-            if (nm) nm.style.marginBottom = `${corr + 6}px`;
-            const m = col.querySelector('[data-cc-marca="H"]');
-            if (m) {
-                m.style.left = `calc(${SCENE_X_HERO * 100}% - 6px)`;
-                m.style.top = `${sceneMedirSuelo(sceneState.bg, SCENE_X_HERO) * H - 11}px`;
-            }
-        }
+        sceneColocarHero(suelo, H);
 
         /* La banda de suelo: una sola, de todo el ancho, desde la linea de
            suelo hasta el borde de abajo. Al ser opaca tapa el terreno dibujado
@@ -6110,6 +7473,12 @@
             const y = suelo * H;
             banda.style.top = y + 'px';
             banda.style.height = Math.max(0, H - y) + 'px';
+            /* El alto de la banda se publica como variable para que el HUD pueda
+               apoyarse en ella. La banda va de 94 a 140 px segun el fondo (linea
+               de suelo entre .760 y .840) y los paneles no saben eso: medirse
+               contra el borde de abajo de la escena es lo unico que funciona
+               igual para todos los fondos sin mas. */
+            col.style.setProperty('--alto-suelo', Math.max(0, H - y) + 'px');
         }
         const guia = col.querySelector('.cc-esc-guia');
         if (guia) guia.style.top = (suelo * 100).toFixed(2) + '%';
@@ -6188,8 +7557,13 @@
 
            Hay que LLAMAR a la funcion: en CARD_SPRITES la url es una plantilla
            que recibe el id de especie. Devolver la propia funcion hacia que el
-           <img> recibiera su codigo fuente como url y no se descargaba nada. */
-        return spriteById(scriptCardPreferences.sprite).url(speciesId);
+           <img> recibiera su codigo fuente como url y no se descargaba nada.
+
+           Antes de montar la url se pasa el id por el catalogo del juego: las
+           variantes (Ancient, Hard, Nightmare) tienen un pokeId alto que no
+           existe en ningun catalogo de sprites, y con el se descargaba un 404 y
+           el Pokemon se veia roto. El catalogo devuelve el de la especie base. */
+        return spriteById(scriptCardPreferences.sprite).url(ccEspecieSprite(speciesId) || speciesId);
     }
 
     /* Puesta la imagen con su respaldo, igual que hacen las cards. Los GIF
@@ -6216,7 +7590,18 @@
             }
             spr.classList.remove('anim', 'cc-walk');
         };
-        spr.src = hunter.shiny ? (ccShinyUrl(speciesId) || normal) : normal;
+        /* Solo se escribe el src cuando cambia de verdad. Volver a poner el
+           MISMO valor reinicia el GIF: como la fila ahora reutiliza los nodos
+           que ya estan en pantalla, se reiniciaba la animacion de todos los
+           salvajes cada vez que el juego publicaba cualquier cosa, y se veia un
+           parpadeo en la fila entera.
+
+           Se comparan las dos rutas ya resueltas: el src del atributo puede ser
+           relativo y el currentSrc absoluto, y son la misma imagen. */
+        const destino = hunter.shiny ? (ccShinyUrl(speciesId) || normal) : normal;
+        const resolver = ruta => { try { return new URL(ruta, location.href).href; } catch (e) { return String(ruta || ''); } };
+        const actual = resolver(spr.currentSrc || spr.getAttribute('src') || '');
+        if (actual !== resolver(destino)) spr.src = destino;
         spr.classList.toggle('cc-shiny', !!hunter.shiny);
     }
 
@@ -6265,24 +7650,99 @@
         }
     }
 
-    function sceneClearHunters() {
-        sceneState.hunters.forEach(h => { h.row?.remove(); h.el?.remove(); });
+    /* Vacia la fila. `matarPrimero` desvanece al de delante en vez de borrarlo:
+           es lo que pasa cuando el aliado mata a un Pokemon, que es cuando la
+           firma de la lista cambia y esta funcion se llama. Sin eso el Pokemon
+           desaparecia de golpe y se leia como un fallo de dibujo, no como una
+           muerte.
+
+           Solo el de delante: los de detras se quitan al instante porque la
+           reconstruccion los vuelve a crear en sus huecos de todas formas, y
+           desvanecerlos tambien haria que durante 300 ms se vieran dos filas
+           enteras solapadas.
+
+           El nodo se retira solo al acabar la animacion. Retirarlo aqui
+           desconectaria el nodo y mataria la animacion en el mismo instante,
+           que es justo lo que hacia la salida por bola antes. */
+    function sceneClearHunters(matarPrimero) {
+        const muriendo = matarPrimero && sceneState.hunters[0];
+        if (muriendo) {
+            const sil = muriendo.silueta;
+            muriendo.el.classList.add('cc-muriendo');
+            muriendo.row?.remove();
+            /* La silueta necesita la mascara con ESTE sprite para recortarse con
+               la forma del Pokemon. Sin ella el destello saldria como un
+               rectangulo de color. */
+            const url = muriendo.spr?.currentSrc || muriendo.spr?.src;
+            if (sil && url) {
+                const quoted = `url("${url}")`;
+                sil.style.webkitMaskImage = quoted;
+                sil.style.maskImage = quoted;
+                const w = muriendo.spr.offsetWidth || 0;
+                const hgt = muriendo.spr.offsetHeight || 0;
+                if (w && hgt) {
+                    sil.style.width = w + 'px';
+                    sil.style.height = hgt + 'px';
+                    /* La silueta lleva el margen NEGATIVO de la correccion del pie
+                       para caer sobre el dibujo y no sobre la caja. Sin sprite, o
+                       sin imagen ya medida, se deja como esta: un 0 es mejor que
+                       un NaN en el margen. */
+                    const corr = Number(sceneCorreccionPie(muriendo.spr)) || 0;
+                    sil.style.marginBottom = -corr + 'px';
+                }
+                /* classList sin remove: la clase no se habia puesto nunca en esta
+                   fila y el elemento es nuevo, pero se quita por si acaso para que
+                   el destello arranque limpio. */
+                sil.classList.remove('cc-res-win', 'cc-res-lose');
+                sil.style.background = '#d9534f';
+            }
+            window.setTimeout(() => muriendo.el?.remove(), 320);
+        }
+        sceneState.hunters.forEach(h => {
+            if (h === muriendo) return;
+                h.el?.remove();
+        });
         sceneState.hunters = [];
         sceneState.firma = '';
-        /* La lista del panel se vacia aqui y se vuelve a pintar en
-           scenePintarEnemigos, que la reconstruye al cambiar la firma. */
-        const lista = sceneState.col?.querySelector('[data-cc-enlist]');
-        if (lista) { lista.replaceChildren(); delete lista.dataset.ccFirma; }
+        /* No hay lista que vaciar. AlGone el panel con su tabla de salvajes, las
+           barras viven solo en las etiquetas de nombre y se limpian solas al
+           desaparecer los sprites. */
     }
+    /* La vida de cada salvaje va solo a su ETIQUETA DE NOMBRE, la que lleva
+       encima el Pokemon. Antes se escribia tambien en la fila del panel, que ya
+       no existe; esa parte se fue con el panel y aqui solo queda la etiqueta.
 
+       LA BARRA SE PONE SIEMPRE, Y EN CADA LLAMADA, DESDE LA CUENTA VIVA.
+
+       Antes se pintaba `h.hpPct`, un numero guardado en el hunter que venia de
+       una copia anterior de la lista. Esa copia la hacia `sceneSetHunters` en su
+       salida temprana, y ahi se perdia medio camino: si el hunter aun no tenia
+       `slot` (que se le asigna al reutilizar el nodo), la busqueda por indice
+       podía caer en otro Pokemon, y si la salida temprana no llegaba a
+       ejecutarse, la barra se pintaba con la cuenta de hace tres golpes.
+
+       Medido: el servidor baja el HP del salvaje en vivo y seguido (slot 7:
+       120 -> 114 -> 108 -> 102 ... en mensajes separados), la card si lo
+       reflejaba porque lee la cuenta por su cuenta, y el escenario se quedaba
+       clavado hasta que el Pokemon se eliminaba.
+
+       Aqui ya no se pinta un numero guardado: se consulta la cuenta del slot en
+       el momento de pintar. Asi la barra no depende de que nadie se acuerde de
+       copiarla, y no hay forma de que se quede atras. */
     function sceneRefreshHp() {
         sceneState.hunters.forEach(h => {
-            if (!h.fill) return;
-            h.fill.style.width = `${h.hpPct}%`;
-            if (h.pct) h.pct.textContent = Math.round(h.hpPct) + '%';
+            /* La cuenta viva manda si la hay: es el dato del servidor de este
+               instante. Solo si el slot todavia no esta en la cuenta (un hunter
+               recien creado, o una captura a medio resolver) se usa el valor que
+               traia la lista. */
+            const viva = ccVidaDeSlot(h.slot);
+            const pct = (viva && viva.maxHp > 0)
+                ? (viva.hp / viva.maxHp) * 100
+                : h.hpPct;
+            if (typeof pct === 'number' && isFinite(pct)) h.hpPct = pct;
+            scenePintarBarraNombre(h.nm, 'hp', h.hpPct);
             sceneMostrarHp(h, sceneColorHp(h.hpPct));
         });
-        scenePintarEnemigos();
     }
 
     function sceneMakeHunter(entry, indice) {
@@ -6293,7 +7753,8 @@
         const spr = document.createElement('img');
         spr.className = 'cc-esc-spr' + (entry.shiny ? ' cc-shiny' : '');
         spr.alt = entry.name;
-        const nm = sceneCrearNombre(entry.name);
+        /* El salvaje lleva su barra de vida en la misma etiqueta que el nombre. */
+        const nm = sceneCrearNombre(entry.name, 'hp');
         /* La estrella se queda, pero ya no es lo unico que avisa: ahora tambien
            se ve el sprite shiny. Sigue puesta porque en los dos estilos sin
            variante (Gen-IX y Dream-World) es el unico aviso. */
@@ -6308,20 +7769,43 @@
         const silueta = document.createElement('span');
         silueta.className = 'cc-esc-silueta';
         el.appendChild(silueta);
+        /* Sombra de contacto. Antes el sprite llevaba un filter:drop-shadow,
+           que sobre un elemento que se mueve obliga a repintar su capa entera
+           en cada fotograma. Esta elipse solida hace lo mismo de separarlo del
+           fondo, dice sobre que linea esta y no cuesta nada de pintar.
+           Se crea despues del sprite para que quede encima. */
+        const sombra = document.createElement('span');
+        sombra.className = 'cc-esc-sombra';
+        el.appendChild(sombra);
         sceneState.col.appendChild(el);
 
         return { name: entry.name, speciesId: entry.speciesId, hpPct: entry.hpPct,
                  shiny: !!entry.shiny,
-                 el, spr, nm, silueta, row: null, fill: null, pct: null, types: entry.types };
+                 /* El slot es el numero con el que el servidor nombra a este
+                    salvaje en cada golpe. Con el se sabe a quien pertenece cada
+                    efecto, sin depender del orden en que se pintaron. */
+                 slot: isFinite(Number(entry.slot)) ? Number(entry.slot) : indice,
+                 /* Su casilla en el mapa, para medir distancias. */
+                 mapaFila: Number(entry.mapaFila) || 0,
+                 mapaCol: Number(entry.mapaCol) || 0,
+                 el, spr, nm, silueta, sombra, row: null, fill: null, pct: null, types: entry.types };
     }
 
     /* Firma de lo que hay ahora en la fila. Reconstruir es caro (borra y crea
        DOM) y el socket empuja `pending` a cada golpe, asi que sin esta
        comparacion se reconstruia en bucle. */
+    /* Firma de lo que hay en la fila. OJO: aqui NO va la vida, a proposito.
+
+       La vida llega cada 800 ms y los golpes la cambian cada uno. Si la vida
+       entrara en la firma, CADA GOLPE firmaria la fila como distinta y se
+       reconstruiria entera: los cuatro Pokemon desaparecerian y volverian a
+       entrar desde la derecha, y se leia como un parpadeo constante.
+
+       Por eso la identidad es solo "que Pokemon es quien" (cantidad, especie,
+       nombre y shiny) y la vida va por otro camino, que es sceneRefreshHp. Esa
+       separacion es la que hace que las barras bajen en el acto sin que la fila
+       se mueva. */
     function sceneHuntersSignature(lista) {
-        /* La cantidad va delante porque los salvajes de una hunt son copias: sin
-           ella, pasar de tres a cuatro no cambiaba nada y la fila se quedaba
-           como estaba. Con la cuenta, cada cambio de cuantos hay reconstruye. */
         return lista.length + '#' + lista.map(e => `${e.speciesId}:${e.name}:${e.shiny ? 1 : 0}`).join('|');
     }
 
@@ -6333,6 +7817,9 @@
        para que una lista disparatada no llene la pantalla, no un numero de
        salvajes. Ponerlo a 4 no hacia que hubiera 4. */
     function sceneCuentaSalvajes() {
+        /* El mensaje `field` es el que sabe cuantos hay de verdad. */
+        const desdeCampo = Array.isArray(ccFieldState.mobs) ? ccFieldState.mobs.length : 0;
+        if (desdeCampo > 0) return Math.min(desdeCampo, SCENE_MAX_MOBS);
         const desdeSocket = Array.isArray(ccWildState.list) ? ccWildState.list.length : 0;
         if (desdeSocket > 0) return Math.min(desdeSocket, SCENE_MAX_MOBS);
         const desdeDom = document.querySelectorAll('.cbt-card.cbt-mob').length;
@@ -6347,7 +7834,37 @@
            en una hunt son copias) no cambiaba la firma y la fila no se
            actualizaba. */
         const firma = sceneHuntersSignature(lista);
-        if (firma === sceneState.firma) {
+        /* Cuantos Pokemon caben en pantalla. Es el mismo calculo que se usa mas
+           abajo para pintar, y hace falta ANTES de decidir nada: la salida
+           temprana de abajo solo es valida si la fila tiene de verdad lo que
+           tiene que tener. */
+        const tope = Math.max(1, Math.min(SCENE_MAX_MOBS,
+            Number(scriptCardPreferences.sceneCount) || SCENE_MAX_MOBS));
+        const pedidas = Math.min(lista.length, tope);
+
+        /* ESTA COMPROBACION SALVABA LA FILA DE MORIR DEFINITIVAMENTE.
+
+           El guardado era solo `firma === sceneState.firma`. Pero la firma
+           describe QUE Pokemon hay, no CUANTOS hay en pantalla, y esas dos
+           cosas se separan en cuanto cae un Pokemon:
+
+             - al morir uno, `sceneClearHunters` vacia la fila;
+             - la firma, en cambio, solo cambia si cambia la especie. En una hunt
+               todos los salvajes son el mismo Pokemon, asi que la firma sigue
+               siendo exactamente la misma;
+             - el ciclo siguiente entra por la salida temprana, que actualiza
+               barras y no pinta NADA, porque da por hecho que los nodos ya
+               estan ahi.
+
+           Resultado: la fila vacia, la firma intacta, y cada ciclo siguiente
+           saliendo por aqui. El area puede seguir repoblándose y atacando, pero
+           en pantalla no vuelve a aparecer un solo Pokemon. Medido en partida:
+           `ccSceneHunters` clavado en 0 con la hunt viva y el heroe perdiendo
+           vida.
+
+           Anadir `sceneState.hunters.length === pedidas` hace que la fila se
+           compruebe a si misma: si le faltan Pokemon, hay que rehacerla. */
+        if (firma === sceneState.firma && sceneState.hunters.length === pedidas) {
             /* La cuenta se restaura aqui, no solo al reconstruir. Si el ciclo
                anterior la dejo a 0 porque no habia lista, el salvage que se
                acaba de resolver no tiene con quien reponerse: la fila se queda
@@ -6355,14 +7872,65 @@
             const hay = Math.min(lista.length, Math.max(1, Math.min(SCENE_MAX_MOBS,
                 Number(scriptCardPreferences.sceneCount) || SCENE_MAX_MOBS)));
             sceneState.cuenta = hay;
+            /* ESTA ERA LA CAUSA DE QUE LAS BARRAS DEL ESCENARIO NO BAJASEN.
+
+               La firma NO lleva la vida, a proposito: si la llevara, cada golpe
+               firmaria la fila como distinta y la reconstruiria entera. Por eso
+               la vida va por su camino, y aqui se hacia solo la mitad: se
+               repintaba la barra SIN antes copiar el valor nuevo a cada hunter.
+
+               O sea que se pintaba lo de antes una y otra vez, y la barra se
+               quedaba clavada para siempre mientras la cuenta de vida bajaba
+               bien. Es justo lo que pasaba: la card si bajaba (su ruta si copia
+               el valor) y el escenario no.
+
+               Aqui se copia el `hpPct` que trae la lista, y luego se repinta. */
+            sceneState.hunters.forEach((vivo, k) => {
+                const nuevo = lista[k]?.hpPct;
+                if (typeof nuevo === 'number' && isFinite(nuevo)) {
+                    vivo.hpPct = Math.max(0, Math.min(100, nuevo));
+                }
+            });
             sceneRefreshHp();
-            /* Y si aun asi falta alguien para llegar a la cuenta, se encola. */
-            while (sceneState.hunters.length < hay && sceneState.hunters.length < SCENE_MAX_MOBS) {
-                sceneEnqueueHunter();
-            }
+            /* ANTES, SI FALTABA ALGUIEN PARA LLEGAR A LA CUENTA, SE METIA UNA
+               COPIA INVENTADA. Eso era el bucle de la fila: la firma no cambia
+               (en una hunt todos los salvajes son el mismo Pokemon, asi que solo
+               cambia si cambian cuantos hay), asi que en cuanto el area publicaba
+               un vivo mas se rellenaba el hueco con una copia del de delante en
+               vez de con el Pokemon de verdad. En pantalla: uno salia, otro
+               entraba, y todo el tiempo el mismo dessin.
+
+               Ahora la fila NO se rellena aqui. Si el area tiene mas salvajes de
+               los que hay pintados, se reconstrueye arriba con la lista real,
+               que es la unica forma de que lo que se ve sea lo que hay. Y esa
+               reconstruccion solo pasa si cambia la firma, que es lo correcto. */
             return;
         }
-        sceneClearHunters();
+        /* ¿La fila se puede reutilizar o hay que rehacerla entera?
+
+           En una hunt todos los salvajes son copias del mismo Pokemon, asi que
+           la lista casi siempre tiene los mismos elementos mas o menos uno. Si
+           la nueva empieza por lo que ya hay en pantalla, los nodos que ya
+           estan puestos se conservan y solo se anaden los que falten.
+
+           Antes cualquier cambio de firma borraba los cuatro Pokemon y los
+           volvia a montar, todos con su animacion de entrada desde la derecha:
+           cada deteccion nueva reiniciaba la fila entera y se leia como un
+           parpadeo. Ahora un Pokemon detectado aparece junto a los demas y el
+           resto se queda donde estaba, que es lo que se pide: que salgan cada
+           que se detecta uno.
+
+           Hay dos salidas que si necesitan rehacerlo todo: que la especie
+           cambie (es otra hunt) y que la lista mengue (ha muerto alguno). */
+        const antes = sceneState.hunters;
+        const reutilizable = antes.length > 0 && lista.length >= antes.length &&
+            antes.every((h, k) => {
+                const e = lista[k];
+                return e && h.speciesId === e.speciesId && !!h.shiny === !!e.shiny;
+            });
+        const fueMuerte = !reutilizable && antes.length > 0 && lista.length < antes.length &&
+            lista.every(e => antes.some(h => h.speciesId === e.speciesId));
+        if (!reutilizable) sceneClearHunters(fueMuerte);
         /* La firma se guarda DESPUES de limpiar, porque sceneClearHunters la
            borra. Puesta antes, la comprobacion nunca cuadraba y se reconstruia
            la fila entera en cada evento del socket. */
@@ -6375,13 +7943,44 @@
 
            `pedidas === 0` es un caso de verdad, no un error: el juego no publica
            ningun salvaje mientras se resuelve el encounters. Entonces la fila se
-           vacia y se vuelve a llenar sola cuando aparezca. */
-        const tope = Math.max(1, Math.min(SCENE_MAX_MOBS,
-            Number(scriptCardPreferences.sceneCount) || SCENE_MAX_MOBS));
-        const pedidas = Math.min(lista.length, tope);
+           vacia y se vuelve a llenar sola cuando aparezca.
+
+           `tope` y `pedidas` ya estan calculados arriba, antes de la salida
+           temprana: hacen falta ahi para comprobar que la fila tenga los Pokemon
+           que le tocan. Aqui solo se usan. */
         if (pedidas === 0) { sceneDebug(); return; }
+        /* Si el ajuste «En el area» se ha bajado, la fila puede tener mas
+           salvajes de los que ahora caben. Con la reutilizacion de arriba esos
+           sobrantes se quedarian en pantalla y en el panel, porque no vuelven a
+           pasar por sceneClearHunters. Se retiran aqui. */
+        if (reutilizable && sceneState.hunters.length > pedidas) {
+            while (sceneState.hunters.length > pedidas) {
+                const sobra = sceneState.hunters.pop();
+                sobra?.row?.remove();
+                sobra?.el?.remove();
+            }
+        }
+        /* Los que ya estaban en pantalla conservan su nodo: se les actualiza la
+           vida y no se vuelven a crear, para que no vuelvan a entrar desde la
+           derecha. Los que faltan se crean de cero y si entran por la derecha. */
         for (let i = 0; i < pedidas; i++) {
-            const hunter = sceneMakeHunter(lista[i], i);
+            const e = lista[i];
+            if (i < sceneState.hunters.length) {
+                const vivo = sceneState.hunters[i];
+                /* El nombre va en un <b> propio dentro del cartel, para poder
+                   reescribirlo sin cargarse la punta de abajo. */
+                if (vivo.name !== e.name) {
+                    vivo.name = e.name;
+                    scenePonerNombre(vivo.nm, e.name);
+                }
+                vivo.hpPct = Math.max(0, Math.min(100, e.hpPct ?? vivo.hpPct));
+                vivo.types = e.types || vivo.types;
+                if (isFinite(Number(e.slot))) vivo.slot = Number(e.slot);
+                vivo.mapaFila = Number(e.mapaFila) || vivo.mapaFila;
+                vivo.mapaCol = Number(e.mapaCol) || vivo.mapaCol;
+                continue;
+            }
+            const hunter = sceneMakeHunter(e, i);
             /* El sprite se pone antes de medir el pie: la correccion depende
                del canal alfa de ESTA imagen, no de la que hubiera antes. */
             scenePonerSprite(hunter);
@@ -6390,11 +7989,16 @@
                leia como un amontonamiento. Escalonado por indice para que
                entren uno detras de otro conforme se detectan. */
             hunter.el.classList.add('cc-enter');
-            hunter.spr.style.animationDelay = `${i * 0.12}s`;
-            window.setTimeout(() => hunter.el?.classList.remove('cc-enter'), 700 + i * 120);
+            hunter.spr.style.animationDelay = `${(pedidas - 1 - i) * 0.12}s`;
+            window.setTimeout(() => hunter.el?.classList.remove('cc-enter'), 700);
             sceneState.hunters.push(hunter);
         }
         sceneState.cuenta = pedidas;
+        /* La fila recien construida no tiene barras puestas: `scenePintarEnemigos`
+           coloca y lista, pero no pinta la vida. Sin esta llamada, un Pokemon que
+           entra en pantalla se muestra con la etiqueta vacia hasta que le llegue
+           un golpe. Se repinta aqui, ya con la cuenta viva de cada slot. */
+        sceneRefreshHp();
         /* Primero se coloca y se lista, y solo despues se mide: al reves, un
            fallo al medir se llevaba por delante el colocar y el listar, y los
            salvajes se veian sin ubicar y sin salir en el panel. */
@@ -6430,6 +8034,12 @@
         Array.isArray(pos) ? pos[1] : 0);
         el.classList.toggle('cc-objetivo', indice === 0);
         hunter.spr.style.animationDelay = `${indice * 0.23}s`;
+        /* La llamada a sceneColumnas() de arriba acaba de recalcular el
+           desplazamiento de centrado, porque al cambiar cuantos salvajes hay el
+           conjunto se recentra. El aliado se coloca aqui tambien para que no se
+           quede en la posicion de la llamada anterior: se separaria de la fila
+           justo en el momento en que esta se ha movido. */
+        sceneColocarHero(SCENE_BG.get(sceneState.bg)?.suelo ?? 0.76, H);
     }
 
     /* Al resolverse un encuentro el salvaje se va y el resto avanza. Si solo se
@@ -6442,7 +8052,7 @@
        mata la animacion en el mismo instante: el delantero no se veia desaparecer
        (solo parpadeaba) mientras el de atras aparecia de golpe, y eso es
        justamente lo que reportaba el usuario. */
-    function sceneRemoveHunter(hunter, msSalida) {
+    function sceneRemoveHunter(hunter, msSalida, cerrarDespues) {
         const i = sceneState.hunters.indexOf(hunter);
         if (i < 0) return;
         sceneState.hunters.splice(i, 1);
@@ -6452,72 +8062,39 @@
            la fila se queda con una entrada que apunta a un Pokemon que ya no
            esta. */
         hunter.row?.remove();
-        hunter.row = null; hunter.fill = null; hunter.pct = null;
-        /* Cada uno ocupa ahora el hueco del que estaba delante. */
-        sceneState.hunters.forEach((h, k) => scenePlaceHunter(h, k));
-        /* Entra otro solo si la cuenta del juego lo pide. Antes se rellenaba hasta
-           SCENE_MAX_MOBS siempre, y por eso la fila llegaba a cuatro Pokemon
-           con el area vacia: al resolverse un encuentro se quitaba el
-           delantero y acto seguido metia una copia, y asi hasta el tope. */
-        if (sceneState.cuenta > 0 && sceneState.hunters.length < SCENE_MAX_MOBS) {
-            /* Repone solo hasta el tope. Sin este limite la fila crecia cada
-               vez que se resolvia un encuentro, porque la cuenta del juego
-               nunca llegaba a 0 y siempre decia «falta alguien». Con la fila
-               mas larga que SCENE_X, los que sobran caian todos en la misma
-               columna y se veian amontonados. */
-            const ahora = sceneCuentaSalvajes();
-            /* Solo se repone lo que el juego PUBLICA: si no hay deteccion
-               (ni socket ni card en el DOM) no se mete copia. Antes el 0
-               disparaba igual el enqueue y tras cada captura la fila se
-               rellenaba con copias aunque el juego no tuviera ninguno. */
-            if (ahora > sceneState.hunters.length) {
-                sceneState.cuenta = Math.min(ahora || sceneState.cuenta, SCENE_MAX_MOBS);
-                sceneEnqueueHunter();
-            }
-        }
-        scenePintarEnemigos();
-        if (msSalida) {
-            /* El nombre del sprite tambien se desvanece con el, y no se queda
-               flotando sobre un hueco mientras dura la salida. */
-            hunter.el?.classList.add('cc-saliente');
-            window.setTimeout(() => hunter.el?.remove(), msSalida);
-        } else {
-            hunter.el.remove();
-        }
-    }
 
-    /* Entra un salvaje nuevo en el hueco `indice` (por defecto, el ultimo).
-       Es una COPIA del de delante: en una hunt no salen las demas variantes, el
-       area esta llena del mismo Pokemon. Si la fila esta vacia se usa el de la
-       hunt que tiene el juego. */
-    function sceneEnqueueHunter(indice) {
-        if (!sceneState.col) return;
-        const primero = sceneState.hunters[0];
-        const base = primero
-            ? { name: primero.name, speciesId: primero.speciesId, shiny: primero.shiny,
-                types: primero.types, hpPct: 100 }
-            : sceneHuntPokemon();
-        if (!base) return;
-        const hueco = (indice === undefined || indice === null)
-            ? sceneState.hunters.length
-            : Math.min(indice, sceneState.hunters.length);
-        const hunter = sceneMakeHunter(base, hueco);
-        /* Entra por la derecha y frena en su hueco. La clase se quita al acabar
-           la entrada para que el resto de animaciones no hereden el
-           desplazamiento inicial. */
-        hunter.el.classList.add('cc-enter');
-        sceneState.hunters.splice(hueco, 0, hunter);
-        sceneState.hunters.forEach((h, k) => scenePlaceHunter(h, k));
-        sceneSpriteHunters([hunter]);
-        sceneMedirPies(hunter.spr.src);
-        scenePintarEnemigos();
-        sceneDebug();
-        /* Colocar tambien aqui, y no solo cuando llegue la medicion: la
-           correccion del pie suele estar ya en cache (los salvajes de una hunt
-           comparten sprite), y sin esta llamada el recien creado se quedaba
-           flotando hasta el siguiente redimensionado. */
-        sceneColocarDeferred();
-        window.setTimeout(() => hunter.el.classList.remove('cc-enter'), 700);
+        /* El nodo sale del DOM en el acto. Si se deja puesto, aunque oculto, el
+           reloj del escenario (cada 900 ms) puede volver a construir la fila y el
+           Pokemon atrapado reaparece al lado del efecto de la bola. Por eso el
+           nodo se retira YA, y no cuando acaba la animacion: la captura se
+           resolve en el estado, no por esperas. */
+        hunter.el?.classList.add('cc-capturado');
+        hunter.el?.remove();
+
+        /* Los demas NO avanzan de hueco hasta que la bola ha terminado su
+           efecto. Si uno entra justo donde esta explotando, parece que no se ha
+           atrapado a nadie: era lo que se veia. El cierre va en un temporizador
+           solo cuando lo pide la captura. */
+        const cerrar = () => {
+            sceneState.hunters.forEach((h, k) => scenePlaceHunter(h, k));
+            /* ANTES AQUI SE METIA UN SALVAJE INVENTADO, Y ESO ERA EL BUCLE.
+
+               `sceneEnqueueHunter` mete una COPIA del que hay delante. Con el
+               golpe o la captura resuelto, se quitaba el delantero y acto seguido
+               metia una copia sua, y asi hasta el tope: en pantalla se veia un
+               Pokemon salir y otro entrar sin parar, todos el mismo, y el mapa no
+               se correspondia con nada.
+
+               La fila se rellena SOLO con lo que publica el servidor. El salvaje
+               que reaparece entra cuando su mensaje llega, con su slot, su vida y
+               su casilla de verdad, y lo hace `sceneHuntersFromSocket` con la
+               lista del mensaje `field`.
+
+               Aqui solo se recolocan los que quedan y ya esta. */
+            scenePintarEnemigos();
+        };
+        if (cerrarDespues) window.setTimeout(cerrar, cerrarDespues);
+        else cerrar();
     }
 
     /* El nombre de la hunt, segun el propio juego.
@@ -6610,26 +8187,206 @@
     }
 
     /* La lista del socket, cuando llega, tiene prioridad: trae el speciesId y
-       la vida exactos. Se comprueba antes de caer al DOM. */
+       la vida exactos. Se comprueba antes de caer al DOM.
+
+       Hay dos fuentes y se combinan. `field` es la del juego y trae lo que
+       importa: cuantos salvajes hay, en que orden (slot), de que especie y si
+       son shiny. No trae el nombre. `pending` si lo trae. Asi que se arma la
+       lista con `field` y el nombre se busca en `pending` por especie y, si no
+       cuadra, por posicion; y si tampoco hay nombre, se cae al DOM, que es lo
+       unico que pinta el texto. Sin nombre no hay sprite ni tipo, asi que es el
+       ultimo recurso, no el primero. */
     function sceneHuntersFromSocket() {
+        /* El catalogo es la fuente del nombre, del tipo y del sprite, asi que se
+           pide la primera vez aunque todavia no haya salvajes. */
+        ccCatalogoCargar();
+        const campo = ccFieldState.mobs;
         const lista = ccWildState.list;
-        if (!Array.isArray(lista) || !lista.length) return null;
-        return lista.slice(0, SCENE_MAX_MOBS).map(entry => {
-            const name = String(entry.name || '').trim() || 'Salvaje';
-            const speciesId = Number(entry.speciesId) || ccSpeciesIdFromCatalog(name) || 1;
-            const maxHp = Number(entry.maxHp) || 0;
-            const hp = Number(entry.hp);
-            return {
+        const hayCampo = Array.isArray(campo) && campo.length > 0;
+        const hayLista = Array.isArray(lista) && lista.length > 0;
+        if (!hayCampo && !hayLista) return null;
+
+        /* De donde sale el nombre, por orden:
+             1. el propio mob del mensaje `field`, que trae `name` y `speciesName`
+             2. la lista de `pending`, que tambien lo trae
+             3. la card nativa del juego, que lo pinta como texto
+             4. el nombre de la hunt, que el HUD del juego publica siempre
+
+           El 4 es el que salva casi siempre: en una hunt todos los salvajes son
+           de la misma especie, asi que con el nombre de la hunt se sabe que
+           Pokemon es aunque no haya nada mas en pantalla. Sin esto se veian tres
+           Pokemon sin nombre y sin sprite. */
+        let delDom = null;
+        const delHunt = sceneHuntDelJuego();
+        const nombres = (entry, i, especie) => {
+            const propio = String(entry?.name || entry?.speciesName || '').trim();
+            if (propio) return propio;
+            if (hayLista) {
+                const n = String(lista[i]?.name || '').trim();
+                if (n) return n;
+                for (const e of lista) {
+                    if (Number(e?.speciesId) === especie && String(e?.name || '').trim()) {
+                        return String(e.name).trim();
+                    }
+                }
+            }
+            if (!delDom) delDom = sceneHuntersFromDOM();
+            const delNative = delDom[i]?.name || '';
+            if (delNative) return delNative;
+            return delHunt || ccWildState.baseName || '';
+        };
+
+        const origen = hayCampo ? campo : lista;
+        const salida = [];
+        for (let i = 0; i < origen.length && salida.length < SCENE_MAX_MOBS; i++) {
+            const entry = origen[i];
+            const especie = Number(entry?.speciesId) || 0;
+            /* El nombre sale del catalogo del juego, que es el unico que conoce
+               las variantes. Antes se llegaba aqui sin nombre y se pintaba
+               "Salvaje", con el sprite del pokeId 10541, que no existe en
+               ningun catalogo de sprites y salia roto. */
+            const name = ccNombreEspecie(especie, nombres(entry, i, especie)) || 'Salvaje';
+            const maxHp = Number(entry?.maxHp) || 0;
+            const hp = Number(entry?.hp);
+            /* La vida sale de la cuenta propia, que se sincroniza con el servidor.
+               MEDIDO, y corrige una conclusion anterior equivocada: el servidor
+               SI baja `mobs[].hp` en vivo, slot a slot y mensaje a mensaje. En
+               una caza real, el slot 7 fue bajando 120 -> 114 -> 108 -> 102 ->
+               96 -> 90 -> 84 -> 78 -> 72 -> 66 -> 60 en mensajes separados, y el
+               slot 14 reaparecio de 0/120 a 120/120.
+
+               Cuenta propia igualmente, porque cubre lo que el mensaje aun no
+               trae: entre un golpe y el siguiente, o mientras el area esta en
+               silencio, la barra tiene que moverse ya. El servidor manda cuando
+               manda, y esta cuenta se queda con el ultimo valor si el slot no
+               aparece, que es justo cuando hace falta. */
+            const vida = ccVidaDeSlot(entry?.slot);
+            salida.push({
                 name,
-                speciesId,
+                /* El sprite no se pide con el pokeId de la variante, sino con el
+                   de su especie base, que es el unico que tiene imagen. */
+                speciesId: ccEspecieSprite(especie) || ccSpeciesIdFromCatalog(name) || 0,
+                /* El id que manda el servidor, que es con el que hay que buscar
+                   el catalogo y emparejar los golpes. */
+                pokeId: especie,
                 /* El socket publica si es shiny. Sin esto el sprite era siempre
                    el normal y solo se distinguia por el icono de destello. */
-                shiny: !!entry.shiny,
-                types: ccCreatureTypes(name),
-                hpPct: maxHp > 0 && isFinite(hp) ? Math.max(0, Math.min(100, hp / maxHp * 100)) : 100,
+                shiny: !!entry?.shiny,
+                types: ccTiposEspecie(especie, name),
+                ataques: ccAtaquesEspecie(especie),
+                hpPct: vida
+                    ? Math.max(0, Math.min(100, (vida.hp / vida.maxHp) * 100))
+                    : (maxHp > 0 && isFinite(hp) ? Math.max(0, Math.min(100, hp / maxHp * 100)) : 100),
+                /* La casilla real en el mapa. La usa el reparto de la fila para
+                   poner delante a los que mas se van a golpear, y el anclaje del
+                   efecto para elegir el equivalente mas cercano cuando el slot
+                   golpeado no esta dibujado. */
+                mapaFila: Number(entry?.row) || 0,
+                mapaCol: Number(entry?.col) || 0,
+                /* Si esta en pie. El juego lo dice con tres cosas que llegan
+                   juntas: `hp` a cero, `dead` y `respawning`. Un Pokemon que esta
+                   reapareciendo cuenta como muerto: sale vivo del area, no se
+                   dibuja, y cuando vuelve ya viene con la vida llena. */
+                vivo: !(entry?.dead || entry?.respawning) && Number(entry?.hp) > 0,
+                /* El slot es el numero con el que el servidor dice a quien pega
+                   cada golpe, asi que se guarda para emparejar uno con su Pokemon. */
+                slot: isFinite(Number(entry?.slot)) ? Number(entry.slot) : i
+            });
+        }
+        /* Sin ningun nombre, esta fuente no sirve: se devuelve null y quien llama
+           usa la lista del DOM, que es la unica que los trae con seguridad. */
+        if (!salida.length || salida.every(h => h.name === 'Salvaje')) return null;
+        /* Un Pokemon sin especie no tiene sprite que pintar: se descarta antes de
+           ensuciar la fila. */
+        /* FILTRO DE PROXIMIDAD: fuera los salvajes que el aliado tiene lejos.
+
+           Pintarlos todos llenaba la banda de Pokemon que no estan jugando: con
+           15 en el area se veian cuatro Geodude en fila y el que de verdad tenia
+           al lado en el siete. El juego solo haceWboga con los que tiene cerca,
+           y se copia ese criterio.
+
+           Si ningun salvaje esta cerca (el area vacia al lado del aliado) se
+           muestran los mas proximos igualmente: es peor un Geodude a 50 casillas
+           que una banda vacia. */
+        let fila = salida.filter(h => h.speciesId > 0 || h.name !== 'Salvaje');
+
+        /* QUE POKEMONES SE VEN, Y POR QUE ESTO CAMBIO CUATRO VECES.
+
+           El sintoma era siempre el mismo: la fila repetia un Pokemon en bucle
+           (uno salia, otro entraba, todos el mismo dibujo) y el mapa no
+           correspondia con nada.
+
+           Secciones por las que ha pasado:
+
+           1) TODOS los del area. Con 15 salvajes se veian quince Geodude y no se
+              savia cual era el que estaban golpeando.
+
+           2) Solo los CERCANOS al aliado, a 6 casillas. Parecia mejor, pero las
+              distancias reales de una partida dan un corte clarisimo:
+
+                 1, 2, 2, 2  |  17, 23, 23, 30, 33, 33, 34, 36, 42, 46, 52
+
+              Cuatro pegados y once repartidos. El filtro de 6 casillas es correcto
+              como idea, pero el area cambia de distribucion segun la partida y se
+              quedaba sin nadie que mostrar: la fila vacia.
+
+           3) Primero los que pelean, luego los cercanos. Tambien fallo, porque
+              "pelean" seacia con una tabla que se declara despues de este filtro
+              (temporal dead zone), asi que la fila entera se caia.
+
+           4) El area real, ordenada. Ademas, el bucle no era solo del filtro: la
+              fila se rellenaba con COPIAS inventadas del primero cada vez que
+              faltaba alguien (`sceneEnqueueHunter`, ya borrada), y la lista de
+              salvajes se congelaba porque solo se guardaba cuando la firma
+              cambia. Con todo eso, cada muerte y cada aparicion se traducía en
+              «sale uno, entra una copia».
+
+           La regla actual sale del propio juego y no depende de ningun parametro
+           fragil: se pinta lo que el area publica, ordenado por quien esta de
+           verdad en combate, y sin recortar antes de tiempo. El recorte se hace
+           al pintar, nunca sobre la lista que usan los golpes. */
+        if (fila.length) {
+            const distHeroe = (h) => Math.abs(h.mapaFila - ccFieldState.heroRow) +
+                                    Math.abs(h.mapaCol - ccFieldState.heroCol);
+            const objetivo = Number(ccFieldState.targetSlot);
+
+            /* UN SOLO ORDEN, Y ANTES HABIA DOS.
+
+               El primero ponia delante al objetivo y a los golpeados; el segundo,
+               que venia de la version anterior, los reordenaba por distancia y
+               adjudicaba el mismo rango al objetivo que a un golpeado cualquiera.
+               Como el golpeado suele estar al lado del aliado y el objetivo
+               souvent a treinta casillas, el objetivo se iba al final de la banda:
+               es decir, justo donde NO se ve el combate. El segundo sort ademas
+               ignoraba `vivo`, asi que un Pokemon ya reaparecido se colaba por
+               delante de los que de verdad estan en pie.
+
+               Ahora hay un unico criterio, en el orden que importa:
+
+                 0  el OBJETIVO del servidor   -> es el combate de verdad
+                 1  los que acaban de recibir  -> hay que ver caer la vida
+                 2  los VIVOS, por cercanía    -> lo que esta al lado del aliado
+                 3  los muertos y los lejanos  -> solo para que la fila no quede coja
+
+               Y dentro de cada rango, el mas cercano al aliado, que es la misma
+               distancia con la que el juego coloca a los Pokemon en el mapa. */
+            const rango = (h) => {
+                if (h.slot === objetivo) return 0;
+                if (sceneGolpeReciente(h.slot)) return 1;
+                if (h.vivo) return 2;
+                return 3;
             };
-        });
+            fila.sort((a, b) => {
+                const ra = rango(a), rb = rango(b);
+                if (ra !== rb) return ra - rb;
+                const d = distHeroe(a) - distHeroe(b);
+                if (d !== 0) return d;
+                return (a.slot || 0) - (b.slot || 0);
+            });
+        }
+        return fila;
     }
+
 
     /* --------------------------------------------------------------- */
 /* RELOJ DEL ESCENARIO                                            */
@@ -6686,6 +8443,13 @@
        cantidad la pone lo que el juego tiene en pantalla, no el ajuste: se
        respeta tal cual, sin rellenar con copias. */
     function sceneSyncHunters() {
+        /* La vida y la experiencia del aliado se refrescan SIEMPRE, tanto si la
+           fila se ha reconstruido como si no. La del heroe la cambia cada
+           golpe y llega en el mensaje del campo, que es el unico que llega
+           seguido (medido: 14 cambios en 20 s); sin esto la etiqueta se
+           quedaba con la cifra anterior. */
+        sceneRefreshHero();
+
         /* El juego reconstruye el contenido de .cbt-stage cuando cambia la
            pantalla, y con ello se lleva la escena puesta: la referencia queda
            apuntando a un nodo desconectado. Se comprueba en cada ciclo y se
@@ -6834,7 +8598,11 @@
         if (!name) name = 'Aliado';
         if (spriteSrc && spr.getAttribute('src') !== spriteSrc) spr.src = spriteSrc;
         scenePonerNombre(hero.querySelector('.cc-esc-nm'), name);
-        sceneState.hero = { name, spr, el: hero };
+        /* Los tipos del aliado se guardan aqui porque los necesita el efecto de
+           golpe: la hoja que se pinta depende del tipo, y sin esto el aliado
+           recibiria siempre el efecto de NORMAL. Se sacan del nombre con la misma
+           funcion que usan los salvajes. */
+        sceneState.hero = { name, spr, el: hero, types: ccCreatureTypes(name) };
         sceneSpriteHunters(sceneState.hunters);
         sceneMedirPies(spr.src);
         sceneColocarDeferred();
@@ -6886,9 +8654,14 @@
     /* --------------------------------------------------------------- */
     /* HUD                                                             */
     /* --------------------------------------------------------------- */
-    /* Nombre, tipo, nivel y vida del aliado, y a la derecha los salvajes. Las
-       barras se leen de la card real para no duplicar logica: la card ya
-       recibe la vida del socket y la refresca sola. */
+    /* Nombre, nivel y vida del aliado, y a la derecha los salvajes. Las barras
+       se leen de la card real para no duplicar logica: la card ya recibe la
+       vida del socket y la refresca sola.
+
+       Desde que el panel del aliado se elimino, su vida y su experiencia se
+       pintan en la ETIQUETA DE NOMBRE que lleva encima, no en un panel aparte.
+       El nivel tambien se va ahi, junto al nombre: era lo unico del panel que
+       no era una barra, y sin el se perdia. */
     function sceneText(col, sel, valor) {
         const el = col?.querySelector(sel);
         if (el) el.textContent = valor;
@@ -6900,87 +8673,89 @@
         return Number.isFinite(v) ? v : null;
     }
 
+    /* Escribe el relleno de una barra de la etiqueta. Devuelve false si la
+       etiqueta no tiene esa barra, para no escribir a null. */
+    function scenePintarBarraNombre(nm, clase, valor) {
+        const sel = clase === 'xp' ? '.cc-nmbar-xp i' : '.cc-nmbar-hp i';
+        const fill = nm?.querySelector(sel);
+        if (!fill) return false;
+        fill.style.width = Math.max(0, Math.min(100, valor)) + '%';
+        if (clase === 'hp') fill.classList.toggle('cc-crit', valor <= 25);
+        return true;
+    }
+
     function scenePintarHud() {
         const col = sceneState.col;
         if (!col) return;
         const card = document.getElementById('my-custom-poke-card');
         if (!card) return;
 
-        sceneText(col, '[data-cc-name]', card.querySelector('.cc-name')?.textContent?.trim() || '-');
-        sceneText(col, '[data-cc-tier]', card.querySelector('.cc-ribbon')?.textContent?.trim() || '');
-        sceneText(col, '[data-cc-lv]', card.querySelector('.cc-lv')?.textContent?.trim() || '');
-        /* Filete del panel con el color del tipo: mismo criterio que las cards. */
-        const aliado = col.querySelector('[data-cc-aliado]');
-        if (aliado) {
-            const tipos = ccCreatureTypes(card.querySelector('.cc-name')?.textContent?.trim() || '');
-            aliado.style.setProperty('--ac', getTypeColor(tipos[0]) || '#a78bfa');
+        const nombre = card.querySelector('.cc-name')?.textContent?.trim() || '-';
+        const nivel = card.querySelector('.cc-lv')?.textContent?.trim() || '';
+        const etiqueta = sceneState.hero?.el?.querySelector('.cc-esc-nm')
+            || col.querySelector('.cc-hero .cc-esc-nm');
+        if (etiqueta) {
+            /* El nivel va detras del nombre, en su propio <b> para poder
+               reescribirlo sin tocar el texto ni las barras. Se cuela en la
+               MISMA fila que el nombre, no como hijo suelto de la etiqueta. */
+            scenePonerNombre(etiqueta, nombre);
+            let lv = etiqueta.querySelector('.cc-nmlv');
+            if (!lv) {
+                lv = document.createElement('b');
+                lv.className = 'cc-nmlv';
+                etiqueta.querySelector('.cc-esc-nmtxt')?.after(lv);
+            }
+            lv.textContent = nivel ? ' ' + nivel : '';
+            /* El marco de la etiqueta toma el color del tipo del aliado, que
+               antes lo llevaba el panel. */
+            const tipos = ccCreatureTypes(nombre);
+            etiqueta.style.setProperty('--ac', getTypeColor(tipos[0]) || '#7c6de8');
         }
 
+        /* Las barras van a la etiqueta. Sin numero al lado: la barra en si ya da la
+           proporcion, y con el ancho del nombre no cabe el porcentaje sin
+           ampliar el recuadro por cada Pokemon. */
         const hp = scenePct(card.querySelector('#cpc-hp-fill, .cc-hp-fill, .cc-bar-hp i'));
-        const barraHp = col.querySelector('[data-cc-hp]');
-        if (hp !== null && barraHp) {
-            barraHp.style.width = hp + '%';
-            /* Por debajo del 25% se pone en el color de alarma. */
-            barraHp.classList.toggle('cc-crit', hp <= 25);
-        }
-        sceneText(col, '[data-cc-hpval]', hp === null ? '' : Math.round(hp) + '%');
+        if (hp !== null) scenePintarBarraNombre(etiqueta, 'hp', hp);
 
         const xp = scenePct(card.querySelector('#cpc-xp-fill, .cc-xp-fill, .cc-bar-xp i'));
-        const barraXp = col.querySelector('[data-cc-xp]');
-        if (xp !== null && barraXp) barraXp.style.width = xp + '%';
-        sceneText(col, '[data-cc-xpval]', xp === null ? '' : Math.round(xp) + '%');
+        if (xp !== null) scenePintarBarraNombre(etiqueta, 'xp', xp);
 
         scenePintarEnemigos();
     }
 
-    /* La lista de enemigos del panel: cada uno con su punto de tipo, su barra y
-       su porcentaje. El primero lleva la marca de objetivo. */
+    /* La vida y la experiencia del aliado en el escenario, desde la cifra del
+       socket. Se llama cada vez que llega el mensaje del campo, que es lo unico
+       que llega seguido: la etiqueta se queda con el valor viejo si no.
+
+       Antes la etiqueta se pintaba una sola vez, al montar el heroe, y como el
+       unico refresco que habia leia la card (que se reconstruye por su cuenta),
+       tras cada golpe la etiqueta seguia marcando la vida anterior. */
+    function sceneRefreshHero() {
+        const etiqueta = sceneState.hero?.nm
+            || sceneState.col?.querySelector('.cc-hero .cc-esc-nm');
+        if (!etiqueta) return;
+        const hp = ccFieldState.heroMaxHp > 0
+            ? Math.max(0, Math.min(100, (ccFieldState.heroHp / ccFieldState.heroMaxHp) * 100))
+            : null;
+        if (hp !== null) scenePintarBarraNombre(etiqueta, 'hp', hp);
+        const xp = scenePct(document.querySelector('#cpc-xp-fill, .cc-xp-fill, .cc-bar-xp i'));
+        if (xp !== null) scenePintarBarraNombre(etiqueta, 'xp', xp);
+    }
+
+    /* Ya no hay panel de salvajes, asi que esta funcion no pinta nada.
+
+       Existia para la lista del recuadro: punto de tipo, nombre, barra y
+       porcentaje de cada uno. Todo eso vive ahora en la etiqueta que lleva cada
+       Pokemon encima, que ademas se mueve con el y no hay que ir a leer aparte.
+
+       Se deja la funcion como una puerta vacia, y no se borra su llamada, porque
+       quien la invierte comprueba que la escena este montada antes de seguir, y
+       ese trabajo sigue haciendo falta. Borrarla obligaria a revisar cada
+       punto de entrada por si dependia de este retorno. */
     function scenePintarEnemigos() {
-        const col = sceneState.col;
-        const lista = col?.querySelector('[data-cc-enlist]');
-        if (!lista) return;
-        sceneText(col, '[data-cc-cuenta]', String(sceneState.hunters.length));
-        const enemigo = col.querySelector('[data-cc-enemigos]');
-        if (enemigo) {
-            const t = (sceneState.hunters[0]?.types || [])[0];
-            enemigo.style.setProperty('--ac', t ? (getTypeColor(t) || '#f87171') : '#f87171');
-        }
-        /* Se reconstruye solo cuando cambia quien hay; el HP se refresca
-           aparte, en sceneRefreshHp. */
-        const firma = sceneState.hunters.map(h => `${h.name}:${h.speciesId}`).join('|');
-        if (lista.dataset.ccFirma !== firma) {
-            lista.dataset.ccFirma = firma;
-            lista.replaceChildren();
-            sceneState.hunters.forEach((h, i) => {
-                const row = document.createElement('div');
-                row.className = 'cc-en' + (i === 0 ? ' cc-objetivo' : '');
-                const dot = document.createElement('span');
-                dot.className = 'cc-en-dot';
-                dot.style.color = getTypeColor((h.types || [])[0]) || '#64748b';
-                const nombre = document.createElement('span');
-                nombre.className = 'cc-en-name';
-                nombre.textContent = h.name;
-                const track = document.createElement('span');
-                track.className = 'cc-en-track';
-                const fill = document.createElement('i');
-                fill.style.width = h.hpPct + '%';
-                track.appendChild(fill);
-                const pct = document.createElement('span');
-                pct.className = 'cc-en-pct';
-                pct.textContent = Math.round(h.hpPct) + '%';
-                row.append(dot, nombre, track, pct);
-                lista.appendChild(row);
-                h.row = row;
-                h.fill = fill;
-                h.pct = pct;
-            });
-        } else {
-            sceneState.hunters.forEach(h => {
-                if (!h.fill) return;
-                h.fill.style.width = h.hpPct + '%';
-                if (h.pct) h.pct.textContent = Math.round(h.hpPct) + '%';
-            });
-        }
+        /* Sin lista que repintar. El HP de cada Pokemon lo actualiza
+           sceneRefreshHp sobre su propia etiqueta. */
     }
 
     /* --------------------------------------------------------------- */
@@ -7054,15 +8829,52 @@
         return { x: r.left - box.left + r.width / 2, y: r.top - box.top + r.height * 0.28 };
     }
 
+    /* Vuelve a poner una animacion de estado, aunque estubiera ya puesta.
+
+       La clase se quita cuando la animacion ACABA, y no cuando pasan los ms que
+       dice quien llama. Con los dos tiempos medidos a mano se desajustaban: el
+       sprite se quedaba congelado en el ultimo fotograma un rato, o le cortaban
+       la animacion a media vuelta y el golpe se veia a medias. Mandando el
+       evento, es el navegador el que sabe cuando ha terminado.
+
+       El temporizador queda como red por si la animacion no llega a disparar el
+       evento: si se perdiera, la clase se quedaria puesta y el Pokemon quedaria
+       torcido para siempre, que es peor que un corte. */
     function sceneReanimar(el, cls, ms) {
         if (!el) return;
         el.classList.remove(cls);
         void el.offsetWidth;
         el.classList.add(cls);
-        window.setTimeout(() => el.classList.remove(cls), ms);
+        const quitar = () => {
+            el.classList.remove(cls);
+            el.removeEventListener('animationend', alTerminar);
+        };
+        const alTerminar = () => { window.clearTimeout(red); quitar(); };
+        el.addEventListener('animationend', alTerminar);
+        const red = window.setTimeout(quitar, Math.max(Number(ms) || 0, 140));
     }
 
     function sceneSpriteEl(h) { return h?.spr || null; }
+
+    /* Crea la capa de efecto del juego dentro del elemento que la recibe, y la
+       deja lista para que movesAtaque la pinte.
+
+       Va dentro del <div class="cc-esc-fighter"> y no dentro del sprite, por dos
+       motivos: el sprite es un <img> y no admite hijos, y ademas el efecto debe
+       seguir en su sitio aunque el sprite se mueva de su propia animacion.
+
+       Crea una capa nueva en cada llamada, y no la reutiliza: un golpe puede
+       traer dos efectos para el mismo Pokemon (`fx` y `fx2`) que se pintan a la
+       vez. Compartiendo capa, el segundo reiniciaba la animacion del primero y
+       de los dos solo se veia el ultimo.
+
+       La capa se retira sola cuando su animacion acaba, en sceneMoveLimpiar. */
+    function sceneMoveCapa(anfitrion, clase) {
+        if (!anfitrion) return null;
+        const capa = movesCapa(clase || 'cc-move-esc');
+        anfitrion.appendChild(capa);
+        return capa;
+    }
 
     /* Destello del desenlace de la captura: un borde que sigue la SILUETA del
        Pokemon, no un recuadro.
@@ -7130,107 +8942,6 @@
         return { hp, maxHp, pct: (hp / maxHp) * 100 };
     }
 
-    function sceneAttack(dano) {
-        const col = sceneState.col;
-        const objetivo = sceneState.hunters[0];
-        if (!col || !objetivo) return;
-        sceneReanudar();
-        const box = col.getBoundingClientRect();
-        const heroSpr = sceneState.hero?.spr || col.querySelector('.cc-hero .cc-esc-spr');
-        const dest = sceneImpacto(objetivo.el, box);
-        const origen = sceneCentro(sceneState.hero?.el || col.querySelector('.cc-hero'), box);
-        const ac = sceneAcento();
-
-        sceneReanimar(heroSpr, 'cc-atk', 560);
-
-        const trail = document.createElement('div');
-        trail.className = 'cc-trail';
-        Object.assign(trail.style, {
-            left: origen.x + 6 + 'px', top: origen.y - 4 + 'px', width: '46px',
-        });
-        trail.style.setProperty('--dx', (dest.x - origen.x) + 'px');
-        trail.style.setProperty('--dy', (dest.y - origen.y) + 'px');
-        trail.style.setProperty('--ac', ac);
-        col.appendChild(trail);
-
-        const proj = document.createElement('div');
-        proj.className = 'cc-proj';
-        Object.assign(proj.style, { left: origen.x - 10 + 'px', top: origen.y - 10 + 'px' });
-        proj.style.setProperty('--dx', (dest.x - origen.x) + 'px');
-        proj.style.setProperty('--dy', (dest.y - origen.y) + 'px');
-        proj.style.setProperty('--ac', ac);
-        col.appendChild(proj);
-
-        window.setTimeout(() => {
-            trail.remove();
-            proj.remove();
-            [['cc-burst', 0], ['cc-ring', 60]].forEach(([clase, retardo]) => {
-                window.setTimeout(() => {
-                    const b = document.createElement('div');
-                    b.className = clase;
-                    Object.assign(b.style, { left: dest.x + 'px', top: dest.y + 'px' });
-                    b.style.setProperty('--ac', ac);
-                    col.appendChild(b);
-                    window.setTimeout(() => b.remove(), 700);
-                }, retardo);
-            });
-            col.classList.remove('cc-shake');
-            void col.offsetWidth;
-            col.classList.add('cc-shake');
-            window.setTimeout(() => col.classList.remove('cc-shake'), 300);
-
-            sceneReanimar(sceneSpriteEl(objetivo), 'cc-hurt', 480);
-            /* La vida del aqui NO se inventa. El socket publica hp y maxHp del
-               salvaje, y la fila se limita a reflejarlos: antes le restaba un
-               18 fijo a un porcentaje que tampoco venia de ninguna parte, y de
-               ahi salia el numero de dano inventado.
-
-               Si el socket no dice nada (no llega en partida real), se conserva
-               la que hay: es preferible que la barra se quede a medias que
-               mostrarle al jugador una vida que no es la suya. */
-            const vidaReal = ccVidaSalvaje(objetivo);
-            if (vidaReal !== null) {
-                objetivo.hpPct = Math.max(0, Math.min(100, vidaReal.pct));
-                objetivo.hp = vidaReal.hp;
-                objetivo.maxHp = vidaReal.maxHp;
-            }
-            sceneMostrarHp(objetivo, sceneColorHp(objetivo.hpPct));
-            if (objetivo.fill) objetivo.fill.style.width = objetivo.hpPct + '%';
-            if (objetivo.pct) objetivo.pct.textContent = Math.round(objetivo.hpPct) + '%';
-
-            ccFlotarDano(col, dest.x, dest.y, dano);
-
-            /* Avisos: el golpe va al de delante, y el enemigo devuelve daño al
-               aliado. Los de detrás no se tocan. */
-            sceneAvisar('cc-dano-dado', 'danoDado',
-                `${sceneState.hero?.name || 'El aliado'} golpeó a ${objetivo.name}`,
-                'HP ' + Math.round(objetivo.hpPct) + '%');
-            window.setTimeout(() => sceneHerirAliado(7), 420);
-
-            sceneState.hunters.slice(1).forEach((h, i) =>
-                window.setTimeout(() => sceneReanimar(sceneSpriteEl(h), 'cc-hurt', 420), 120 + i * 110));
-
-            scenePausar('ataque');
-        }, 320);
-    }
-
-    /* El aliado tambien recibe daño, y se avisa: se lee de su propia barra. */
-    function sceneHerirAliado(cantidad) {
-        const col = sceneState.col;
-        const card = document.getElementById('my-custom-poke-card');
-        if (!col || !card) return;
-        const barra = card.querySelector('#cpc-hp-fill, .cc-hp-fill, .cc-bar-hp i');
-        const antes = scenePct(barra);
-        if (antes === null) return;
-        const v = Math.max(6, antes - cantidad);
-        if (barra) barra.style.width = v + '%';
-        scenePintarHud();
-        sceneAvisar('cc-dano-recibido', 'danoRecibido',
-            `${sceneState.hero?.name || 'El aliado'} recibió ${cantidad} de daño`,
-            'HP ' + Math.round(v) + '%');
-        sceneReanimar(sceneState.hero?.spr, 'cc-hurt', 460);
-    }
-
     function sceneAcento() {
         const tipo = (sceneState.hunters[0]?.types || [])[0];
         return getTypeColor(tipo) || '#fbbf24';
@@ -7240,9 +8951,14 @@
         return pct <= 25 ? 'linear-gradient(90deg,#ef4444,#f97316)' : 'linear-gradient(90deg,#34d399,#4ade80)';
     }
 
+    /* El color de la barra segun el porcentaje que le queda.
+
+       Antes se pintaba sobre la fila del panel de salvajes, que ya no existe. El
+       mismo color se aplica ahora a la barra de la etiqueta de nombre, que es
+       donde vive la vida de cada Pokemon. */
     function sceneMostrarHp(hunter, color) {
-        if (!hunter.fill) return;
-        hunter.fill.style.background = color;
+        const barra = hunter?.nm?.querySelector('.cc-nmbar-hp i');
+        if (barra) barra.style.background = color;
     }
 
     /* La captura: bola, arco, polvo al caer, hoja real del juego y tres chispas
@@ -7253,7 +8969,11 @@
        y el retirado tardaba casi cuatro segundos, con lo que se veia un Pokemon
        fantasma con la insignia encima mientras el siguiente seguia en su sitio.
        La posicion se calcula ANTES de quitarlo, para que la bola siga volando
-       hacia donde estaba. */
+       hacia donde estaba.
+
+       SCENE_CAPTURA_MS es cuanto se deja el hueco vacio: la bola vuela, estalla
+       la hoja y durante ese rato no entra nadie en el sitio del atrapado. */
+    const SCENE_CAPTURA_MS = 1500;
     function sceneCapture(ballId, exito, nameObjetivo) {
         const col = sceneState.col;
         const objetivo = sceneState.hunters[0];
@@ -7278,15 +8998,33 @@
            El sprite solo lleva la salida. La silueta lleva el borde verde o rojo
            y se retira con el, para que no quede un halo sobre un Pokemon que ya
            no esta. */
-        const sprObjetivo = sceneSpriteEl(objetivo);
-        /* Al resolver, el salvaje DESAPARECE en el acto y el siguiente avanza:
-           nada de flotar hacia arriba. La salida con subida + desvanecido se
-           leia como un fantasma sobre el hueco mientras el siguiente ya ocupaba
-           su sitio. El feedback del desenlace lo da la silueta (verde/rojo). */
-        if (sprObjetivo) sprObjetivo.style.opacity = '0';
-        sceneRemoveHunter(objetivo, 660);
-        sceneSiluetaDestello(objetivo, exito);
+        /* Al resolver, el salvaje DESAPARECE en el acto. El feedback del desenlace
+           lo da la silueta (verde/rojo), que sigue visible a proposito.
 
+           Y el hueco NO se cierra hasta que la bola ha terminado su efecto: si
+           los demas avanzan al instante, uno entra justo donde esta explotando la
+           bola y parece que no se ha atrapado a nadie. Por eso el cierre va con
+           retardo y la salida no.
+
+           La silueta se pinta ANTES de retirarlo, porque necesita medir el sprite. */
+        sceneSiluetaDestello(objetivo, exito);
+        sceneRemoveHunter(objetivo, 0, SCENE_CAPTURA_MS);
+
+        /* La bola que vuela. Es la UNICA que aparece: el indicador de bolas que
+           llevaba el escenario se elimino, y con el la duplicacion.
+
+           Ojo con por que se veian dos antes. Esta bola lleva `forwards` en su
+           animacion, asi que al terminar el vuelo se queda clavada en el punto
+           de impacto... y nadie la borrava. Cada lanzamiento dejaba una bola
+           muerta en el suelo, y al siguiente ya habia dos en pantalla. No era
+           que se pintaran dos a la vez, sino que la anterior nunca se iba.
+
+           Aqui se quita. El borrado va por evento `animationend` y no por un
+           temporizador: si la pestana se va a segundo plano, el navegador
+           congela las animaciones, el temporizador de JS sigue contando y la
+           bola se retiraria a medio vuelo, que se ve como si nunca hubiera
+           salido. Con el evento, la bola se queda quieta hasta que la
+           animacion termina de verdad. */
         const b = document.createElement('div');
         b.className = 'cc-ball';
         b.style.backgroundImage = `url(${CAPTURE_ICON_BASE}${ball.icon}.png)`;
@@ -7296,6 +9034,10 @@
         });
         b.style.setProperty('--dx', (dest.x - origen.x) + 'px');
         b.style.setProperty('--dy', (dest.y - origen.y) + 'px');
+        /* El evento se escucha UNA vez y se quita a si mismo. Si la animacion se
+           cancelara sin llegar al final, el nodo se queda y con el el listener,
+           que es lo que hacia que se acumulasen. */
+        b.addEventListener('animationend', () => b.remove(), { once: true });
         col.appendChild(b);
 
         window.setTimeout(() => {
@@ -7351,23 +9093,21 @@
             }
 
             window.setTimeout(() => {
-                const bd = document.createElement('div');
-                bd.className = 'cc-scene-badge' + (exito ? '' : ' fail');
-                const im = document.createElement('img');
-                im.src = `${CAPTURE_ICON_BASE}${ball.icon}.png`;
-                const tx = document.createElement('span');
-                tx.textContent = exito ? nombre + ' capturado' : '¡' + nombre + ' se escapó!';
-                bd.appendChild(im);
-                bd.appendChild(tx);
-                Object.assign(bd.style, { left: dest.x + 'px', top: (dest.y - 96) + 'px' });
-                col.appendChild(bd);
+                /* Antes aqui se creaba una insignia flotante sobre el sprite, con el icono de
+                   la bola y el texto del resultado: «¡Enraged Typhlosion se
+                   escapó!». Se quita porque duplicaba el aviso de arriba: el
+                   jugador leia dos veces lo mismo, y encima del Pokemon tapaba
+                   justo el momento del desenlace, que es lo que hay que mirar.
 
+                   El aviso de arriba, el unico que queda, lo pone sceneAvisar
+                   justo debajo con su icono y su color. Se conserva entero. */
                 /* Aviso de captura o de fallo: cada uno con su icono y color. */
                 if (exito) sceneAvisar('cc-captura', 'captura', nombre + ' capturado', 'sube al equipo');
                 else sceneAvisar('cc-fallo', 'fallo', nombre + ' se escapó', 'sigue en el área');
 
                 if (exito) {
                     objetivo.hpPct = 0;
+                    scenePintarBarraNombre(objetivo.nm, 'hp', 0);
                     if (objetivo.fill) objetivo.fill.style.width = '0%';
                     if (objetivo.pct) objetivo.pct.textContent = '0%';
                     for (let i = 0; i < 14; i++) {
@@ -7386,10 +9126,6 @@
                     b.remove();
                     sh.remove();
                     window.setTimeout(() => {
-                        bd.remove();
-                        /* El sprite ya se quito al lanzar la bola, asi que aqui solo queda la
-                           insignia. Retirarlo otra vez lo borraba de mas y hacia
-                           avanzar la fila dos veces. */
                         /* Aqui se reanuda. Antes la pausa se ponia y no se quitaba en ningun sitio:
                            al cabo de un rato el escenario entero se quedaba
                            quieto, con el fondo y el suelo de acuerdo pero
@@ -7500,14 +9236,18 @@
     /* Sprite del enemigo. Si ya se conoce la especie se usan las 8 versiones
        elegidas en el menu; si no, se copia el canvas del juego. */
     function ccEnemySpriteHtml(name, speciesId, shiny) {
-        if (speciesId) {
+        /* Las variantes del juego (Ancient, Hard, Nightmare) tienen un pokeId que
+           no existe en el catalogo de sprites. Se pide el de la especie base, que
+           es el que si esta. Sin esto el sprite sale roto. */
+        const id = ccEspecieSprite(speciesId) || speciesId;
+        if (id) {
             const source = spriteById(scriptCardPreferences.sprite);
-            const normal = source.url(speciesId);
-            const fallback = spriteById('pixel').url(speciesId);
+            const normal = source.url(id);
+            const fallback = spriteById('pixel').url(id);
             /* Con shiny se pide la variante de verdad. Si ese estilo no la
                publica (Gen-IX y Dream-World no la tienen), se queda con la
                normal: mejor el dibujo correcto sin brillo que un hueco. */
-            const url = shiny ? (ccShinyUrl(speciesId) || normal) : normal;
+            const url = shiny ? (ccShinyUrl(id) || normal) : normal;
             return `<img class="cc-spr cc-enemy-spr${source.px ? ' pixel' : ''}${source.anim ? ' anim' : ''}${shiny ? ' cc-shiny' : ''}" src="${url}" alt="${name}" onerror="this.onerror=null;this.src='${fallback}';this.className=this.className.replace(' anim','')">`;
         }
         return `<div class="cc-enemy-canvas"><canvas class="mob-sprite-canvas" width="64" height="64"></canvas></div>`;
@@ -7547,6 +9287,51 @@
         return `<div class="cc-mob-name">${name}</div>${ring}${bar}`;
     }
 
+    /* El salvaje de ahora, leido del mensaje `field`, que es la MISMA fuente que
+       usa el escenario 2D.
+
+       La card de card mode no podia detectar salvajes porque todo su camino
+       pasava por `pending` (que no llega nunca en partida real) y por la card
+       nativa `.cbt-card.cbt-mob` (que solo esta montada 1 s de cada 9). El
+       mensaje `field` llega siempre, trae el `speciesId` de cada salvaje con su
+       vida y su shiny, y el catalogo del juego pone el nombre. Con eso la card se
+       puede pintar sola, sin depender de que el juego tenga un encuentro
+       abierto en ese instante.
+
+       Se elige al que se esta atacando (targetSlot), y si no, al primero vivo. */
+    function ccSalvajeDelCampo() {
+        const mobs = ccFieldState.mobs;
+        if (!Array.isArray(mobs) || !mobs.length) return null;
+        const objetivo = Number(ccFieldState.targetSlot);
+        const esObjetivo = m => isFinite(objetivo) && Number(m?.slot) === objetivo;
+        const vivo = m => Number(m?.hp) > 0;
+        const elegido = mobs.find(m => esObjetivo(m) && vivo(m))
+            || mobs.find(vivo)
+            || mobs[0];
+        if (!elegido) return null;
+
+        const pokeId = Number(elegido.speciesId) || 0;
+        const maxHp = Number(elegido.maxHp) || 0;
+        const hp = Number(elegido.hp);
+        /* La vida, de la cuenta propia: el servidor deja el `hp` del savage en su
+           valor anterior y con el la barra de la card se quedaba siempre llena. */
+        const vida = ccVidaDeSlot(elegido.slot);
+        /* El nombre sale del catalogo del juego, que es el unico que conoce las
+           variantes de mapa ("Ancient Pinsir"). Si aun no esta descargado se cae
+           al nombre de la hunt, que es el mismo Pokemon. */
+        const nombre = ccNombreEspecie(pokeId, ccWildState.baseName || sceneHuntDelJuego());
+        return {
+            name: nombre || 'Salvaje',
+            /* El id del catalogo del juego, con el que se busca el sprite. */
+            speciesId: ccEspecieSprite(pokeId) || ccSpeciesIdFromCatalog(nombre) || 0,
+            shiny: !!elegido.shiny,
+            hpPct: vida
+                ? Math.max(0, Math.min(100, (vida.hp / vida.maxHp) * 100))
+                : (maxHp > 0 && isFinite(hp) ? Math.max(0, Math.min(100, hp / maxHp * 100)) : 100),
+            slot: Number(elegido.slot)
+        };
+    }
+
     function updateMobCard() {
         const mobCard = document.querySelector('.cbt-card.cbt-mob');
         let customMobCard = document.getElementById('my-custom-mob-card');
@@ -7560,7 +9345,12 @@
            salvajes, y por eso habia que redimensionar para que volvieran. */
         if (escenaActiva()) { sceneSyncHunters(); scenePintarHud(); }
 
-        if (!mobCard) {
+        /* Que hay ahora en el area. Se pide antes de decidir nada, porque vale
+           tanto con card nativa como sin ella. En modo escenario no se usa: ahi
+           quien dibuja los salvajes es la fila, no la card. */
+        const delCampo = escenaActiva() ? null : ccSalvajeDelCampo();
+
+        if (!mobCard && !delCampo) {
             if (customMobCard) customMobCard.remove();
             /* El ultimo punto guardado se limpia cuando ya no hay salvajes,
                salvo que haya una captura en vuelo: en un acierto el Pokemon
@@ -7570,10 +9360,25 @@
             return;
         }
 
-        if (!customMobCard) {
-            customMobCard = document.createElement('div');
-            customMobCard.id = 'my-custom-mob-card';
-            mobCard.parentElement.appendChild(customMobCard);
+        /* Donde se cuelga la card. Antes era siempre la card nativa, que solo
+           esta montada 1 s de cada 9, y por eso la card de salvajes aparecia y
+           desaparecia sin parar. Ahora se usa la fila del juego, que esta
+           siempre, y solo se recurre a la card nativa si esta a mano. */
+        const ancla = mobCard?.parentElement
+            || document.querySelector('.cbt-row')
+            || ccCaptureLayer()?.parentElement
+            || null;
+
+        if (!customMobCard || !customMobCard.isConnected) {
+            /* Se rehace si no existe o si el juego reconstruyo la fila y se la
+               llevo. Sin esto la card se queda en un nodo desconectado, que no
+               se ve ni se puede actualizar. */
+            if (!ancla) return;
+            if (!customMobCard) {
+                customMobCard = document.createElement('div');
+                customMobCard.id = 'my-custom-mob-card';
+            }
+            ancla.appendChild(customMobCard);
         }
 
         const theme = themeById(scriptCardPreferences.theme);
@@ -7585,12 +9390,16 @@
            Auto-Helper lanza) se trabaja con el nombre que pinta la card
            nativa y se resuelve la especie contra /game/creatures.json, que
            conoce las variantes de mapa y su `captureBase`. */
-        const wild = ccCurrentWild();
-        const nameEl = mobCard.querySelector('.cbt-cardname');
+        const wild = ccCurrentWild() || delCampo;
+        const nameEl = mobCard?.querySelector('.cbt-cardname');
         const rawName = nameEl ? nameEl.textContent.trim() : '';
         /* El nombre que se muestra sigue siendo el del juego (con su shiny y
-           su subnombre), pero el sprite se busca por id de especie. */
-        const name = (rawName.match(/(.*?)\s+(Lv\.?|Nv\.?)\s*\d+/i)?.[1] || rawName).trim();
+           su subnombre), pero el sprite se busca por id de especie. Sin card
+           nativa el nombre sale del mensaje `field` y del catalogo, que es lo
+           mismo que hace el escenario 2D. */
+        const name = delCampo?.name
+            || (rawName.match(/(.*?)\s+(Lv\.?|Nv\.?)\s*\d+/i)?.[1] || rawName).trim()
+            || 'Salvaje';
         const nameKey = ccFoldName(name);
 
         /* El id cacheado solo se reutiliza si es del mismo Pokemon: si no,
@@ -7617,10 +9426,12 @@
         let hpPct = null;
         if (wild && Number(wild.maxHp) > 0) {
             hpPct = (Number(wild.hp) / Number(wild.maxHp)) * 100;
+        } else if (delCampo) {
+            hpPct = delCampo.hpPct;
         }
         if (hpPct === null) {
-            const hpTrackEl = mobCard.querySelector('.cbt-bar-track');
-            const hpText = mobCard.querySelector('.cbt-bar-lbl')?.textContent?.trim() || '';
+            const hpTrackEl = mobCard?.querySelector('.cbt-bar-track');
+            const hpText = mobCard?.querySelector('.cbt-bar-lbl')?.textContent?.trim() || '';
             const barChild = hpTrackEl?.querySelector('[style*="width"]');
             if (barChild) {
                 hpPct = parseFloat(barChild.style.width) || 100;
@@ -7632,7 +9443,7 @@
         hpPct = Math.max(0, Math.min(100, isFinite(hpPct) ? hpPct : 100));
 
         /* ---- reconstruccion: solo si cambian los datos que la sostienen ---- */
-        const esShiny = ccEsShiny(mobCard, rawName);
+        const esShiny = mobCard ? ccEsShiny(mobCard, rawName) : !!delCampo?.shiny;
         /* El shiny va en la clave: sin el, aparecer un shiny con el mismo nombre
            y la misma especie no repintaba la card y se quedaba el sprite normal. */
         const markupKey = `${name}|${theme.id}|${scriptCardPreferences.sprite}|${speciesId}|${scriptCardPreferences.showPct}|${esShiny ? 1 : 0}`;
@@ -7657,6 +9468,7 @@
         /* Se guarda donde esta el enemigo para que la animacion de captura
            pueda dibujarse aunque la card ya se haya borrado. */
         ccLastEnemySpot = ccEnemySpot(customMobCard, ccCaptureLayer());
+        if (ccLastEnemySpot) ccEnemigoEnPantalla = ccLastEnemySpot;
         /* El fondo manda el tipo del SALVAJE: se revisa aqui, porque este ciclo
            es el que ve cuando cambia el Pokemon en pantalla. */
         ccApplyStageBackground();
@@ -7680,7 +9492,7 @@
         /* Copia del canvas del juego: solo tiene sentido si la card lo usa,
            es decir cuando no se pudo resolver la especie. La copia es visual y
            no necesita ir a 60 FPS: el ciclo de refresco ya la repinta. */
-        if (!speciesId) {
+        if (!speciesId && mobCard) {
             const sourceCanvas = mobCard.querySelector('.cbt-sprite canvas');
             const targetCanvas = customMobCard.querySelector('.mob-sprite-canvas');
             if (sourceCanvas && targetCanvas) {
@@ -7798,6 +9610,45 @@
             if (data.type === 'balls') { applyBallsEvent(data); return; }
             if (data.type === 'inventory') { applyInventoryEvent(data); return; }
             if (data.type === 'field-kill') { applyFieldKillEvent(data); return; }
+
+        /* Golpes de combate. El servidor manda un array `hit` con UN objeto por
+           golpe, y cada uno dice que efecto va y sobre quien.
+
+           Asi lo resuelve el juego, leido de su propio codigo:
+             fx        efecto de quien ataca
+             fx2       segundo efecto del atacante, con fx2DelayMs de retardo
+             fxHit     efecto de quien recibe
+             fxHit2    segundo efecto del que recibe, con su retardo
+             slot      a quien golpea. Negativo = el heroe; 0..n = un salvaje
+             type      tipo de quien ataca, SOLO como ultimo recurso
+             fxAt      donde anclar el efecto del atacante
+
+           La clave esta en que el efecto NO se deduce del tipo: cada movimiento
+           tiene su propia hoja en el indice del juego, y es el servidor quien
+           dice cual usar. Por eso un Pokemon puede tener un golpe distinto en
+           cada ataque, y hay que usar estos campos y no el tipo. */
+        /* El array de golpes no siempre viene en el primer nivel: segun como el
+           juego envuelva el mensaje, puede ir en `hit` o dentro de otro objeto
+           (`data.fighting.hit`, `data.data.hit`...). Se busca el primer array que
+           de verdad parezca una lista de golpes, mirando hasta dos niveles. Un
+           golpe se reconoce porque trae `slot`, o `fx`/`fxHit`, que ningun otro
+           mensaje del juego usa para otra cosa. Asi el hallazgo no depende de
+           adivinar el nombre exacto del campo. */
+        /* Instantanea del area de caza: salvajes, vida del heroe y a quien se
+           esta atacando.
+
+           Va ANTES que los golpes a proposito: los golpes vienen DENTRO de este
+           mismo mensaje, y para pintarlos hace falta que la fila ya este al dia.
+           Si se hiciera al reves, el efecto caeria sobre la fila del mensaje
+           anterior, que es la de hace un segundo. */
+        if (data.type === 'field') applyFieldEvent(data);
+
+        const golpes = buscarGolpes(data);
+        if (golpes) {
+            ccTrazaGolpe(golpes);
+            applyHitEvents(golpes);
+            return;
+        }
             /* Desenlace de la captura. Es el unico evento que confirma que se lanzo una
                bola, y trae la bola concreta (ballId) y si funciono. Cubre por
                igual el tiro manual y el automatico del Auto-Helper, que antes
@@ -7866,6 +9717,14 @@
 
     function enqueueSocketPayload(rawPayload) {
         if (typeof rawPayload !== 'string' || !rawPayload) return;
+        /* El grabador de secuencia va lo primero, antes de ningun filtro: asi
+           apunta lo que llega, no solo lo que el script se queda. */
+        if (ccTlGrabar()) {
+            try {
+                const d = JSON.parse(rawPayload);
+                ccTlAnotar(d?.type, d);
+            } catch (e) { /* un mensaje que no sea JSON no se apunta */ }
+        }
         const hasTeamSnapshot = rawPayload.includes('"pokes"');
         /* La barra de captura necesita balls, inventory y field-kill, que el juego
            ya recibia pero este script descartaba al filtrar la cola. Son tres
@@ -7873,6 +9732,45 @@
         const hasCaptureData = CAPTURE_SOCKET_MARKERS.some(marker => rawPayload.includes(marker));
         const currentId = latestPokemonData?.id;
         const mayUpdateCurrent = currentId != null && rawPayload.includes(String(currentId));
+        /* REGISTRO DE MENSAJES. Se apunta una muestra corta de lo que llega, en la
+           pagina real, para poder ver la forma real de los mensajes en vez de
+           deducirla del bundle. Solo guarda los ultimos 60 y cada uno recortado,
+           asi que el coste es despreciable y se puede dejar puesto.
+
+           Ademas guarda DOS mensajes `field` enteros, sin recortar: son los que
+           traen los salvajes y los golpes, y recortados a 110 caracteres no se
+           ve ni el nombre de un Pokemon ni el array de golpes. */
+        const w = ccVentanaReal();
+        if (!w.ccTraza) w.ccTraza = [];
+        if (w.ccTraza.length < 60) w.ccTraza.push(rawPayload.slice(0, 110));
+        if (w.ccTraza.length >= 60) w.ccTraza.shift();
+        if (rawPayload.includes('"field"')) {
+            if (!w.ccFields) w.ccFields = [];
+            if (w.ccFields.length < 2) {
+                w.ccFields.push(rawPayload);
+                /* Se marcan los campos de nivel superior para poder leerlo de un
+                   vistazo sin volcar tres mil caracteres en la consola. */
+                try {
+                    const d = JSON.parse(rawPayload);
+                    w.ccFieldsClaves = Object.keys(d);
+                    w.ccFieldsMobs = Array.isArray(d.mobs) ? d.mobs.slice(0, 3) : null;
+                    w.ccFieldsTieneHits = Array.isArray(d.hits) ? d.hits.length : 0;
+                } catch (e) { /* el registro nunca debe romper nada */ }
+            }
+            /* Un golpe llega con `"hits":[]` vacio cuando no hay combate. Se busca
+               el substring en vez de volver a analizar el JSON: es una busqueda
+               sobre un texto que ya esta en memoria, y asi no se parsea tres mil
+               caracteres ocho veces por segundo. */
+            if (rawPayload.indexOf('"hits":[]') === -1) {
+                w.ccHitsVistos = (w.ccHitsVistos || 0) + 1;
+                if (!w.ccHitsMuestra) {
+                    const desde = rawPayload.indexOf('"hits"');
+                    w.ccHitsMuestra = desde === -1 ? rawPayload.slice(0, 900)
+                                                   : rawPayload.slice(desde, desde + 900);
+                }
+            }
+        }
+
         if (!hasTeamSnapshot && !hasCaptureData && !mayUpdateCurrent) return;
         if (socketPayloadQueue.length >= SOCKET_QUEUE_LIMIT) socketPayloadQueue.shift();
         socketPayloadQueue.push(rawPayload);
@@ -7932,7 +9830,27 @@
         return panels[0]?.textContent || '';
     }
 
+    /* La vida del aliado sale del mensaje del campo, no del `pokes`.
+
+       El mensaje `field` llega cada 800 ms y trae `heroHp` y `heroMaxHp` ya con
+       el golpe descontado (medido: 14 cambios de vida en 20 s, de 48 a 31). El
+       `pokes` es una foto del equipo y llega de vez en cuando, asi que leer la
+       vida de ahi dejaba la barra congelada en el ultimo retrato mientras los
+       golpes seguian entrando.
+
+       Cuando el campo aun no ha llegado se cae al `pokes`, que es de donde
+       salia antes. */
     function ccReadSocketBars() {
+        const campoHp = Number(ccFieldState.heroHp);
+        const campoMax = Number(ccFieldState.heroMaxHp);
+        if (Number.isFinite(campoHp) && Number.isFinite(campoMax) && campoMax > 0) {
+            return {
+                hp: campoHp,
+                maxHp: campoMax,
+                hpPct: Math.max(0, Math.min(100, (campoHp / campoMax) * 100)),
+                xp: Number(latestPokemonData?.xp) || null
+            };
+        }
         const p = latestPokemonData;
         if (!p) return { hp: null, maxHp: null, hpPct: null, xp: null };
         const hp = Number(p.hp);
@@ -8024,12 +9942,11 @@
        El socket publica hp y maxHp exactos de los dos lados, asi que la cuenta
        es directa: lo que ha bajado la vida ES el dano. Como el dano se aplica
        en fracciones y la vida llega entera, la diferencia se redondea al alza
-       para no Teach al jugador que le pegaron mas de lo que le pegaron.
+       para no ensenar al jugador que le pegaron mas de lo que le pegaron.
 
        Cuando la diferencia sale 0 (por ejemplo una curacion, o una subida de
        nivel que recalcula el maximo) no se pinta ningun numero: no hay dano que
        enseñar. */
-    let ccDanoPrevio = { hero: null, enemy: null };
 
     function ccDanoReal(antes, ahora) {
         const a = Number(antes), b = Number(ahora);
@@ -8052,16 +9969,13 @@
         window.setTimeout(() => el.remove(), 900);
     }
 
-    /* Golpe recibido por el aliado. El sprite del escenario se sacude y
-       clarifica un instante; el numero va en el HUD, que es donde esta el
-       aliado en el modo 2D. */
     /* Golpe recibido por el aliado. El sprite se sacude y clarifica un instante,
        el escenario tiembla y el numero real flota sobre su nombre. */
     function sceneHeroHurt(dano) {
         const col = sceneState.col;
         if (!col) return;
         const heroSpr = sceneState.hero?.spr || col.querySelector('.cc-hero .cc-esc-spr');
-        sceneReanimar(heroSpr, 'cc-hurt', 460);
+        sceneReanimar(heroSpr, 'cc-hurt', 420);
         col.classList.remove('cc-shake');
         void col.offsetWidth;
         col.classList.add('cc-shake');
