@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.0.7
+// @version      5.0.8
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -1139,7 +1139,7 @@
            quien esta peleando o a quien esta al lado, y el efecto se pintaba
            sobre el primero de la fila, que era el slot 14. Se veia la
            animacion de ataque sobre un Pokemon que no lo estaba recibiendo y su
-           barra no bajaba, mientras el slot 7拍 recibia el dano sin que se
+           barra no bajaba, mientras el slot 7 recibia el dano sin que se
            supiera. Exactamente el sintoma que se reporto.
 
            Que ademas la fila[0] fuera el OBJETIVO lo hacia todavia mas
@@ -3649,8 +3649,13 @@
             /* Sin will-change: background-position NO es una propiedad
                componible, asi que no la sube a la GPU; lo unico que hace es
                reservar una capa entera (934x583) en memoria para nada. */
-            animation:ccEscMove var(--loop,40s) linear infinite; }
-        @keyframes ccEscMove { from { background-position-x:0; } to { background-position-x:var(--shift,0px); } }
+            animation:ccEscMove var(--bgDur,var(--loop,40s)) linear infinite; }
+        /* El fondo tiene su PROPIA variable de recorrido (--bgShift) y su propia
+           duracion (--bgDur). El suelo usa --shift y --loop. Separarlas es lo que
+           permite que vayan a distinta velocidad y en distinto sentido: con una
+           sola variable, invertir el fondo obligaba a invertir tambien el suelo,
+           que es lo que no se quiere. */
+        @keyframes ccEscMove { from { background-position-x:0; } to { background-position-x:var(--bgShift,0px); } }
         .cc-scene.cc-paused .cc-esc-bg { animation-play-state:paused; }
 
         /* ---------- EL SUELO ----------
@@ -3891,19 +3896,87 @@
            para poder reescribirlo sin tocar lo de al lado. */
         .cc-nmlv { font-weight:inherit; color:#93a7bd; font-size:9.5px; }
 
-        /* Barras de la etiqueta: canal hueco y relleno solido, sin degradado
-           ni halo, igual que las del panel. La pista es un <span> con un <i>
-           dentro: se localiza por clase y se escribe en el relleno. */
-        .cc-nmbar { display:block; height:5px; border-radius:2px; overflow:hidden;
-            background:#0a0d14; border:1px solid #2a3342; }
-        .cc-nmbar i { display:block; height:100%; width:0; background:#22c55e;
-            transition:width .35s ease; }
-        .cc-nmbar i.cc-crit { background:#ef4444; }
-        /* Las dos variantes, cada una con su color. La de vida la llevan el
-           aliado y los salvajes; la de experiencia es solo del aliado. */
-        .cc-nmbar-hp i { background:#22c55e; }
-        .cc-nmbar-xp { height:4px; }
-        .cc-nmbar-xp i { background:#3b82f6; }
+        /* BARRAS DEL ESCENARIO — MEDIDOR SEGMENTADO
+           ---------------------------------------
+           El estilo que se pidio: segmentos EN DIAGONAL, relleno solido con
+           brillo alrededor, y una LINEA FINA debajo de cada barra. No es una
+           pastilla lisa con un relleno continuo, que es lo que habia.
+
+           Todo se consigue con gradientes repetidos en diagonal y nada de
+           imagenes. Tres piezas:
+
+             - el CARRIL dibuja las rayas claras de los segmentos VACIOS sobre
+               fondo muy oscuro: es lo que da el aire de medidor segmentado;
+             - el RELLENO dibuja segmentos del color del tipo con un hueco oscuro
+               entre uno y otro, y lleva un brillo alrededor;
+             - la LINEA de debajo es un ::after del propio renglon.
+
+           El angulo es 115 grados, NO 45. En el original los segmentos van casi
+           verticales, inclinados hacia la derecha. La inclinacion sale de
+           quedarse cerca de 90 grados (vertical); a 45 saldrian a mitad de
+           camino y el resultado seria otro.
+
+           El carril no recorta (overflow visible) porque el brillo del relleno
+           tiene que poder salir por los lados. El relleno siempre mide lo mismo
+           o menos que el carril, asi que no se sale.
+
+           HP: la llevan todos (aliado + salvajes). Color = tipo principal del
+           Pokemon, via --cc-bar-fill.
+           XP: solo el aliado. Algo mas fina y siempre azul.
+           Critico (25 % o menos): el relleno pasa a rojo. */
+        .cc-bar-line { position:relative; display:flex; align-items:center;
+            gap:5px; width:100%; padding-bottom:4px; }
+        .cc-bar-line + .cc-bar-line { margin-top:4px; }
+
+        /* La linea fina de debajo, del color del indicador del original. Se apaga
+           hacia la derecha para no competir con el relleno. */
+        .cc-bar-line::after { content:""; position:absolute; left:0; right:0; bottom:0;
+            height:2px;
+            background:linear-gradient(90deg,#f5b301 0,#f97316 45%,
+                       rgba(249,115,22,.42) 78%,rgba(249,115,22,0) 100%); }
+
+        .cc-bar-tag { flex:0 0 auto; font-size:8px; font-weight:800;
+            font-style:italic; letter-spacing:.06em; color:#e8eefc;
+            text-transform:uppercase; font-family:inherit; }
+
+        /* El carril: los segmentos SIN rellenar. Rayas claras finas sobre fondo
+           oscuro. Las dos rayas por periodo son los dos cantos de cada segmento,
+           que es como se lee el original: huecos con contorno. */
+        .cc-nmbar { position:relative; flex:1 1 auto; min-width:0; display:block;
+            height:9px; border-radius:0; overflow:visible;
+            background-color:#0b1017;
+            background-image:
+                repeating-linear-gradient(115deg,
+                    rgba(255,255,255,.26) 0 1px,
+                    transparent 1px 5px,
+                    rgba(255,255,255,.12) 5px 6px,
+                    transparent 6px 10px);
+            box-shadow:inset 0 0 0 1px rgba(255,255,255,.07); }
+
+        /* El relleno: segmentos del color del tipo, con hueco oscuro entre uno y
+           otro, y un brillo alrededor. El color sale de --cc-bar-fill.
+           Mismo angulo y mismo periodo que el carril (115 grados, 9 px), asi que
+           los huecos del relleno caen encima de las rayas del carril y el
+           conjunto se lee como UNA fila de segmentos que se va llenando. */
+        .cc-nmbar i { display:block; height:100%; width:0; border-radius:0;
+            background-image:
+                repeating-linear-gradient(115deg,
+                    var(--cc-bar-fill,#22c55e) 0 7px,
+                    rgba(5,8,13,.92) 7px 10px);
+            box-shadow:0 0 9px 0 var(--cc-bar-fill,#22c55e);
+            transition:width .18s ease-out; }
+
+        /* Critico: al 25 % o menos el relleno pasa a rojo. Se cambia la VARIABLE
+           y no background, porque el fondo es un patron: pisarlo con un color
+           plano dejaria los huecos del patron del color del tipo. */
+        .cc-nmbar i.cc-crit { --cc-bar-fill:#ef4444; }
+
+        /* La de VIDA: la mas gruesa. No declara color: lo pone el tipo. Esta
+           regla existe para darle su altura y para que la clase quede declarada
+           donde se lee. */
+        .cc-nmbar-hp { height:9px; }
+        /* XP: solo el aliado. Algo mas fina y azul fijo. */
+        .cc-nmbar-xp { height:8px; --cc-bar-fill:#3b82f6; }
 
         /* La punta del cartel, del color del marco, para que se vea de donde
            sale el nombre. Sin difuminado: es un triangulo opaco. */
@@ -7095,9 +7168,32 @@
         const anchoImg = fondo.w * escala;
         const shift = Math.max(0, anchoImg - W);
         col.style.setProperty('--shift', shift.toFixed(1) + 'px');
+        /* EL FONDO VA AL REVES Y MAS DESPACIO QUE EL SUELO.
+
+           Al reves: es lo que se pidio para que el conjunto se lea como paralaje.
+           Con las dos capas yendo hacia el mismo lado a la misma velocidad, el
+           conjunto parece una foto que se desliza, no un escenario con
+           profundidad.
+
+           Y mas despacio porque es la capa LEJANA: en un paralaje lo que esta al
+           fondo se mueve menos que lo que esta delante. El suelo es la capa de
+           delante y va a la velocidad de referencia; el fondo a poco mas de la
+           mitad.
+
+           El signo negativo es lo que invierte el sentido. Va en su PROPIA
+           variable (--bgShift) y no en --shift, porque el calculo de velocidad del
+           suelo de mas abajo necesita el recorrido en positivo: con un --shift
+           negativo saldrian duraciones negativas y el suelo se quedaria quieto. */
         const v = Number(scriptCardPreferences.sceneSpeed);
-        const seg = 64 - (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 45) / 100 * 46;
+        /* La velocidad sube en TODO el recorrido del ajuste, no solo por defecto:
+           con la formula anterior, 0 daba 64 s y 100 daba 18 s; ahora 46 y 12. A
+           un mismo valor del ajuste, el escenario va alrededor de un 40 % mas
+           rapido. Se hace asi y no cambiando solo el valor por defecto porque el
+           ajuste ya guardado manda, y el que lo tenga en 74 no notaria nada. */
+        const seg = 46 - (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 45) / 100 * 34;
         col.style.setProperty('--loop', seg.toFixed(1) + 's');
+        col.style.setProperty('--bgShift', (-shift).toFixed(1) + 'px');
+        col.style.setProperty('--bgDur', (seg * 1.7).toFixed(1) + 's');
         /* Velocidad del fondo en px/s, que es la que de verdad manda: si el
            suelo no se mueve a ese ritmo, el Pokemon parece quieto sobre una
            foto parada. Antes el suelo usaba el MISMO tiempo que el fondo pero
@@ -7368,13 +7464,22 @@
        verificador de clases lo lee como un nombre entero: lo daba por una
        clase usada sin CSS. Con classList cada clase sale entera y sola. */
     function sceneCrearBarraNombre(clase) {
+        /* La barra va dentro de una linea con su etiqueta ("HP" o "XP") a la
+           izquierda. La etiqueta es un hijo aparte y no texto del carril para
+           poder reescribirla o quitarla sin tocar la barra. */
+        const linea = document.createElement('span');
+        linea.className = 'cc-bar-line';
+        const tag = document.createElement('span');
+        tag.className = 'cc-bar-tag';
+        tag.textContent = clase === 'xp' ? 'XP' : 'HP';
         const track = document.createElement('span');
         track.className = 'cc-nmbar';
-        if (clase === 'xp') track.classList.add('cc-nmbar-xp');
-        else track.classList.add('cc-nmbar-hp');
+        track.classList.add(clase === 'xp' ? 'cc-nmbar-xp' : 'cc-nmbar-hp');
         const fill = document.createElement('i');
         track.appendChild(fill);
-        return track;
+        linea.appendChild(tag);
+        linea.appendChild(track);
+        return linea;
     }
 
     /* Cambia el texto del nombre dentro de la etiqueta.
@@ -8915,6 +9020,11 @@
                antes lo llevaba el panel. */
             const tipos = ccCreatureTypes(nombre);
             etiqueta.style.setProperty('--ac', getTypeColor(tipos[0]) || '#7c6de8');
+            /* Y la barra de vida, el mismo color de tipo. Se pinta aqui y no solo
+               en sceneRefreshHero porque esta funcion corre al montar la
+               etiqueta, cuando sceneRefreshHero todavia no tiene el heroe. */
+            const barraHp = etiqueta.querySelector('.cc-nmbar-hp');
+            if (barraHp) barraHp.style.setProperty('--cc-bar-fill', getTypeColor(tipos[0]) || '#22c55e');
         }
 
         /* Las barras van a la etiqueta. Sin numero al lado: la barra en si ya da la
@@ -9156,14 +9266,23 @@
         return pct <= 25 ? 'linear-gradient(90deg,#ef4444,#f97316)' : 'linear-gradient(90deg,#34d399,#4ade80)';
     }
 
-    /* El color de la barra segun el porcentaje que le queda.
+    /* El color de la barra lo pone EL TIPO del Pokemon.
 
-       Antes se pintaba sobre la fila del panel de salvajes, que ya no existe. El
-       mismo color se aplica ahora a la barra de la etiqueta de nombre, que es
-       donde vive la vida de cada Pokemon. */
+       Antes el relleno iba verde o naranja segun lo que quedara de vida, asi que
+       todos los Pokemon llevaban la misma barra: no habia forma de distinguir un
+       Geodude (ROCA) de un Oddish (PLANTA) por la barra. Ahora cada uno lleva el
+       color de su tipo principal, que es lo que se pidio.
+
+       El estado de peligro no se pierde: cuando queda poco, la clase cc-crit
+       tiñe el relleno de rojo y gana al color del tipo. */
     function sceneMostrarHp(hunter, color) {
-        const barra = hunter?.nm?.querySelector('.cc-nmbar-hp i');
-        if (barra) barra.style.background = color;
+        const track = hunter?.nm?.querySelector('.cc-nmbar-hp');
+        if (!track) return;
+        const tipo = Array.isArray(hunter?.types) ? hunter.types[0] : null;
+        const delTipo = tipo ? getTypeColor(tipo) : null;
+        /* Sin tipo conocido (un Pokemon que el catalogo no tiene) se cae al color
+           que traia el llamante, y de ahi al verde de siempre. */
+        track.style.setProperty('--cc-bar-fill', delTipo || color || '#22c55e');
     }
 
     /* La captura: bola, arco, polvo al caer, hoja real del juego y tres chispas
