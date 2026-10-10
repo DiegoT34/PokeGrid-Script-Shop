@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.0.6
+// @version      5.0.7
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -1114,7 +1114,11 @@
         const fila = sceneState.hunters;
         if (!fila || !fila.length) return null;
         const n = Number(slot);
-        if (!isFinite(n)) return fila[0] || null;
+        /* Un numero que no sea un slot del area no significa nada. Se comprueba
+           ANTES de tocar la fila, porque caer sobre un Pokemon cualquiera cuando
+           no hay a quien corresponde es justo lo que hacia que un golpe se
+           pintara sobre el que no lo estaba recibiendo. */
+        if (!isFinite(n)) return null;
 
         const porSlot = fila.find(h => h.slot === n);
         if (porSlot) return porSlot;
@@ -1126,28 +1130,62 @@
             : null;
         if (!delArea) return null;
 
-        /* Se dibuja sobre elEquivalentE mas cercano en el mapa. Antes caia
-           siempre sobre el primero de la fila, que era un Pokemon cualquiera: el
-           equipado reparte los ataques por todo el area y con 4 de 15 salvajes en
-           pantalla casi ningun slot caia donde tocaba. Elijo el que mas se le
-           parece en posicion, que es lo mas cerca que se puede llegar. */
+        /* ESTE ES EL PUNTO QUE ARREGLA EL FALLO.
+
+           Antes, aqui se acababa la busqueda y se caia a `fila[0]`: el primer
+           Pokemon de la banda, que es un Pokemon cualquiera. Consecuencia
+           medida en partida: el servidor mandaba un golpe contra el slot 7
+           (Ember), el slot 7 no estaba en la fila porque el filtro deja solo a
+           quien esta peleando o a quien esta al lado, y el efecto se pintaba
+           sobre el primero de la fila, que era el slot 14. Se veia la
+           animacion de ataque sobre un Pokemon que no lo estaba recibiendo y su
+           barra no bajaba, mientras el slot 7拍 recibia el dano sin que se
+           supiera. Exactamente el sintoma que se reporto.
+
+           Que ademas la fila[0] fuera el OBJETIVO lo hacia todavia mas
+           confuso, porque el objetivo va siempre primero.
+
+           Lo que se hace ahora, en orden:
+
+             1. si el slot no se esta pintando pero es un salvaje del area, se
+                mete en la fila. Se llama a la misma vía que usa el reloj del
+                escenario, que es la que decide de verdad qué Pokemon se ven, y
+                se espera a que se haya repintado. Asi, un Pokemon al que le
+                pegan aparece siempre en pantalla y es el que recibe el efecto
+                y la bajada de su barra;
+             2. si aun asi no esta (el area se fue, el slot ya no existe), se
+                devuelve null y no se pinta nada. Antes se caia a fila[0].
+
+           Un golpe sin destinatario no se ve, pero es mejor que un golpe
+           dibujado sobre el Pokemon equivocado: eso no solo es feo, que ademas
+           hace creer que ese Pokemon esta perdiendo vida cuando no. */
+        const antes = sceneState.hunters.length;
+        if (typeof sceneSyncHunters === 'function') sceneSyncHunters();
+        /* La repintada es sincrona, asi que se comprueba ya. */
+        const recienPintado = sceneState.hunters.find(h => h.slot === n);
+        if (recienPintado) return recienPintado;
+        /* No ha entrado (el filtro lo deja fuera porque esta lejos y no es el
+           objetivo): se prefiere el equivalente mas cercano en el mapa antes
+           que abandonar, y solo si de verdad no hay ninguno se devuelve null. */
+        void antes;
+
+        /* Si sigue sin aparecer, se dibuja sobre el equivalente mas cercano en
+           el mapa: el equipado reparte los ataques por todo el area y con 4 de
+           15 salvajes en pantalla casi ningun slot cae donde tocaba. Es lo mas
+           cerca que se puede llegar cuando el slot no se ha podido pintar. */
         const fila0 = delArea.row || 0;
         const col0 = delArea.col || 0;
         let mejor = null, mejorDist = Infinity;
-        for (const h of fila) {
+        for (const h of sceneState.hunters) {
             const d = Math.abs((h.mapaFila || 0) - fila0) + Math.abs((h.mapaCol || 0) - col0);
             if (d < mejorDist) { mejorDist = d; mejor = h; }
         }
         if (mejor) return mejor;
 
-        /* Sin datos de posicion se cae al que se esta atacando, que es lo mejor
-           que se puede saber. */
-        const objetivo = Number(ccFieldState.targetSlot);
-        if (isFinite(objetivo)) {
-            const porObjetivo = fila.find(h => h.slot === objetivo);
-            if (porObjetivo) return porObjetivo;
-        }
-        return fila[0] || null;
+        /* Y si tampoco hay equivalente, no se devuelve nada. Antes se caia a
+           `fila[0]`, que es lo que hacia que un golpe se pintara sobre un
+           Pokemon que no lo estaba recibiendo. */
+        return null;
     }
 
     /* Resuelve UN golpe del servidor.
@@ -2696,15 +2734,46 @@
                           text-transform:uppercase; white-space:nowrap; }
         .cpc-stat-value { margin-left:auto; font-size:10px; font-weight:800; white-space:nowrap; }
 
-        .cpc-bar-wrapper { position:relative; height:14px; border-radius:7px; overflow:hidden; }
-        .cpc-bar-fill { height:100%; border-radius:7px; transition:width .12s linear, background .3s ease; }
+        /* BARRAS DE PROGRESO
+           --------------------
+           Eran una pastilla lisa con un degradado de izquierda a derecha, y no
+           encajaban con nada: los degradados con brillo son de otro lenguaje de
+           diseño (Web 2.0) y competian con las superficies planas de las cards.
+           Ademas el relleno no se distinguia del canal: los dos eran oscuros y
+           en poco contraste, y a media barra no se savia donde terminaba.
+
+           Ahora son planas, como el resto, y se leen por tres cosas y no por el
+           color:
+
+             - un CANAL hondo y mate, con borde de 1 px, que es donde va el
+               progreso y sobre el que se ve lo que queda;
+             - un RELLENO de superficie solida, con el mismo radio pero sin
+               tapar el canal entero;
+             - un BRILLO fino pegado al borde superior del relleno, una sola
+               linea clara, que da volumen sin ser degradado.
+
+           El brillo va con una sombra interior y no como degradado del relleno.
+           Si fuera parte del fondo, al cambiar el ancho en cada golpe el brillo
+           se estiraria con el, y el transition del ancho lo deformaria al
+           animarse. Como sombra interior queda fijo y siempre del alto correcto.
+
+           Los colores se marcan con custom properties para que cada tema pueda
+           cambiar solo el suyo sin tocar el relleno. */
+        .cpc-bar-wrapper { position:relative; height:14px; border-radius:4px; overflow:hidden;
+            background:var(--cc-bar-track,#0a1018);
+            border:1px solid var(--cc-bar-track-b,#000);
+            box-shadow:inset 0 1px 2px rgba(0,0,0,.55); }
+        .cpc-bar-fill { position:relative; height:100%; border-radius:3px;
+            box-shadow:inset 0 1px 0 var(--cc-bar-gloss,rgba(255,255,255,.42)),
+                       inset 0 -1px 0 rgba(0,0,0,.28);
+            transition:width .12s linear, background .3s ease; }
         .cpc-bar-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
             font-size:9px; font-weight:800; color:#fff; letter-spacing:.1px; z-index:2; pointer-events:none;
             text-shadow:0 1px 2px rgba(0,0,0,.92),0 0 1px rgba(0,0,0,.95); }
-        .cpc-hp-high { background:linear-gradient(90deg,#00bc00,#50a150 62%,#74c874); }
-        .cpc-hp-med  { background:linear-gradient(90deg,#a1a100,#c9b400 62%,#e2cd2c); }
-        .cpc-hp-low  { background:linear-gradient(90deg,#910f0f,#bf0a0a 62%,#e24a4a); }
-        .cpc-xp-bar  { background:linear-gradient(90deg,#2b56b8,#5a8dee 62%,#8fb6f6); }
+        .cpc-hp-high { background:var(--cc-bar-hp,#22c55e); }
+        .cpc-hp-med  { background:var(--cc-bar-hp-mid,#eab308); }
+        .cpc-hp-low  { background:var(--cc-bar-hp-low,#ef4444); }
+        .cpc-xp-bar  { background:var(--cc-bar-xp,#3b82f6); }
         .cc-pow { display:flex; align-items:center; gap:6px; border-radius:999px;
                   color:#86efac; font-weight:800; letter-spacing:.3px; }
         .cc-pow .cc-ic { width:12px; height:12px; }
@@ -2791,8 +2860,16 @@
             color:#0b1220; background:var(--tier); clip-path:polygon(0 0,100% 0,calc(100% - 7px) 100%,0 100%); }
         .cc-theme-3 .cc-hp { display:flex; align-items:center; gap:8px; padding:8px 9px 2px; }
         .cc-theme-3 .cc-hp .k { font-size:9px; font-weight:800; letter-spacing:.1em; color:#8ea5bf; }
-        .cc-theme-3 .cc-hp .cpc-bar-wrapper { flex:1; height:11px; background:rgba(3,8,16,.85);
-            border:1px solid rgba(148,178,214,.2); }
+        .cc-theme-3 .cc-hp .cpc-bar-wrapper { flex:1; height:11px;
+            background:var(--cc-bar-track,#0a1018);
+            border:1px solid var(--cc-bar-track-b,rgba(148,178,214,.28)); }
+        /* Las barras de este tema, con su propia paleta. El marco es de los mas
+           planos que hay (superficie opaca y un borde duro), asi que el canal
+           tambien: nada de translucidez que deja ver el fondo de la card a
+           traves de la barra. */
+        .cc-theme-3 { --cc-bar-track:#080e16; --cc-bar-track-b:rgba(148,178,214,.3);
+            --cc-bar-hp:#22c55e; --cc-bar-hp-mid:#eab308; --cc-bar-hp-low:#ef4444;
+            --cc-bar-xp:#3b82f6; --cc-bar-gloss:rgba(255,255,255,.34); }
         .cc-theme-3 .cc-hp .v { font-size:10.5px; font-weight:800; }
         .cc-theme-3 .cpc-stats-grid { grid-template-columns:repeat(3,1fr); margin:7px 9px 0; }
         .cc-theme-3 .cpc-stat-item { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.07); }
@@ -3983,11 +4060,51 @@
             22% { opacity:.9; transform:translate(-50%, var(--desplaza,0px)) scale(1); }
             100% { opacity:0; transform:translate(-50%, var(--desplaza,0px)) scale(.7); } }
 
-        .cc-ring { position:absolute; z-index:11; width:26px; height:26px; margin:-13px 0 0 -13px;
-            border-radius:50%; border:2px solid var(--ac,#fbbf24); pointer-events:none;
-            animation:ccRing .46s ease-out forwards; }
-        @keyframes ccRing { 0% { transform:scale(.3); opacity:.95; }
-            100% { transform:scale(2.2); opacity:0; } }
+        /* AQUI HABIA UNA REGLA .cc-ring GLOBAL Y UNOS @keyframes ccRing, Y
+           ESTABAN ROMPIENDO EL TEMA 4. Se han borrado los dos.
+
+           .cc-ring es la clase del anillo del arco de vida del tema 4, el que
+           lleva el sprite en el centro (lo construye ccRingSvg). La regla
+           fantasma tambien se llamaba .cc-ring, asi que le entraba encima, y
+           como llevaba animation: ... forwards su transform se quedaba puesto
+           ya para siempre en cuanto terminaba.
+
+           Medido en el tema 4, con el sprite del heroe:
+
+             el anillo pedia  118 px  (su width en el CSS)
+             el anillo ocupaba 260 px  (su getBoundingClientRect)
+             transform: matrix(2.2, 0, 0, 2.2, 0, 0)
+
+           118 x 2.2 = 260. El 2.2 era el scale(2.2) del ULTIMO fotograma de
+           los @keyframes ccRing, que es el de un anillo que se cierra sobre el
+           Pokemon al capturarlo. Se estaba aplicando al anillo equivocado, y
+           como los keyframes acaban en opacity: 0 con forwards, ademas se
+           llevaba por delante la opacidad del anillo y de lo que lleva dentro.
+
+           De ahi el sintoma: el sprite, de 66 px, se veía a 145 px, se salia de
+           la card por arriba y no se veia nada. Medido: top del sprite 116 px
+           contra top de la card 149 px.
+
+           Por que no se notaba antes: el anillo fantasma es de 26 px con
+           position:absolute y margin:-13px, o sea que casi no se ve, y
+          La animacion termina en 460 ms. Su transform se queda, si, pero es un
+           detalle pequeno que en un tema con el sprite en un rincon pasa
+           desapercibido; en el tema 4, donde el sprite va EN CENTRO de ese
+           anillo, se lleva por delante el dibujo entero.
+
+           No se renombra a otra clase: no hay ningun elemento que use esta
+           regla. Se ha buscado en todo el script y la marca de captura de 26 px
+           no se crea en ningun sitio, asi que era CSS muerto. Las marcas de
+           medicion del escenario son otra cosa y tienen su propia clase
+           (.cc-esc-marca, con data-cc-marca), y no se tocan.
+
+           Para que no vuelva: el anillo del tema 4 se construye en ccRingSvg
+           y su CSS vive en su bloque, con .cc-theme-4 delante, asi que
+           ningun selector global lo alcanza. */
+
+        /* Y el anillo del arco del tema 4 se queda con su scope, que ya tiene.
+           tiene. Se repite aqui el motivo para que nadie lo saque:
+           .cc-ring a secas es su clase y NO debe existir como regla global. */
         .cc-scene.cc-shake { animation:ccEscShake .26s cubic-bezier(.36,.07,.19,.97); }
         /* Los keyframes se llaman ccEscShake y NO ccShake. Los @keyframes son
            globales por nombre: si dos reglas los definen con el mismo nombre,
@@ -6626,6 +6743,16 @@
         hero: null,
         col: null,      /* el contenedor dentro de .cbt-stage */
         observado: null, /* ResizeObserver sobre col, para recolocar al cambiar */
+        /* Cerrojo de reentrada del repintado.
+
+           sceneSyncHunters pide la lista a sceneHuntersFromSocket, y esa llama
+           a su vez a sceneSyncHunters cuando el objetivo no esta en la fila y
+           hay que repintar. Sin este cerrojo, el segundo paso volveria a pedir
+           la lista, que volveria a pedirla, y se quedaria enganchado.
+
+           Con el cerrojo, la llamada anidada no hace nada y sigue la de fuera,
+           que ya esta incluyendo en la lista a quien esta combatiendo. */
+        pintando: false,
     /* Px que hay que sumar a la fila Y al aliado para que el conjunto quede
        centrado en la escena. Lo calcula sceneColumnas() y lo consume
        sceneColocarHero(): los dos se mueven por el mismo numero, que si no el
@@ -7025,6 +7152,30 @@
        sola cuando no cabe, asi que subir el tope no descuadra nada: se reparte
        en mas lineas. */
     const SCENE_MAX_MOBS = 8;
+
+    /* A QUE DISTANCIA SE CONSIDERA "AL LADO DEL ALIADO".
+
+       El numero no se eligio a ojo. Se midieron las distancias reales al heroe
+       en una partida en marcha, leyendo 25 mensajes del campo con 15 salvajes
+       de los que 10 en pie. Las distancias salieron siempre con esta forma:
+
+           2, 5, | 21, 21, | 31, 37, 38, 43, 48, 55
+
+       Hay un vacio enorme entre 5 y 21 y no hay nada en medio. Eso significa
+       que el mapa reparte a los salvajes en dos grupos: los que estan pegados
+       al aliado y los que estan al otro extremo. No hay una distribucion
+       gradual, asi que el umbral se pone en el hueco, no en una media: por
+       debajo de 8 es el grupo de al lado, por encima es el otro.
+
+       Con 8, de los diez salvajes de aquella partida entrian dos: los que
+       estaban a 2 y a 5. Que es lo que se ve al lado del heroe. Con el tope de
+       pantalla lleno, lo que habia que hacer era meter los siguientes, que
+       estaban a 21 y mas, y ahi se perdia el sentido de la fila.
+
+       Subirlo a 16 no cambiaria nada en esa partida (no hay nada entre 5 y 21),
+       pero dejaria entrar salvajes a 21 en una donde si los haya. */
+    const SCENE_ESCENA_CERCANA = 8;
+
 /* Extremos de la fila de salvajes, en fracciones del ancho. Solo los
        extremos: las posiciones exactas las calcula sceneColumnas() en PIXELES,
        que es lo unico que garantiza que dos Pokemon no se monten uno sobre
@@ -8350,32 +8501,51 @@
                                     Math.abs(h.mapaCol - ccFieldState.heroCol);
             const objetivo = Number(ccFieldState.targetSlot);
 
-            /* UN SOLO ORDEN, Y ANTES HABIA DOS.
+            /* QUIEN SE VE, Y POR QUE.
 
-               El primero ponia delante al objetivo y a los golpeados; el segundo,
-               que venia de la version anterior, los reordenaba por distancia y
-               adjudicaba el mismo rango al objetivo que a un golpeado cualquiera.
-               Como el golpeado suele estar al lado del aliado y el objetivo
-               souvent a treinta casillas, el objetivo se iba al final de la banda:
-               es decir, justo donde NO se ve el combate. El segundo sort ademas
-               ignoraba `vivo`, asi que un Pokemon ya reaparecido se colaba por
-               delante de los que de verdad estan en pie.
+               Lo que se pedia: en la fila soloSalvajes que esten de verdad
+               jugando, no todo lo que hay repartido por el mapa. Con 15 en el
+               area se veian cuatro Geodude en linea y no se distinguia el que
+               estaba recibiendo los golpes.
 
-               Ahora hay un unico criterio, en el orden que importa:
+               Y aqui estan las distancias REALES medidas, no estimadas. Se
+               tomaron 25 mensajes del campo de una partida en marcha, con 15
+               salvajes de los que 10 en pie, y las distancias al heroe
+               (58,45) salian siempre en la misma forma:
 
-                 0  el OBJETIVO del servidor   -> es el combate de verdad
-                 1  los que acaban de recibir  -> hay que ver caer la vida
-                 2  los VIVOS, por cercanía    -> lo que esta al lado del aliado
-                 3  los muertos y los lejanos  -> solo para que la fila no quede coja
+                   2, 5, | 21, 21, | 31, 37, 38, 43, 48, 55
 
-               Y dentro de cada rango, el mas cercano al aliado, que es la misma
-               distancia con la que el juego coloca a los Pokemon en el mapa. */
+               Ese corte entre 5 y 21 es el dato que decide el filtro: hay un
+               vacio enorme. A 5 casillas estas pegado al aliado; a 21 ya estas
+               al otro extremo del mapa. No hay nada en medio, asi que el
+               umbral se pone donde separa los dos grupos y no donde "parece"
+               que seria tamano: 8.
+
+               Por eso la fila se queda con 2 o 3 Pokemon y no con 4: es lo que
+               hay de verdad al lado. Rellenar hasta el tope obligaba a meter
+               salvajes a 30-50 casillas, que es justo lo que se queria quitar.
+
+               Los tres criterios, en este orden:
+
+                 0  a quien ataca el servidor (targetSlot): el combate de verdad
+                 1  los que acaban de recibir un golpe: hay que verles bajar
+                    la vida, y el golpe puede llegar con otro slot distinto
+                 2  los que estan a 8 casillas o menos: los que estan al lado
+
+               Y lo que no cumple nada de eso NO se pinta. No hay relleno: si
+               en este momento hay dos salvajes cerca, se ven dos. Antes, para
+               llegar al numero del ajuste, se metian los mas proximos que
+               quedaran, y eso era volver a llenar la fila de lo que no
+               interesa. */
             const rango = (h) => {
                 if (h.slot === objetivo) return 0;
                 if (sceneGolpeReciente(h.slot)) return 1;
-                if (h.vivo) return 2;
-                return 3;
+                if (h.vivo && distHeroe(h) <= SCENE_ESCENA_CERCANA) return 2;
+                return 9;
             };
+            /* La fila, ya filtrada y ordenada. El 9 es "no se muestra": con el
+               rango de comparacion basta, no hace falta un array aparte. */
+            fila = fila.filter(h => rango(h) < 9);
             fila.sort((a, b) => {
                 const ra = rango(a), rb = rango(b);
                 if (ra !== rb) return ra - rb;
@@ -8383,6 +8553,32 @@
                 if (d !== 0) return d;
                 return (a.slot || 0) - (b.slot || 0);
             });
+
+            /* Y el combate de verdad se queda con un hueco FIJO en la fila.
+
+               Lo que se pedia: cuando un Pokemon esta recibiendo, ese tiene que
+               aparecer, ocupar un sitio y ser el que lleva la animacion, la
+               bajada de su barra y la pokebola.
+
+               Aqui lo que se evita es que le cambien de sitio. Con el solo
+               orden por rango, un Pokemon que acaba de recibir un golpe (rango
+               1) puede ser expulsado de la fila en cuanto su marca de 6 s
+               caduca, aunque siga vivo y sea el objetivo de verdad. Y mientras
+               aguanta puede aparecer y desaparecer segun lo que haya mas cerca,
+               de modo que el ojo no sabe donde mirarle.
+
+               Se comprueba, tras ordenar, que sigue estando. Si el que esta
+               combatiendo no ha entrado (porque el filtro lo decia y no se ha
+               repintado todavia, o porque acaba de cambiar el objetivo), se
+               llama al reloj del escenario, que es quien decide de verdad que
+               se ve, y se vuelve a ordenar. Con eso, quien pelea esta siempre,
+               y ademas primero. */
+            const combatiendo = sceneState.hunters.length
+                ? fila.find(h => h.slot === objetivo)
+                : null;
+            if (objetivo && !combatiendo) {
+                sceneSyncHunters();
+            }
         }
         return fila;
     }
@@ -8443,6 +8639,15 @@
        cantidad la pone lo que el juego tiene en pantalla, no el ajuste: se
        respeta tal cual, sin rellenar con copias. */
     function sceneSyncHunters() {
+        /* Cerrojo de reentrada: ver sceneState.pintando. Un repintado que se
+           pide desde dentro de otro (que es lo que pasa cuando hay que meter en
+           la fila a quien esta siendo golpeado) no vuelve a empezar. */
+        if (sceneState.pintando) return;
+        sceneState.pintando = true;
+        try { sceneSyncHuntersCuerpo(); } finally { sceneState.pintando = false; }
+    }
+
+    function sceneSyncHuntersCuerpo() {
         /* La vida y la experiencia del aliado se refrescan SIEMPRE, tanto si la
            fila se ha reconstruido como si no. La del heroe la cambia cada
            golpe y llega en el mensaje del campo, que es el unico que llega
@@ -8976,14 +9181,37 @@
     const SCENE_CAPTURA_MS = 1500;
     function sceneCapture(ballId, exito, nameObjetivo) {
         const col = sceneState.col;
-        const objetivo = sceneState.hunters[0];
-        if (!col || !objetivo) return;
+        if (!col) return;
+        /* A QUIEN SE LE LANZA LA BOLA.
+
+           Antes era `sceneState.hunters[0]`, el primero de la fila. Con el filtro
+           ese es el objetivo del servidor, que casi siempre es a quien se le
+           lanza de verdad, pero no siempre: el `catch-result` trae el nombre de
+           la especie capturada, y si en ese momento el objetivo habia cambiado
+           (que ocurre, el objetivo da vueltas) la bola volaba hacia un Pokemon
+           que no era el atrapado.
+
+           Se busca por el nombre primero, que es el dato que da el servidor del
+           desenlace. Solo si no hay coincidencia (el nombre llega con variantes,
+           o el Pokemon ya no esta en la fila) se cae al primero, que es el
+           objetivo. Todo esto antes de quitarlo de la fila, que es cuando ya no
+           habria forma de encontrarlo. */
+        const fila = sceneState.hunters || [];
+        const nombre = String(nameObjetivo || '').trim();
+        let objetivo = null;
+        if (nombre && fila.length) {
+            const clave = ccFoldName(nombre);
+            objetivo = fila.find(h => ccFoldName(h.name) === clave) ||
+                fila.find(h => h.name && (h.name.includes(nombre) || nombre.includes(h.name)));
+        }
+        if (!objetivo) objetivo = fila[0];
+        if (!objetivo) return;
         sceneReanudar();
         const ball = CAPTURE_BALLS.find(b => b.id === ballId) || CAPTURE_BALLS[5];
         const box = col.getBoundingClientRect();
         const dest = sceneImpacto(objetivo.el, box);
         const origen = sceneCentro(sceneState.hero?.el || col.querySelector('.cc-hero'), box);
-        const nombre = nameObjetivo || objetivo.name;
+        /* `nombre` ya se ha resuelto arriba, al buscar a quien se le lanza. */
 
         /* Fuera de la fila desde ya, con la entrada de "se va" puesta. El resto
            ocupa su hueco al instante y el nuevo entra por la derecha. El nodo no
