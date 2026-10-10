@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.0.9
+// @version      5.1.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -973,12 +973,26 @@
     }
 
     /* --------------------------------------------------------------- */
-    /* GOLPES RECIENTES                                                  */
+    /* A QUIEN LE HEMOS PEGADO YA                                        */
     /* --------------------------------------------------------------- */
-    /* Que tan reciente es el golpe de un slot, para subir a la fila a quien esta
-       recibiendo ahora mismo: ese es el combate de verdad. La cuenta es propia:
-       se apunta el momento en que llega cada golpe y se considera "reciente" lo
-       que ha ocurrido en los ultimos 6 s, que es lo que dura un intercambio.
+    /* HUECOS A LOS QUE YA LES HEMOS PEGADO ALGUNA VEZ.
+
+       De esta sola pregunta salen las dos cosas que hacen falta:
+
+         - el estado "Buscando": un salvaje al que todavia no hemos tocado se pinta
+           apagado y con su distintivo, y en cuanto recibe el primer golpe vuelve a
+           lo normal;
+         - el puesto que ocupa en la fila: los atacados van por delante de los que
+           solo estan cerca. Antes eso se decidia con una ventana de 6 segundos que
+           caducaba y hacia salir de la fila al atacado, dejando entrar a un vecino
+           sin tocar. El intercambio no se veia (en una hunt son el mismo Pokemon)
+           pero si su etiqueta, y se leia como si el atacado volviera a "Buscando".
+
+       Se vacia el hueco cuando el salvaje muere o esta reapareciendo, porque el
+       que vuelve a ese hueco es OTRO Pokemon y tampoco le hemos pegado: por eso un
+       reaparecido vuelve a salir "Buscando", que es lo que se pidio.
+
+       Vive solo en memoria: al recargar la pagina, todo empieza sin atacar.
 
        ESTA DECLARACION VA AQUI, AL PRINCIPIO, Y NO MAS ABAJO. Es un "const" y lo
        usan dos funciones que estan mas abajo en el archivo: "applyHitEvent", que
@@ -989,29 +1003,76 @@
        bajarle la vida.
 
        El comprobador de sintaxis no dice nada, porque el codigo es valido: solo
-       falla al ejecutarse. La prueba de "probar-golpes.js" mira expressly que la
+       falla al ejecutarse. La prueba de "probar-golpes.js" mira justamente que la
        declaracion este antes que los usos. */
-    const SCENE_GOLPE_MS = 6000;
-    const sceneUltimoGolpe = new Map();
+    const sceneAtacados = new Set();
 
-    function sceneGolpeReciente(slot) {
-        const n = Number(slot);
-        if (!isFinite(n)) return 0;
-        const t = sceneUltimoGolpe.get(n);
-        if (!t) return 0;
-        return Date.now() - t <= SCENE_GOLPE_MS ? 1 : 0;
+    /* Lo llama `applyFieldEvent` con los salvajes del mensaje `field`: los que
+       estan caidos sueltan su marca. */
+    function sceneOlvidarCaidos(mobs) {
+        if (!Array.isArray(mobs)) return;
+        for (const m of mobs) {
+            const slot = Number(m?.slot);
+            if (!isFinite(slot)) continue;
+            /* SOLO se olvida por las MARCAS del servidor, no por la vida a cero.
+
+               Un `hp` a cero suelto, sin `dead` ni `respawning`, puede ser un
+               mensaje a medias o un golpe que aun no se ha resuelto; tomarlo por
+               muerte devolvia el distintivo "Buscando" a un salvaje al que
+               acababas de pegar, que es exactamente el sintoma que se reporto.
+               Las dos marcas son las que el servidor pone cuando el hueco esta
+               vacio, y son las que se midieron con `M` y `R`. */
+            if (m?.dead || m?.respawning) sceneAtacados.delete(slot);
+        }
+        /* Y los huecos que ya no estan en el area, por si el mapa cambia. */
+        if (sceneAtacados.size > 40) {
+            const enArea = new Set(mobs.map(m => Number(m?.slot)));
+            for (const s of Array.from(sceneAtacados)) if (!enArea.has(s)) sceneAtacados.delete(s);
+        }
     }
 
+    /* A este hueco todavia no le hemos pegado. */
+    function sceneCercano(slot) {
+        const n = Number(slot);
+        if (!isFinite(n)) return false;
+        return !sceneAtacados.has(n);
+    }
+
+    /* El salvaje que nos esta pegando, deducido por cercania.
+
+       El mensaje NO identifica al atacante: un golpe al heroe llega con `slot`
+       negativo, que significa "el que recibe soy yo". Del que pega no dice nada.
+       Como solo puede alcanzarnos uno que este al lado, se toma el salvaje vivo
+       mas cercano y, si esta dentro de SCENE_ATAQUE_CERCA, se da por enganchado.
+
+       Sin esto, un salvaje que nos estaba atacando seguia saliendo "Buscando" y
+       parecia que ni siquiera estaba en la fila: es lo que se reporto. */
+    function sceneMarcarAtacanteDelHeroe(data) {
+        const hits = Array.isArray(data?.hits) ? data.hits : null;
+        if (!hits || !hits.some(h => Number(h?.slot) < 0)) return;
+        const mobs = data.mobs;
+        if (!Array.isArray(mobs) || !mobs.length) return;
+        const hr = Number(data.hero?.row), hc = Number(data.hero?.col);
+        if (!isFinite(hr) || !isFinite(hc)) return;
+        let mejor = null, mejorD = Infinity;
+        for (const m of mobs) {
+            if (m?.dead || m?.respawning) continue;
+            if (!(Number(m?.hp) > 0)) continue;
+            const d = Math.abs((Number(m.row) || 0) - hr) + Math.abs((Number(m.col) || 0) - hc);
+            if (d < mejorD) { mejorD = d; mejor = m; }
+        }
+        if (!mejor || mejorD > SCENE_ATAQUE_CERCA) return;
+        const slot = Number(mejor.slot);
+        if (!isFinite(slot) || slot < 0) return;
+        sceneAtacados.add(slot);
+        /* La card, si la hay, se entera en el acto. */
+        ccAplicarCercanoCard();
+    }
+
+    /* Apunta que a este hueco ya le hemos pegado. Lo llama la ruta del golpe. */
     function sceneGolpeAnotar(slot) {
         const n = Number(slot);
-        if (isFinite(n) && n >= 0) sceneUltimoGolpe.set(n, Date.now());
-        /* La tabla no crece sin limite: se limpia lo que ya no sirve. */
-        if (sceneUltimoGolpe.size > 40) {
-            const ahora = Date.now();
-            for (const [k, v] of sceneUltimoGolpe) {
-                if (ahora - v > SCENE_GOLPE_MS) sceneUltimoGolpe.delete(k);
-            }
-        }
+        if (isFinite(n) && n >= 0) sceneAtacados.add(n);
     }
 
     /* --------------------------------------------------------------- */
@@ -1260,6 +1321,23 @@
         const heroeEl = sceneState.hero?.el || sceneState.col?.querySelector('.cc-hero') || null;
         const heroeSpr = sceneState.hero?.spr || null;
 
+        /* EL REGISTRO DE "YA LE HEMOS PEGADO" VA ANTES DE CUALQUIER SALIDA.
+
+           Esto es estado del SALVAJE, no del escenario: vale igual en el modo
+           card. Estaba mas abajo, despues del `return` que delega en las cards,
+           asi que EN MODO CARD NADIE ANOTABA EL GOLPE y el distintivo "Buscando"
+           no se apagaba nunca por mucho que le pegaras. Es justo lo que se
+           reporto: la card seguia diciendo "Buscando" con la barra ya bajando.
+
+           El dano se lee aqui y se reutiliza mas abajo, para no leerlo dos veces. */
+        const dano = Number(hit.amount) || Number(hit.dmg) || 0;
+        if (slot >= 0 && dano > 0) {
+            sceneGolpeAnotar(slot);
+            /* Y la card, si la hay, se entera en el acto en vez de esperar al
+               siguiente ciclo de refresco. */
+            ccAplicarCercanoCard();
+        }
+
         /* Si el escenario 2D no esta montado se delega en las cards. Y si no hay
            ninguna de las dos, no se hace nada: seria pintar un golpe donde nadie
            lo espera. */
@@ -1324,8 +1402,8 @@
             lanzar(clave, 0, dstEl, dstSpr);
         }
 
-        /* El dano lo manda el servidor en `amount`. */
-        const dano = Number(hit.amount) || Number(hit.dmg) || 0;
+        /* El dano ya se ha leido ARRIBA, junto al registro del golpe: alli hace
+           falta para saber si el golpe cuenta como "le hemos pegado". */
 
         /* Si el golpe es para un salvaje, su vida baja en la cuenta propia y la
            fila se repinta. `sceneRefreshHp` pinta lo que hay en cada etiqueta; el
@@ -1334,10 +1412,6 @@
            El servidor NO baja el `hp` del savage en su mensaje, asi que sin esto
            la barra se quedaba llena mientras le pegaban: es lo que se veia. */
         if (slot >= 0 && dano > 0) {
-            /* Se anota el momento del golpe. Con eso la fila sube a quien esta
-               recibiendo AHORA, que es el combate de verdad, por delante de los
-               que solo estan cerca pero no estan pelando. */
-            sceneGolpeAnotar(slot);
             const pct = ccVidaGolpe(slot, dano);
 
             /* Se le baja la barra AL SALVAJE DE ESE SLOT, y solo a el.
@@ -4141,6 +4215,58 @@
             .cc-nmrow.cc-marquesina .cc-esc-nmtxt,
             .cc-nmrow.cc-marquesina .cc-nmlv { animation:none; transform:none; }
         }
+
+        /* ESTADO "BUSCANDO": EL SALVAJE AL QUE TODAVIA NO LE HEMOS PEGADO
+           --------------------------------------------------------------
+           Se pinta apagado y con un distintivo que gira. En cuanto recibe el
+           primer golpe nuestro vuelve a lo normal y el distintivo desaparece.
+
+           El distintivo va DENTRO del arte y ARRIBA A LA DERECHA: abajo choca
+           con el porcentaje del anillo en los temas 4 y 6, y arriba a la
+           izquierda esta la cinta del tier en el tema 3. Es la unica esquina
+           libre en los siete.
+
+           El sprite se apaga SOLO con opacidad, sin filtros: un filtro sobre un
+           sprite obliga a repintar, y en el escenario estan siempre animandose. */
+        @keyframes ccGirar { to { transform:rotate(360deg); } }
+        .cc-near-spin { width:9px; height:9px; flex:0 0 9px;
+            animation:ccGirar .9s linear infinite; }
+
+        .custom-poke-card.cc-near .cc-spr { opacity:.4; }
+        .cc-esc-fighter.cc-near .cc-esc-spr { opacity:.4; }
+
+        /* El de la card. Se construye siempre y se ensena con la clase de la
+           card, para no tocar el DOM en cada ciclo de refresco. */
+        .cc-mob-near { display:none; position:absolute; top:2px; right:2px; z-index:3;
+            align-items:center; gap:3px; white-space:nowrap;
+            padding:2px 6px 2px 4px; border-radius:999px;
+            font-size:7.5px; font-weight:800; letter-spacing:.05em;
+            text-transform:uppercase; color:#dbe9ff;
+            background:rgba(9,16,28,.9); border:1px solid rgba(96,165,250,.55);
+            box-shadow:0 1px 4px rgba(0,0,0,.55); }
+        .custom-poke-card.cc-near .cc-mob-near { display:inline-flex; }
+
+        /* El del escenario: una linea propia dentro del cartel.
+
+           El ocultado va con DOS clases y no con una. Esta fila comparte la clase
+           cc-bar-line, que trae display:flex, y esa regla esta mas abajo en la
+           hoja: con la misma especificidad ganaria ella y la fila se veria
+           SIEMPRE, incluso en los salvajes ya atacados. Se resuelve con
+           especificidad y no moviendo el bloque de sitio, porque el orden se
+           rompe en cuanto alguien anade una regla en medio. */
+        .cc-esc-nm .cc-esc-near { display:none; justify-content:center; }
+        .cc-esc-fighter.cc-near .cc-esc-nm .cc-esc-near { display:flex; }
+        /* Esa fila es de texto: no lleva la linea de debajo del renglon. */
+        .cc-esc-near::after { display:none; }
+        .cc-near-tag { display:inline-flex; align-items:center; gap:4px;
+            padding:2px 7px 2px 5px; border-radius:999px;
+            font-size:8px; font-weight:800; letter-spacing:.06em;
+            text-transform:uppercase; color:#dbe9ff;
+            background:rgba(96,165,250,.16); border:1px solid rgba(96,165,250,.5); }
+
+        @media (prefers-reduced-motion:reduce) {
+            .cc-near-spin { animation:none; }
+        }
         /* El nivel va detras del nombre. Mismo motivo que el texto: hijo aparte
            para poder reescribirlo sin tocar lo de al lado. */
         .cc-nmlv { font-weight:inherit; color:#93a7bd; font-size:9.5px; }
@@ -4440,7 +4566,7 @@
            ganaba el del escenario y la bola de la card salia sin arco. */
         @keyframes ccEscBallFly { 0%{opacity:0;transform:translate(0,0) rotate(0) scale(.6)}
             10%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}
-            52%{transform:translate(calc(var(--dx)*.52),calc(var(--dy)*.52 - 96px)) rotate(540deg) scale(1.1)}
+            52%{transform:translate(calc(var(--dx)*.52),calc(var(--dy)*.52 - var(--arco,96px))) rotate(540deg) scale(1.1)}
             85%{transform:translate(calc(var(--dx)*.95),calc(var(--dy)*.95 - 10px)) rotate(1080deg) scale(1)}
             100%{opacity:1;transform:translate(var(--dx),var(--dy)) rotate(1260deg) scale(.8)} }
         .cc-dust { position:absolute; z-index:7; width:44px; height:14px; margin:0 0 -7px -22px;
@@ -7174,6 +7300,12 @@
            criterio del juego, la cuenta solo se refrescaria cuando cambiara el
            Pokemon y se quedaria congelada justo cuando bajan las barras. */
         ccVidaSync(data.mobs);
+        /* Los que estan caidos sueltan su marca de "ya atacado": el que vuelva a
+           ese hueco es otro Pokemon y tiene que salir "Buscando" otra vez. */
+        sceneOlvidarCaidos(data.mobs);
+        /* Y si el que recibe el golpe es el HEROE, se deduce por cercania quien
+           le esta pegando: sin esto ese salvaje seguia diciendo "Buscando". */
+        sceneMarcarAtacanteDelHeroe(data);
 
         /* Se guarda la lista COMPLETA y SIN RECORTAR, y se actualiza SIEMPRE, no
            solo cuando cambia la firma. Antes se guardaba unicamente si la firma
@@ -7860,6 +7992,16 @@
        pero dejaria entrar salvajes a 21 en una donde si los haya. */
     const SCENE_ESCENA_CERCANA = 8;
 
+    /* A QUE DISTANCIA PUEDE PEGARNOS UN SALVAJE.
+
+       El mensaje del campo no dice QUIEN pega: un golpe al heroe llega con `slot`
+       negativo, o sea "el que recibe soy yo", y del atacante no hay ni rastro. Lo
+       unico que se sabe es que solo puede pegarnos uno que tenga al lado, asi que
+       cuando la vida del heroe baja se da por enganchado al salvaje vivo mas
+       cercano, y solo si esta a esta distancia o menos. Mas lejos no puede ser
+       suyo y marcarlo seria mentir. */
+    const SCENE_ATAQUE_CERCA = 2;
+
 /* Extremos de la fila de salvajes, en fracciones del ancho. Solo los
        extremos: las posiciones exactas las calcula sceneColumnas() en PIXELES,
        que es lo unico que garantiza que dos Pokemon no se monten uno sobre
@@ -8126,6 +8268,41 @@
         col.querySelectorAll('.cc-esc-nm').forEach(nm => sceneAjustarMarquesina(nm));
     }
 
+    /* La fila del estado "Buscando" del escenario: el svg que gira y la palabra.
+
+       Va como una linea mas del cartel, aprovechando que los salvajes no llevan
+       fila de XP. Asi el cartel crece una linea y la barra de vida NO cambia de
+       tamano, que era lo que habia que respetar. */
+    function sceneCrearFilaCercano() {
+        const fila = document.createElement('span');
+        fila.className = 'cc-bar-line cc-esc-near';
+        const tag = document.createElement('span');
+        tag.className = 'cc-near-tag';
+        tag.innerHTML = `<svg class="cc-near-spin" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".28" stroke-width="3"></circle>
+            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
+        </svg>Buscando`;
+        fila.appendChild(tag);
+        return fila;
+    }
+
+    /* Enciende o apaga el estado "Buscando" de un salvaje del escenario.
+
+       Se llama desde sceneRefreshHp, que es el mismo sitio donde se pinta la
+       barra y que corre justo despues de anotar un golpe: asi el distintivo
+       desaparece en el fotograma en que le pegamos, sin esperar al siguiente
+       mensaje del campo. */
+    function sceneMarcarCercano(hunter) {
+        if (!hunter?.el) return;
+        const n = Number(hunter.slot);
+        /* El slot, escrito en el propio nodo. No lo usa el script para pintar,
+           pero deja la fila inspeccionable desde fuera: sin esto, para saber a que
+           salvaje corresponde un nodo hay que adivinarlo por su posicion, que es
+           justo lo que hizo dificil encontrar el fallo del distintivo. */
+        if (isFinite(n)) hunter.el.dataset.ccSlot = String(n);
+        hunter.el.classList.toggle('cc-near', sceneCercano(n));
+    }
+
     function sceneCrearNombre(nombre, barras) {
         const nm = document.createElement('span');
         nm.className = 'cc-esc-nm';
@@ -8146,6 +8323,11 @@
             nm.appendChild(sceneCrearBarraNombre('xp'));
         } else if (barras === 'hp') {
             nm.appendChild(sceneCrearBarraNombre('hp'));
+            /* La fila del estado "Buscando". Se crea SIEMPRE y se enseña u oculta
+               con la clase de la etiqueta: asi el refresco solo toca una clase y
+               no reconstruye el cartel, que es lo que cortaria la animacion de
+               captura si hubiera una en curso. */
+            nm.appendChild(sceneCrearFilaCercano());
         }
         const punta = document.createElement('span');
         punta.className = 'cc-punta';
@@ -8631,6 +8813,10 @@
             if (typeof pct === 'number' && isFinite(pct)) h.hpPct = pct;
             scenePintarBarraNombre(h.nm, 'hp', h.hpPct);
             sceneMostrarHp(h, sceneColorHp(h.hpPct));
+            /* El estado "Buscando", en el mismo sitio que la barra y a proposito:
+               esta funcion se llama justo despues de anotar un golpe, asi que el
+               distintivo se apaga en el mismo fotograma en que le pegamos. */
+            sceneMarcarCercano(h);
         });
     }
 
@@ -8774,10 +8960,45 @@
                el valor) y el escenario no.
 
                Aqui se copia el `hpPct` que trae la lista, y luego se repinta. */
+            /* SE ACTUALIZA TODO LO QUE ATA UN NODO CON SU SALVAGE, NO SOLO LA VIDA.
+
+               AQUI ESTABA EL FALLO. La fila se engancha por POSICION, pero el
+               efecto de un golpe y la barra de vida se buscan por SLOT. Y la lista
+               cambia de orden en cuanto cae uno: el que muere sale del filtro y los
+               demas corren un puesto. Como la firma no cambia (en una hunt todos
+               son el mismo Pokemon y sigue habiendo los mismos), este camino se
+               recorria sin tocar los slots: cada nodo se quedaba con el del
+               Pokemon que ANTES ocupaba su puesto.
+
+               A partir de ahi, las dos cosas que se pidieron se rompen a la vez:
+
+                 - la barra se pinta con la vida del slot viejo, que ademas esta
+                   muerto y por eso ccVidaSync la deja LLENA. De ahi que pareciera
+                   que el eliminado volvia a la fila, y con la vida entera;
+                 - un golpe contra el slot nuevo no encuentra su nodo y cae en el
+                   "equivalente mas cercano en el mapa", que es justo el nodo que
+                   muestra la barra llena. De ahi que las animaciones se vieran
+                   sobre la "copia" del eliminado y que a algunos no les bajara la
+                   vida: no era su barra la que no bajaba, es que el golpe iba a
+                   otro nodo.
+
+               Se copian los cuatro datos con los que se empareja un nodo: el slot,
+               la posicion en el mapa (que usa el anclaje del efecto), los tipos
+               (que usa el color) y el nombre. */
             sceneState.hunters.forEach((vivo, k) => {
-                const nuevo = lista[k]?.hpPct;
+                const e = lista[k];
+                if (!e) return;
+                const nuevo = e.hpPct;
                 if (typeof nuevo === 'number' && isFinite(nuevo)) {
                     vivo.hpPct = Math.max(0, Math.min(100, nuevo));
+                }
+                if (isFinite(Number(e.slot))) vivo.slot = Number(e.slot);
+                vivo.mapaFila = Number(e.mapaFila) || 0;
+                vivo.mapaCol = Number(e.mapaCol) || 0;
+                vivo.types = e.types || vivo.types;
+                if (e.name && vivo.name !== e.name) {
+                    vivo.name = e.name;
+                    scenePonerNombre(vivo.nm, e.name);
                 }
             });
             sceneRefreshHp();
@@ -9276,9 +9497,28 @@
                quedaran, y eso era volver a llenar la fila de lo que no
                interesa. */
             const rango = (h) => {
+                /* UN POKEMON CAIDO NO SE PINTA NUNCA, ni como objetivo ni por
+                   haber recibido un golpe. */
+                if (!h.vivo) return 9;
                 if (h.slot === objetivo) return 0;
-                if (sceneGolpeReciente(h.slot)) return 1;
-                if (h.vivo && distHeroe(h) <= SCENE_ESCENA_CERCANA) return 2;
+                /* AQUI ESTABA EL INTERCAMBIO QUE PARECIA UN FALLO.
+
+                   El segundo puesto lo daba "le hemos pegado en los ultimos 6 s".
+                   Pasados esos 6 s, el salvaje atacado se caia de la fila y entraba
+                   otro, que no habiamos tocado y por eso salia con "Buscando". Y
+                   como en una hunt TODOS son el mismo Geodude, el intercambio es
+                   invisible salvo por la etiqueta: se leia como si el atacado
+                   hubiera vuelto a "Buscando".
+
+                   Medido con el campo quieto, sin un solo dato nuevo: la fila paso
+                   de sin distintivo a con distintivo en el muestreo 4, justo al
+                   vencer la ventana.
+
+                   Ahora el puesto es para LOS QUE YA HEMOS ATACADO, y dura mientras
+                   vivan. Un salvaje al que le hemos pegado es un salvaje con el que
+                   estamos peleando, y ese no se va de la fila. */
+                if (!sceneCercano(h.slot)) return 1;
+                if (distHeroe(h) <= SCENE_ESCENA_CERCANA) return 2;
                 return 9;
             };
             /* La fila, ya filtrada y ordenada. El 9 es "no se muestra": con el
@@ -9409,7 +9649,20 @@
             sceneApplyHero();
         }
         let lista = sceneHuntersFromSocket();
-        if (!lista || !lista.length) lista = sceneHuntersFromDOM();
+        /* SOLO se cae al DOM cuando el socket no ha dado NADA.
+
+           `sceneHuntersFromSocket` devuelve null cuando no hay ni un dato del que
+           sacar la fila, y una LISTA (que puede venir vacia) cuando si lo hay pero
+           el filtro ha dejado fuera a todos. Los dos casos no son lo mismo:
+
+             - null  -> el juego no ha publicado nada: se mira el DOM, y si tampoco
+                        hay, se conserva lo que ya estaba en pantalla;
+             - []    -> el juego SI ha publicado, y la respuesta es "ahora mismo no
+                        se ve a nadie". Tomarlo como "no hay datos" y rellenar con
+                        el DOM metia nodos con slots inventados (los del DOM no
+                        llevan slot), y esos no casan con los golpes: el efecto y
+                        la barra se iban a otro Pokemon. */
+        if (lista === null) lista = sceneHuntersFromDOM();
         if (!lista.length) {
             /* Sin lista del juego, la fila no se vacia: lo que ya se ve se
                queda, porque entre una captura y la siguiente el juego no
@@ -10008,12 +10261,25 @@
         const b = document.createElement('div');
         b.className = 'cc-ball';
         b.style.backgroundImage = `url(${CAPTURE_ICON_BASE}${ball.icon}.png)`;
+        /* TAMANO DE LA BOLA, EN PROPORCION AL SPRITE.
+
+           Medía 26 px fijos. Con el sprite del escenario en 104 o 124 px (segun el
+           estilo elegido) eso es un cuarto escaso del Pokemon: la bola se perdia y
+           el vuelo apenas se notaba. La de la card mide 64, asi que aqui se toma
+           la mitad del sprite, que deja 52 o 62 y queda a la altura de la otra.
+
+           Se deriva del sprite y no se fija a mano para que siga teniendo sentido
+           si algun dia cambian los tamanos de `sceneSpriteBox`. */
+        const lado = Math.max(40, Math.round(sceneSpriteBox(scriptCardPreferences.sprite, false).w * 0.5));
         Object.assign(b.style, {
-            left: origen.x - 13 + 'px', top: origen.y - 13 + 'px',
-            width: '26px', height: '26px',
+            left: origen.x - lado / 2 + 'px', top: origen.y - lado / 2 + 'px',
+            width: lado + 'px', height: lado + 'px',
         });
         b.style.setProperty('--dx', (dest.x - origen.x) + 'px');
         b.style.setProperty('--dy', (dest.y - origen.y) + 'px');
+        /* El arco del vuelo tambien crece con la bola: con el arco de antes (96 px
+           fijos) una bola mas grande parecia deslizarse en linea recta. */
+        b.style.setProperty('--arco', Math.round(lado * 2.1) + 'px');
         /* El evento se escucha UNA vez y se quita a si mismo. Si la animacion se
            cancelara sin llegar al final, el nodo se queda y con el el listener,
            que es lo que hacia que se acumulasen. */
@@ -10244,6 +10510,23 @@
         </svg>`;
     }
 
+    /* El distintivo "Buscando", con su svg de carga.
+
+       Va DENTRO del arte y ARRIBA A LA DERECHA: abajo choca con el porcentaje del
+       anillo en los temas 4 y 6, y arriba a la izquierda esta la cinta del tier en
+       el tema 3. Es la unica esquina libre en los siete.
+
+       Se construye SIEMPRE y se enseña u oculta con la clase `cc-near` de la
+       card. Asi el ciclo de refresco solo toca una clase y no el DOM, que es lo
+       que evita que el efecto de captura en curso se corte. */
+    function ccNearTagHtml() {
+        return `<span class="cc-mob-near" aria-hidden="true">
+            <svg class="cc-near-spin" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".28" stroke-width="3"></circle>
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
+            </svg>Buscando</span>`;
+    }
+
     function ccEnemyMarkup(themeId, name, speciesId, hpPct, shiny) {
         const sprite = ccEnemySpriteHtml(name, speciesId, shiny);
         const showPct = scriptCardPreferences.showPct;
@@ -10255,8 +10538,8 @@
         const ring = (themeId === '4' || themeId === '6')
             ? `<div class="cc-mob-art ringed">${ccEnemyRingSvg(hpPct)}
                  <div class="cc-mob-art-in">${sprite}</div>
-                 <span class="cc-mob-pct">${Math.round(hpPct)}%</span></div>`
-            : `<div class="cc-mob-art">${sprite}</div>`;
+                 <span class="cc-mob-pct">${Math.round(hpPct)}%</span>${ccNearTagHtml()}</div>`
+            : `<div class="cc-mob-art">${sprite}${ccNearTagHtml()}</div>`;
         if (themeId === '3') {
             return `<div class="cc-in">
                 <div class="cc-head"><div class="cc-mob-name">${name}</div></div>
@@ -10312,6 +10595,21 @@
         };
     }
 
+    /* Enciende o apaga el "Buscando" de la card del salvaje.
+
+       La usan DOS sitios: el ciclo de refresco de la card, y el golpe. Que la use
+       el golpe es lo que hace que el distintivo se apague en el acto en vez de
+       esperar al siguiente ciclo.
+
+       El slot no lo lleva la card: sale del area, que es quien lo sabe. Si no hay
+       card (modo escenario) no se hace nada. */
+    function ccAplicarCercanoCard() {
+        const card = document.getElementById('my-custom-mob-card');
+        if (!card) return;
+        const n = Number(ccSalvajeDelCampo()?.slot);
+        card.classList.toggle('cc-near', isFinite(n) && sceneCercano(n));
+    }
+
     function updateMobCard() {
         const mobCard = document.querySelector('.cbt-card.cbt-mob');
         let customMobCard = document.getElementById('my-custom-mob-card');
@@ -10363,6 +10661,10 @@
 
         const theme = themeById(scriptCardPreferences.theme);
         customMobCard.className = `custom-poke-card cc-mob ${theme.cls}`;
+        /* EL ESTADO "BUSCANDO": apagado mientras no le hayamos pegado a ESTE
+           salvaje. Va en su propia funcion porque la llama tambien el golpe, para
+           que el distintivo desaparezca en el acto. */
+        ccAplicarCercanoCard();
 
         /* ---- fuente de verdad: el socket y el catalogo del juego ---- */
         /* El evento pending trae speciesId, hp/maxHp y shiny. Si no hay nada
