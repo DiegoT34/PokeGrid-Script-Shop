@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.2.0
+// @version      5.3.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -5559,8 +5559,18 @@
        script puede reescribir el src al cambiar de version de sprite. */
     function ccImg(p, className) {
         const s = spriteById(scriptCardPreferences.sprite);
-        const fallback = spriteById('pixel').url(p.speciesId);
-        return `<img class="${className}" src="${s.url(p.speciesId)}" alt="${p.name}" data-cc-species="${p.speciesId}" onerror="this.onerror=null;this.src='${fallback}';this.className=this.className.replace(' anim','')">`;
+        const normal = s.url(p.speciesId);
+        const pixel = spriteById('pixel').url(p.speciesId);
+        /* El sprite del aliado respeta el variocolor, igual que el escenario. Si
+           el estilo elegido no publica la version shiny (Gen-IX y Dream-World no
+           la tienen), ccShinyUrl devuelve cadena vacia y se queda la normal: no
+           puede salir en blanco. El respaldo del `onerror` es el SIGUIENTE
+           escalon, no siempre el pixel: con el shiny puesto cae al normal del
+           mismo estilo. */
+        const shiny = p.shiny ? ccShinyUrl(p.speciesId) : '';
+        const src = shiny || normal;
+        const fallback = src !== normal ? normal : pixel;
+        return `<img class="${className}" src="${src}" alt="${p.name}" data-cc-species="${p.speciesId}" onerror="this.onerror=null;this.src='${fallback}';this.className=this.className.replace(' anim','')">`;
     }
 
     function ccStatsGrid(stats) {
@@ -5757,14 +5767,19 @@
 
     function renderCustomCard() {
         if (!latestPokemonData) return;
-        const p = latestPokemonData;
+        /* El variocolor del aliado NO lo trae `pokes`: lo publica el evento
+           `field` como `heroShiny` (ver applyFieldEvent). Se combina aqui para
+           que el sprite y la estrella salgan de una sola fuente. `null` = el
+           campo aun no ha llegado: manda lo que dijera `pokes`. */
+        const heroShiny = ccFieldState.heroShiny === null ? !!latestPokemonData.shiny : ccFieldState.heroShiny;
+        const p = { ...latestPokemonData, shiny: heroShiny };
         const stats = p.stats || {};
 
         const typeRenderKey = [p.type1, p.type2, p.types, p.type, p.elements].map(v => Array.isArray(v) ? v.join('|') : v).join('/');
         /* El tema y la version de sprite entran en la clave: si el usuario los
            cambia en el menu hay que reconstruir aunque los datos no hayan
            cambiado. */
-        const currentKey = `${p.id}_${p.level}_${p.power || p.cp}_${stats.hp}_${stats.atk}_${typeRenderKey}_${scriptCardPreferences.theme}_${scriptCardPreferences.sprite}`;
+        const currentKey = `${p.id}_${p.speciesId}_${p.level}_${p.power || p.cp}_${stats.hp}_${stats.atk}_${typeRenderKey}_${scriptCardPreferences.theme}_${scriptCardPreferences.sprite}_${p.shiny ? 1 : 0}`;
         if (currentKey === lastRenderKey) return;
 
         const originalCard = document.querySelector('.cbt-card.cbt-hero');
@@ -7124,7 +7139,12 @@
         targetSlot: null, fighting: false, stamp: 0,
         /* La casilla del aliado en el mapa. Es lo que permite saber que salvajes
            estan de verdad a su lado y cuales estan al otro extremo del area. */
-        heroRow: 0, heroCol: 0
+        heroRow: 0, heroCol: 0,
+        /* Si el Pokemon equipado es variocolor. El juego NO lo manda en `pokes`
+           (la foto del equipo): lo publica en el evento `field` como
+           `heroShiny`. Medido con un Shiny Ditto transformado en Blastoise:
+           `heroShiny: true`. `null` = el campo aun no ha llegado. */
+        heroShiny: null
     };
 
     /* La misma firma que usa el juego para decidir si hay que rehacer la fila:
@@ -7261,6 +7281,16 @@
     function applyFieldEvent(data) {
         if (!data || typeof data !== 'object') return;
         ccFieldState.stamp = Date.now();
+
+        /* El variocolor del aliado. `pokes` no lo trae; `field` SI, como
+           `heroShiny`. Es lo que hace que un Shiny Ditto transformado (o
+           cualquier Pokemon shiny equipado) se vea variocolor en la card. Solo
+           se repinta cuando cambia, porque `field` llega cada ~800 ms. */
+        if (typeof data.heroShiny === 'boolean' && data.heroShiny !== ccFieldState.heroShiny) {
+            ccFieldState.heroShiny = data.heroShiny;
+            schedulePokemonRender();
+            if (escenaActiva()) sceneRefreshHero();
+        }
 
         /* La vida del heroe es la cifra exacta del servidor. Se guarda aunque no
            haya salvajes, porque es lo que evita tener que medir la barra. */
@@ -9777,9 +9807,13 @@
             const delPanel = (panel.textContent || '').match(/([A-Z][\w' -]{2,30}?)(?:Lv|Nv)\.?\s*\d/);
             if (delPanel && !name) name = delPanel[1].trim();
         }
+        /* El sprite del aliado respeta el variocolor, igual que la card: si el
+           juego dice que el equipado es shiny (`field.heroShiny`), se pide la
+           variante shiny y se cae a la normal si el estilo no la publica. */
+        const heroSprite = id => (ccFieldState.heroShiny && ccShinyUrl(id)) || sceneSpriteUrl(id);
         if (!spriteSrc && name && name !== 'Aliado') {
             const especieDelNombre = ccSpeciesIdFromCatalog(name) || 0;
-            if (especieDelNombre > 0) spriteSrc = sceneSpriteUrl(especieDelNombre);
+            if (especieDelNombre > 0) spriteSrc = heroSprite(especieDelNombre);
         }
         /* Y por ultimo el socket, que trae la especie y el nivel del equipado. */
         const delSocket = latestPokemonData;
@@ -9788,7 +9822,7 @@
                `id` del Pokemon en el equipo. */
             const especie = Number(delSocket.speciesId || delSocket.id) || 0;
             if (!name) name = String(delSocket.name || delSocket.speciesName || '').trim();
-            if (!spriteSrc && especie > 0) spriteSrc = sceneSpriteUrl(especie);
+            if (!spriteSrc && especie > 0) spriteSrc = heroSprite(especie);
         }
 
         if (!name) name = 'Aliado';
@@ -10882,6 +10916,31 @@
         }, 0);
     }
 
+    /* Fusion de un mensaje parcial sobre el Pokemon equipado.
+
+       `pokes` es la UNICA fuente de identidad (especie, forma, shiny): es la foto
+       del equipo. Los demas mensajes que comparten `id` traen datos parciales y
+       alguno -`poke-xp`- un `speciesId` VIEJO. MEDIDO con un Shiny Ditto
+       transformado en Zubat: `pokes` manda `speciesId: 41` (y `formName:"Zubat"`),
+       pero el `poke-xp` de cada par de segundos sigue mandando `speciesId: 9`
+       (Blastoise, la forma anterior). El merge generico lo metia tal cual y PISABA
+       la especie buena, asi que la card volvia a Blastoise hasta que otro `pokes`
+       -al abrir el panel de equipo- la corregia. De `poke-xp` solo se toman el xp
+       y el nivel, que es lo unico que aporta. */
+    function ccMergeEquipped(actual, update, tipo) {
+        if (!actual || !update) return actual;
+        let parche = update;
+        if (tipo === 'poke-xp') {
+            parche = {};
+            for (const clave of ['xp', 'xpGained', 'level', 'leveledUp']) {
+                if (clave in update) parche[clave] = update[clave];
+            }
+        }
+        const fusionado = { ...actual, ...parche };
+        if (update.stats) fusionado.stats = { ...(actual.stats || {}), ...update.stats };
+        return fusionado;
+    }
+
     function processSocketPayload(rawPayload) {
         try {
             const data = JSON.parse(rawPayload);
@@ -10967,8 +11026,7 @@
                 else if (data.pokemon && data.pokemon.id === latestPokemonData.id) updateObj = data.pokemon;
                 else if (data.hero && data.hero.id === latestPokemonData.id) updateObj = data.hero;
                 if (updateObj) {
-                    latestPokemonData = { ...latestPokemonData, ...updateObj };
-                    if (updateObj.stats) latestPokemonData.stats = { ...latestPokemonData.stats, ...updateObj.stats };
+                    latestPokemonData = ccMergeEquipped(latestPokemonData, updateObj, data.type);
                     shouldRender = true;
                 }
             }
