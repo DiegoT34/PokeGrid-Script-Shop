@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.1.0
+// @version      5.2.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
