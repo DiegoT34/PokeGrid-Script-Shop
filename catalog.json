@@ -1,6 +1,6 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-10-11T09:05:11Z",
+    "updatedAt":  "2026-10-11T09:05:29Z",
     "scripts":  [
                     {
                         "id":  "better-market-pro-vlite",
@@ -55,33 +55,6 @@
                         "icon":  "HUB",
                         "featured":  false,
                         "publishedAt":  "2026-10-06T12:53:41Z"
-                    },
-                    {
-                        "id":  "better-market-pro",
-                        "name":  "Better market Pro",
-                        "namespace":  "http://tampermonkey.net/",
-                        "version":  "10.21.0",
-                        "author":  "DiegoT34",
-                        "summary":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
-                        "description":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.",
-                        "category":  "Utilidades",
-                        "tags":  [
-
-                                 ],
-                        "games":  [
-                                      "Poke Idle World"
-                                  ],
-                        "permissions":  [
-
-                                        ],
-                        "minLauncherVersion":  "0.22.1",
-                        "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-pro.user.js",
-                        "sha256":  "0ff72c3571ad6c5cd2825c5514788df0f922afa3a2556ccc41056c782c73f943",
-                        "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Actualización 10.21.0",
-                        "icon":  "script",
-                        "featured":  false,
-                        "publishedAt":  "2026-10-04T20:19:04Z"
                     },
                     {
                         "id":  "telegram-alerts",
