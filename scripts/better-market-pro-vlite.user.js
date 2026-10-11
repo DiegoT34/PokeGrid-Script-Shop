@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro Vlite
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
+// @version      1.2.0
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
@@ -798,6 +798,10 @@
     Object.assign(SCRIPT_EXTRA_I18N.es, { shopBarGroupShops:'Tiendas y ventas', shopBarGroupUtils:'Utilidades', shopBarGroupGames:'Juegos', shopBarSearch:'Buscar…', shopBarTrigger:'Abrir la botonera', shopBarConfig:'Botonera', shopBarConfigHint:'Elige cómo se ve y dónde se fija. Se aplica al momento: lo que ves es lo que queda.', shopBarStyle:'Estilo', shopBarStyle1:'Columna con nombre', shopBarStyle2:'Dos columnas', shopBarStyle3:'Tres columnas', shopBarStyle4:'Un botón', shopBarStyle5:'Panel lateral', shopBarAnchor:'Dónde se fija', shopBarAnchorHint:'Si la mueves a mano, manda tu posición.', shopBarAnchorBack:'Volver al anclaje', shopBarReset:'Restablecer' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { shopBarGroupShops:'Lojas e vendas', shopBarGroupUtils:'Utilidades', shopBarGroupGames:'Jogos', shopBarSearch:'Buscar…', shopBarTrigger:'Abrir a barra de botões', shopBarConfig:'Barra de botões', shopBarConfigHint:'Escolha como aparece e onde fica. Aplica-se na hora: o que você vê é o que fica.', shopBarStyle:'Estilo', shopBarStyle1:'Coluna com nome', shopBarStyle2:'Duas colunas', shopBarStyle3:'Três colunas', shopBarStyle4:'Um botão', shopBarStyle5:'Painel lateral', shopBarAnchor:'Onde fica', shopBarAnchorHint:'Se mover à mão, vale a sua posição.', shopBarAnchorBack:'Voltar à posição', shopBarReset:'Restaurar' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { shopBarGroupShops:'Shops and sales', shopBarGroupUtils:'Utilities', shopBarGroupGames:'Games', shopBarSearch:'Search…', shopBarTrigger:'Open the button bar', shopBarConfig:'Button bar', shopBarConfigHint:'Choose how it looks and where it sits. It applies right away: what you see is what stays.', shopBarStyle:'Style', shopBarStyle1:'Column with names', shopBarStyle2:'Two columns', shopBarStyle3:'Three columns', shopBarStyle4:'One button', shopBarStyle5:'Side panel', shopBarAnchor:'Where it sits', shopBarAnchorHint:'If you move it by hand, your position wins.', shopBarAnchorBack:'Back to the anchor', shopBarReset:'Reset' });
+    /* Panel de auto-venta: estado, plegar y desplegar. */
+    Object.assign(SCRIPT_EXTRA_I18N.es, { autoSellRunning:'En marcha', autoSellFold:'Plegar', autoSellUnfold:'Desplegar' });
+    Object.assign(SCRIPT_EXTRA_I18N.pt, { autoSellRunning:'Em andamento', autoSellFold:'Recolher', autoSellUnfold:'Expandir' });
+    Object.assign(SCRIPT_EXTRA_I18N.en, { autoSellRunning:'Running', autoSellFold:'Collapse', autoSellUnfold:'Expand' });
     Object.assign(SCRIPT_EXTRA_I18N.es, { depotItems:'Objetos', depotPokemon:'Pokémon', depotFamilyItems:'Familia: objetos', depotFamilyPokemon:'Familia: Pokémon', depotSubtitle:'Almacenamiento personal y familiar', depotBag:'Mochila', depotTeam:'Equipo', depotBox:'Box', depotFamily:'Depósito familiar', depotYourBag:'Tu mochila', depotYourPokemon:'Tus Pokémon · equipo y Box', depotSearchPokemon:'Buscar Pokémon por nombre', depotClear:'Limpiar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'OBJETO', depotPokemonKind:'POKÉMON', depotAvailable:'disponibles', depotEmpty:'No hay contenido disponible' });
     Object.assign(SCRIPT_EXTRA_I18N.pt, { depotItems:'Itens', depotPokemon:'Pokémon', depotFamilyItems:'Família: itens', depotFamilyPokemon:'Família: Pokémon', depotSubtitle:'Armazenamento pessoal e familiar', depotBag:'Mochila', depotTeam:'Equipe', depotBox:'Box', depotFamily:'Depósito da família', depotYourBag:'Sua mochila', depotYourPokemon:'Seus Pokémon · equipe e Box', depotSearchPokemon:'Buscar Pokémon pelo nome', depotClear:'Limpar', depotStore:'Guardar', depotDeposit:'Depositar', depotWithdraw:'Retirar', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'disponíveis', depotEmpty:'Nenhum conteúdo disponível' });
     Object.assign(SCRIPT_EXTRA_I18N.en, { depotItems:'Items', depotPokemon:'Pokémon', depotFamilyItems:'Family: items', depotFamilyPokemon:'Family: Pokémon', depotSubtitle:'Personal and family storage', depotBag:'Bag', depotTeam:'Team', depotBox:'Box', depotFamily:'Family depot', depotYourBag:'Your bag', depotYourPokemon:'Your Pokémon · team and Box', depotSearchPokemon:'Search Pokémon by name', depotClear:'Clear', depotStore:'Store', depotDeposit:'Deposit', depotWithdraw:'Withdraw', depotItemKind:'ITEM', depotPokemonKind:'POKÉMON', depotAvailable:'available', depotEmpty:'No content available' });
@@ -1444,6 +1448,33 @@
         return getMarketEntryImage(entry);
     }
 
+    /* ================= SPRITES DE MENU: PIXEL ART DE POKEAPI =================
+
+       Todos los menus que muestran Pokemon (Casino, Deposito, Vender Pokemon,
+       Daily Kill...) usan el MISMO pixel art de PokeAPI que ya usa el Mercado. El
+       sprite 3D propio del juego (`getPokemonIconUrl`) queda solo como RESPALDO
+       por si la imagen de PokeAPI no carga, para no dejar el hueco vacio. */
+    function getMenuPokemonSprite(speciesId, shiny = false) {
+        const id = Number(speciesId);
+        if (!(Number.isInteger(id) && id > 0)) return getPokemonIconUrl(speciesId);
+        return getPokeApiSpriteUrl({ speciesId: id, shiny: Boolean(shiny) }) || getPokemonIconUrl(id);
+    }
+
+    /* Engancha el respaldo al `error` de una imagen ya creada: si el pixel art no
+       carga, prueba el icono del juego UNA vez y, si tampoco, la esconde. */
+    function wireMenuPokemonSpriteFallback(img, speciesId) {
+        if (!img) return;
+        img.addEventListener('error', () => {
+            const fallback = getPokemonIconUrl(speciesId);
+            if (fallback && img.dataset.menuSpriteFallback !== '1') {
+                img.dataset.menuSpriteFallback = '1';
+                img.src = fallback;
+            } else {
+                img.style.visibility = 'hidden';
+            }
+        });
+    }
+
     function getTelegramItemCaption(entry, title, account = null, detail = '') {
         const ref = entry?.item || entry?.product || {};
         const name = entry?.name || entry?.title || entry?.itemName || ref.name || ref.title || '—';
@@ -1850,7 +1881,7 @@
                 .script-daily-kill-reward{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding:10px 12px;border:1px solid var(--dk-line);border-radius:10px;background:linear-gradient(145deg,#17283d,#122238)}.script-daily-kill-reward-label{color:var(--dk-muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.script-daily-kill-reward-item{display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid #29415a;border-radius:7px;background:#0a1727;color:#d9e7f1;font-size:10px}.script-daily-kill-reward-item img{width:20px;height:20px;object-fit:contain;image-rendering:pixelated}.script-daily-kill-reward-item b{color:var(--dk-gold)}
                 .script-daily-kill-error{margin:0 0 12px;padding:10px 12px;border:1px solid #734051;border-left:3px solid var(--dk-red);border-radius:9px;background:#21141d;color:#f7a7b2;font-size:11px}.script-daily-kill-error[data-kind="success"]{border-color:#3d684e;border-left-color:var(--dk-green);background:#0d2a1d;color:#a7f3c0}
                 .script-daily-kill-hint{margin:0 0 12px;color:var(--dk-muted);font-size:11px;line-height:1.5}.script-daily-kill-missions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.script-daily-kill-card{min-width:0;padding:13px;border:1px solid var(--dk-line);border-radius:13px;background:linear-gradient(145deg,#17283d,#122238);box-shadow:0 4px 12px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035)}.script-daily-kill-card.is-selected{border-color:var(--dk-gold);box-shadow:0 0 0 1px #f7c85844,0 4px 12px #0003}.script-daily-kill-card.is-claimable{border-color:var(--dk-green);box-shadow:0 0 0 2px #66ee9144,0 4px 12px #0003}.script-daily-kill-card.is-locked{opacity:.6}
-                .script-daily-kill-card-head{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:9px}.script-daily-kill-card-number{color:var(--dk-muted);font-size:9px}.script-daily-kill-card-type{padding:3px 6px;border:1px solid #4b6785;border-radius:5px;background:#14243a;color:#dbeafe;font-size:8px;font-weight:800;text-transform:uppercase}.script-daily-kill-card-main{display:flex;align-items:center;gap:9px;margin-bottom:9px}.script-daily-kill-card-sprite{display:grid;place-items:center;width:58px;height:58px;flex:0 0 58px;border:1px solid #29425d;border-radius:10px;background:#0a1727}.script-daily-kill-card-sprite{position:relative;overflow:hidden}.script-daily-kill-card-sprite img{width:50px;height:50px;object-fit:contain;image-rendering:pixelated}.script-daily-kill-native-sprite{position:absolute;left:50%;top:50%;pointer-events:none}.script-daily-kill-card-name{color:var(--dk-copy);font:800 14px/1.1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-xp{margin-top:5px;color:var(--dk-gold);font-size:10px}.script-daily-kill-card-goal{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 0;border-top:1px solid var(--dk-line);border-bottom:1px solid var(--dk-line);color:var(--dk-muted);font-size:10px}.script-daily-kill-card-goal b{color:var(--dk-copy);font:800 15px/1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-bar{height:5px;margin:9px 0;border-radius:5px;background:#0a1727;overflow:hidden}.script-daily-kill-card-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--dk-blue),var(--dk-green))}.script-daily-kill-card-actions{display:flex;gap:7px;margin-top:10px}.script-daily-kill-action{width:100%;min-height:38px;padding:0 10px;border:1px solid #ffe39a;border-radius:8px;background:linear-gradient(180deg,#ffd778,#efba4c);color:#17130a;font-size:10px;font-weight:850;cursor:pointer}.script-daily-kill-action:hover:not(:disabled){filter:brightness(1.06)}.script-daily-kill-action:disabled{cursor:not-allowed;opacity:.45}.script-daily-kill-action.secondary{border-color:#3d5875;background:#14243a;color:var(--dk-copy)}.script-daily-kill-action.green{border-color:#8de5ac;background:linear-gradient(180deg,#8de5ac,#4dbb77);color:#0b2115}.script-daily-kill-card-note{margin-top:9px;color:var(--dk-muted);font-size:9px;text-align:center}.script-daily-kill-locked{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}.script-daily-kill-empty{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}
+                .script-daily-kill-card-head{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:9px}.script-daily-kill-card-number{color:var(--dk-muted);font-size:9px}.script-daily-kill-card-type{padding:3px 6px;border:1px solid #4b6785;border-radius:5px;background:#14243a;color:#dbeafe;font-size:8px;font-weight:800;text-transform:uppercase}.script-daily-kill-card-main{display:flex;align-items:center;gap:9px;margin-bottom:9px}.script-daily-kill-card-sprite{display:grid;place-items:center;width:72px;height:72px;flex:0 0 72px;border:1px solid #29425d;border-radius:10px;background:#0a1727}.script-daily-kill-card-sprite{position:relative;overflow:hidden}.script-daily-kill-card-sprite img{width:62px;height:62px;object-fit:contain;image-rendering:pixelated}.script-daily-kill-native-sprite{position:absolute;left:50%;top:50%;pointer-events:none}.script-daily-kill-card-name{color:var(--dk-copy);font:800 14px/1.1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-xp{margin-top:5px;color:var(--dk-gold);font-size:10px}.script-daily-kill-card-goal{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 0;border-top:1px solid var(--dk-line);border-bottom:1px solid var(--dk-line);color:var(--dk-muted);font-size:10px}.script-daily-kill-card-goal b{color:var(--dk-copy);font:800 15px/1 Inter,"Segoe UI",sans-serif}.script-daily-kill-card-bar{height:5px;margin:9px 0;border-radius:5px;background:#0a1727;overflow:hidden}.script-daily-kill-card-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--dk-blue),var(--dk-green))}.script-daily-kill-card-actions{display:flex;gap:7px;margin-top:10px}.script-daily-kill-action{width:100%;min-height:38px;padding:0 10px;border:1px solid #ffe39a;border-radius:8px;background:linear-gradient(180deg,#ffd778,#efba4c);color:#17130a;font-size:10px;font-weight:850;cursor:pointer}.script-daily-kill-action:hover:not(:disabled){filter:brightness(1.06)}.script-daily-kill-action:disabled{cursor:not-allowed;opacity:.45}.script-daily-kill-action.secondary{border-color:#3d5875;background:#14243a;color:var(--dk-copy)}.script-daily-kill-action.green{border-color:#8de5ac;background:linear-gradient(180deg,#8de5ac,#4dbb77);color:#0b2115}.script-daily-kill-card-note{margin-top:9px;color:var(--dk-muted);font-size:9px;text-align:center}.script-daily-kill-locked{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}.script-daily-kill-empty{padding:28px 14px;text-align:center;color:var(--dk-muted);font-size:11px}
                 @media(max-width:760px){.script-daily-kill-backdrop{padding:8px}.script-daily-kill-panel{max-height:calc(100dvh - 16px);border-radius:16px}.script-daily-kill-head{min-height:60px;padding:11px 12px}.script-daily-kill-body{padding:12px}.script-daily-kill-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.script-daily-kill-missions{grid-template-columns:minmax(0,1fr)}.script-daily-kill-card-actions{flex-direction:column}}
                 @media(prefers-reduced-motion:reduce){.script-daily-kill-backdrop,.script-daily-kill-panel *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
             `;
@@ -3331,6 +3362,18 @@
            que uno que no enseña nada. */
         const noVendidos = nodo.querySelector('[data-campo="no-vendidos"]');
         if (noVendidos) noVendidos.textContent = formatNumber(Math.max(0, Number(sesion.conservados) || 0));
+        /* La tira plegada lleva su propia copia de las dos cifras que importan
+           cuando no se ve el resto: el oro y los que no se vendieron. El aviso
+           solo aparece si hay alguno; un cero en rojo es ruido. */
+        const oroCorto = nodo.querySelector('[data-campo="oro-corto"]');
+        if (oroCorto) oroCorto.textContent = formatNumber(sesion.gold);
+        const conservados = Math.max(0, Number(sesion.conservados) || 0);
+        const noVendidosCorto = nodo.querySelector('[data-campo="no-vendidos-corto"]');
+        if (noVendidosCorto) {
+            noVendidosCorto.textContent = formatNumber(conservados);
+            noVendidosCorto.hidden = conservados <= 0;
+        }
+        noVendidos?.closest('.script-market-autosell-panel-stat')?.classList.toggle('es-aviso', conservados > 0);
         const fallos = nodo.querySelector('[data-campo="fallos"]');
         fallos.textContent = sesion.failed > 0 ? `${sesion.failed} sin vender` : '';
         fallos.hidden = sesion.failed <= 0;
@@ -5163,7 +5206,8 @@
                     x:Number(p.x), y:Number(p.y),
                     snap:Boolean(p.snap?.d) ? { ...p.snap } : {},
                     escala:numeroONada(p.escala) ?? 1,
-                    fijado:Boolean(p.fijado)
+                    fijado:Boolean(p.fijado),
+                    plegado:Boolean(p.plegado)
                 };
             }
         } catch (_) {}
@@ -5176,7 +5220,8 @@
                 y:Number(estado.y) || 0,
                 snap:estado.snap || {},
                 escala:resolverEscalaPanel(estado.escala, 0),
-                fijado:Boolean(estado.fijado)
+                fijado:Boolean(estado.fijado),
+                plegado:Boolean(estado.plegado)
             }));
         } catch (_) {}
     };
@@ -5192,6 +5237,7 @@
             snap:guardada?.snap || {},
             escala:resolverEscalaPanel(guardada?.escala ?? 1, 0),
             fijado:Boolean(guardada?.fijado),
+            plegado:Boolean(guardada?.plegado),
             nodo
         };
     };
@@ -5223,6 +5269,13 @@
             /* Fijado no se puede mover. Es justo para eso esta el boton: dejar el
                panel donde se quiere y que no se mueva ni al redimensionar. */
             if (leerEstadoPanelAutoSell().fijado) return;
+            /* Si el gesto empieza en un boton de dentro del asa —el de plegar—, el
+               asa NO se lo queda. Cancelaba el pointerdown con el preventDefault de
+               abajo, y cancelarlo suprime el click que viene detras: el boton se
+               veia, respondia al raton por encima, y no plegaba nada.
+               MEDIDO con entrada real: con el preventDefault el click no llega
+               (0 de 1); sin el, llega (1 de 1). */
+            if (event.target.closest('button')) return;
             event.preventDefault();
             const caja = nodo.getBoundingClientRect();
             const dx = event.clientX - caja.left;
@@ -5266,7 +5319,12 @@
                 guardarEstadoPanelAutoSell({
                     x:Number(nodo.dataset.posX) || 0,
                     y:Number(nodo.dataset.posY) || 0,
-                    snap, escala:estado.escala, fijado:estado.fijado
+                    snap, escala:estado.escala, fijado:estado.fijado,
+                    /* El plegado va tambien aqui: si se guardara sin el, arrastrar
+                       el panel lo desplegaria, porque el campo se escribiria a
+                       falso. Es el mismo fallo que ya avisa el comentario de
+                       leerEstadoPanelAutoSell: un sitio que se olvida un campo. */
+                    plegado:estado.plegado
                 });
                 clampMarketAutoSellPanel();
             };
@@ -5287,28 +5345,25 @@
               <div class="script-market-autosell-panel-grip" data-asa>
                 <svg class="script-market-autosell-panel-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2.6" r="1.3"/><path d="M12 3.9v2.7"/><rect x="3.6" y="6.6" width="16.8" height="13" rx="3.6"/><path d="M1.5 11.6v3.2M22.5 11.6v3.2"/><circle cx="8.7" cy="12.1" r="1.5"/><circle cx="15.3" cy="12.1" r="1.5"/><path d="M9.3 16.3h5.4"/></svg>
                 <span class="script-market-autosell-panel-title">Auto venta</span>
-                <span class="script-market-autosell-panel-sitio" data-campo="sitio" hidden></span>
                 <span class="script-market-autosell-panel-tiempo" data-campo="tiempo">00:00</span>
+                <span class="script-market-autosell-panel-chip" hidden><b data-campo="oro-corto">0</b><small>oro</small></span>
+                <span class="script-market-autosell-panel-aviso" data-campo="no-vendidos-corto" hidden>0</span>
+                <button class="script-market-autosell-panel-plegar" type="button" data-asa-plegar aria-label="Plegar" title="Plegar" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg></button>
               </div>
+              <span class="script-market-autosell-panel-sitio" data-campo="sitio" hidden></span>
               <div class="script-market-autosell-panel-body">
-                <div class="script-market-autosell-panel-stat">
-                  <b data-campo="vendidos">0</b>
-                  <small>vendidos</small>
-                </div>
-                <div class="script-market-autosell-panel-stat">
-                  <b class="es-oro" data-campo="oro">0</b>
-                  <small>oro</small>
-                </div>
-                <div class="script-market-autosell-panel-stat">
-                  <b data-campo="no-vendidos">0</b>
-                  <small>no vendidos</small>
-                </div>
+                <div class="script-market-autosell-panel-stat"><small>vendidos</small><b data-campo="vendidos">0</b></div>
+                <div class="script-market-autosell-panel-stat"><small>oro</small><b class="es-oro" data-campo="oro">0</b></div>
+                <div class="script-market-autosell-panel-stat"><small>no vendidos</small><b data-campo="no-vendidos">0</b></div>
               </div>
-              <div class="script-market-autosell-panel-ctrl">
-                <button type="button" data-asa-menos aria-label="Más pequeño" title="Más pequeño">&minus;</button>
-                <button type="button" data-asa-mas aria-label="Más grande" title="Más grande">+</button>
-                <button type="button" data-asa-fijar aria-label="Fijar en pantalla" aria-pressed="false" title="Fijar en pantalla"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"/></svg></button>
-                <button type="button" data-asa-config aria-label="Configurar la auto-venta" title="Configurar la auto-venta"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
+              <div class="script-market-autosell-panel-pie">
+                <span class="script-market-autosell-panel-estado"><i></i>${tr('autoSellRunning')}</span>
+                <div class="script-market-autosell-panel-ctrl">
+                  <button type="button" data-asa-menos aria-label="Más pequeño" title="Más pequeño">&minus;</button>
+                  <button type="button" data-asa-mas aria-label="Más grande" title="Más grande">+</button>
+                  <button type="button" data-asa-fijar aria-label="Fijar en pantalla" aria-pressed="false" title="Fijar en pantalla"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"/></svg></button>
+                  <button type="button" data-asa-config aria-label="Configurar la auto-venta" title="Configurar la auto-venta"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
+                </div>
               </div>
             </div>
             <div class="script-market-autosell-panel-fallos" data-campo="fallos" hidden></div>`;
@@ -5347,11 +5402,26 @@
         nodo.querySelector('[data-asa-fijar]')?.addEventListener('click', () => {
             fijar({ fijado:!leerEstadoPanelAutoSell().fijado });
         });
+        /* Plegar y desplegar. Se guarda con el resto del estado del panel, asi que
+           sobrevive a la recarga igual que la posicion y la escala. */
+        nodo.querySelector('[data-asa-plegar]')?.addEventListener('click', () => {
+            fijar({ plegado:!leerEstadoPanelAutoSell().plegado });
+        });
         /* El cuarto boton abre la MISMA ventana de configuracion que el boton del
-           mercado —no hay una segunda, ni una copia, ni una version reducida—.
-           Por eso se llama a la misma funcion y no se reimplementa nada aqui. */
+           mercado -no hay una segunda, ni una copia, ni una version reducida-.
+           Pero no basta con abrirla: openMarketAutoSellConfig solo CONSTRUYE el
+           dialogo y lo añade; quien escucha los botones -la X, Cancelar, Guardar y
+           la vista previa- es wireMarketAutoSellConfig. Abriendola sin cablear
+           queda un dialogo inerte, y era justo lo que pasaba desde aqui: el boton
+           de cerrar no hacia nada. */
         nodo.querySelector('[data-asa-config]')?.addEventListener('click', () => {
-            try { openMarketAutoSellConfig(); } catch (_) { /* sin ventana no se rompe la barra */ }
+            try {
+                wireMarketAutoSellConfig(openMarketAutoSellConfig(), () => {
+                    /* Al guardar, el panel se vuelve a mirar: encender o apagar la
+                       auto-venta decide si tiene que estar en pantalla. */
+                    try { syncMarketAutoSellPanel(); } catch (_) { /* sin panel no pasa nada */ }
+                });
+            } catch (_) { /* sin ventana no se rompe la barra */ }
         });
     };
 
@@ -5368,6 +5438,17 @@
         nodo.style.fontSize = `calc(12px * ${estado.escala})`;
         nodo.dataset.escala = String(estado.escala);
         nodo.dataset.fijado = estado.fijado ? 'si' : 'no';
+        /* El plegado va como clase: el CSS decide que se ve en cada forma, y el
+           DOM es el mismo para las dos. */
+        nodo.classList.toggle('is-plegado', estado.plegado);
+        nodo.dataset.plegado = estado.plegado ? 'si' : 'no';
+        const plegar = nodo.querySelector('[data-asa-plegar]');
+        if (plegar) {
+            plegar.setAttribute('aria-pressed', estado.plegado ? 'true' : 'false');
+            const etiqueta = estado.plegado ? tr('autoSellUnfold') : tr('autoSellFold');
+            plegar.title = etiqueta;
+            plegar.setAttribute('aria-label', etiqueta);
+        }
         const fijar = nodo.querySelector('[data-asa-fijar]');
         if (fijar) {
             fijar.setAttribute('aria-pressed', estado.fijado ? 'true' : 'false');
@@ -5962,7 +6043,13 @@
         };
         document.addEventListener('keydown', onTecla);
         capa.addEventListener('click', event => {
-            const accion = event.target?.getAttribute?.('data-accion');
+            /* La accion se busca en el ancestro mas cercano que la declare, no en el
+               elemento pulsado a secas: los botones llevan un icono dentro, y al
+               pulsar el icono lo pulsado es el svg, que no tiene data-accion. Con
+               la lectura directa, la X no cerraba nada.
+               MEDIDO con entrada real: leyendo el elemento pulsado no cierra
+               (0 de 1); buscando el ancestro, cierra (1 de 1). */
+            const accion = event.target?.closest?.('[data-accion]')?.getAttribute('data-accion');
             if (event.target === capa || accion === 'cerrar' || accion === 'cancelar') {
                 cerrar();
                 return;
@@ -7118,46 +7205,36 @@
     }
 
     function getDailyKillPokemonSprite(name, speciesId) {
+        /* Pixel art de PokeAPI, como el resto de menus. La variante del nombre
+           ("Ancient Dragonair") busca la especie base; si no la conoce, el id
+           directo; y si tampoco, el del catalogo de criaturas. */
         const baseSpeciesId = getDailyKillBaseSpeciesId(name);
-        const baseSprite = getPokemonIconUrl(baseSpeciesId);
-        if (baseSprite) return baseSprite;
-        const directSprite = getPokemonIconUrl(speciesId);
         const baseName = getDailyKillBasePokemonName(name);
         const baseCreature = globalCreatureApiData.get(normalizePokemonName(baseName));
         const fallbackBaseId = Number(baseCreature?.pokeId || baseCreature?.speciesId || 0);
-        return getPokemonIconUrl(fallbackBaseId) || directSprite;
+        return getMenuPokemonSprite(baseSpeciesId, false)
+            || getMenuPokemonSprite(speciesId, false)
+            || getMenuPokemonSprite(fallbackBaseId, false)
+            || getPokemonIconUrl(speciesId);
     }
 
     function mountDailyKillPokemonSprite(container, name, speciesId) {
+        /* El pixel art de PokeAPI se queda: ya NO se sustituye por el sprite nativo
+           del juego (hoja por `looktype`). Es lo que se pidio para todos los menus
+           que muestran Pokemon. */
         if (!container) return;
-        const fallbackUrl = getDailyKillPokemonSprite(name, speciesId);
-        const fallback = document.createElement(fallbackUrl ? 'img' : 'span');
-        if (fallbackUrl) {
-            fallback.src = fallbackUrl;
-            fallback.alt = String(name || 'Pokémon');
-        } else {
-            fallback.textContent = '◉';
+        const baseSpeciesId = getDailyKillBaseSpeciesId(name);
+        const spriteId = Number.isInteger(baseSpeciesId) && baseSpeciesId > 0 ? baseSpeciesId : speciesId;
+        const url = getMenuPokemonSprite(spriteId, false) || getDailyKillPokemonSprite(name, speciesId);
+        if (!url) {
+            container.replaceChildren(Object.assign(document.createElement('span'), { textContent: '◉' }));
+            return;
         }
-        container.replaceChildren(fallback);
-
-        const mountNativeSprite = () => {
-            const looktype = getDailyKillNativeLooktype(name, speciesId);
-            if (!looktype) return;
-            loadCityNpcSpriteData(looktype).then(sprite => {
-                if (!container.isConnected) return;
-                const nativeSprite = document.createElement('div');
-                nativeSprite.className = 'script-daily-kill-native-sprite';
-                nativeSprite.setAttribute('aria-hidden', 'true');
-                const width = Math.max(1, Number(sprite.width) || 1);
-                const height = Math.max(1, Number(sprite.height) || 1);
-                const scale = Math.min(1, 50 / Math.max(width, height));
-                nativeSprite.style.cssText = `width:${width}px;height:${height}px;background-image:url("${sprite.image}");background-position:-${sprite.x}px -${sprite.y}px;background-repeat:no-repeat;image-rendering:pixelated;transform:translate(-50%,-50%) scale(${scale});`;
-                container.replaceChildren(nativeSprite);
-            }).catch(error => console.warn('No se pudo cargar el sprite nativo de Daily Task.', error));
-        };
-
-        if (globalHuntMarkerData.size) mountNativeSprite();
-        else loadMapMarkersData().then(mountNativeSprite).catch(error => console.warn('No se pudieron cargar los marcadores nativos de Daily Task.', error));
+        const img = document.createElement('img');
+        img.alt = String(name || 'Pokémon');
+        img.src = url;
+        wireMenuPokemonSpriteFallback(img, spriteId);
+        container.replaceChildren(img);
     }
 
     function updateCachedLeaderPokemon(pokemonList) {
@@ -7743,8 +7820,8 @@
         /* Sin hover a proposito: las cartas se leen como una ficha, no como algo
            pulsable. El hover queda en botones, selects y filas del historial. */
         .script-casino-card.is-disabled { opacity:.6; }
-        .script-casino-art { grid-row:1/3;width:50px;height:50px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
-        .script-casino-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-art { grid-row:1/3;width:62px;height:62px;box-sizing:border-box;display:grid;place-items:center;align-self:start;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-art img { width:58px;height:58px;object-fit:contain;image-rendering:pixelated; }
         .script-casino-info { min-width:0; }
         .script-casino-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
         .script-casino-name { min-width:0;display:flex;align-items:baseline;gap:3px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
@@ -7761,7 +7838,7 @@
         .script-casino-requirements { margin-top:4px;display:flex;flex-wrap:wrap;gap:4px; }
         .script-casino-requirement { min-height:21px;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;color:#b6f0cf;background:rgba(14,54,38,.5);border:1px solid rgba(80,160,120,.5);border-radius:5px;font-size:var(--casino-fs-label);font-weight:700; }
         .script-casino-requirement.is-missing { color:#ffb8b2;background:rgba(60,30,34,.5);border-color:rgba(160,76,86,.55); }
-        .script-casino-requirement img { width:16px;height:16px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-requirement img { width:20px;height:20px;object-fit:contain;image-rendering:pixelated; }
         /* La fila de accion envuelve: en una carta estrecha el motivo baja de fila
            en vez de aplastar el campo de cantidad. */
         .script-casino-action-row { grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px;min-width:0; }
@@ -7851,8 +7928,8 @@
         .script-casino-autosell-log-list { max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:6px; }
         .script-casino-autosell-log-empty { padding:24px 14px;color:var(--casino-dim);text-align:center;font-size:var(--casino-fs-body);font-weight:800; }
         .script-casino-autosell-log-row { --casino-tier:#64748b;display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px;background:color-mix(in srgb,var(--casino-tier) 9%,rgba(255,255,255,.05));border:1px solid color-mix(in srgb,var(--casino-tier) 44%,var(--casino-card-line));border-left:3px solid var(--casino-tier);border-radius:8px;box-shadow:inset 0 1px rgba(255,255,255,.12); }
-        .script-casino-autosell-log-art { width:38px;height:38px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;overflow:hidden; }
-        .script-casino-autosell-log-art img { width:34px;height:34px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-autosell-log-art { width:48px;height:48px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:6px;overflow:hidden; }
+        .script-casino-autosell-log-art img { width:42px;height:42px;object-fit:contain;image-rendering:pixelated; }
         .script-casino-autosell-log-info { min-width:0; }
         .script-casino-autosell-log-name { display:flex;align-items:center;gap:6px;min-width:0; }
         .script-casino-autosell-log-name b { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
@@ -7908,8 +7985,8 @@
            quedaria a la vista. Es el mismo apano que usan las demas listas. */
         .script-casino-team-card[hidden] { display:none !important; }
         @keyframes scriptCasinoGoalPulse { 0%,100%{box-shadow:0 0 0 1px rgba(255,219,93,.5),0 0 10px rgba(255,212,71,.22)} 50%{box-shadow:0 0 0 1px rgba(255,240,168,.8),0 0 20px rgba(255,212,71,.44)} }
-        .script-casino-team-art { grid-row:1/3;width:50px;height:50px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
-        .script-casino-team-art img { width:46px;height:46px;object-fit:contain;image-rendering:pixelated; }
+        .script-casino-team-art { grid-row:1/3;width:62px;height:62px;display:grid;place-items:center;background:var(--casino-well);border:1px solid var(--casino-well-line);border-radius:8px;overflow:hidden; }
+        .script-casino-team-art img { width:58px;height:58px;object-fit:contain;image-rendering:pixelated; }
         .script-casino-team-info { min-width:0; }
         .script-casino-team-name-line { display:flex;align-items:center;gap:6px;min-width:0; }
         .script-casino-team-name { min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--casino-fg-strong);font-size:var(--casino-fs-name);font-weight:800; }
@@ -8179,8 +8256,8 @@
             .script-casino-result { flex:1 1 calc(50% - 2px); }
             .script-casino-result.is-net { flex:1 1 100%; }
             .script-casino-card { grid-template-columns:50px minmax(0,1fr);padding:7px; }
-            .script-casino-art { width:48px;height:48px; }
-            .script-casino-art img { width:45px;height:45px; }
+            .script-casino-art { width:60px;height:60px; }
+            .script-casino-art img { width:56px;height:56px; }
             .script-casino-action-row { grid-column:1/-1; }
             .script-casino-purchase-controls { grid-template-columns:minmax(0,1fr) auto; }
             .script-casino-team-list { max-height:42dvh; }
@@ -8556,7 +8633,7 @@
         .hunt-sell-backdrop .hunt-sell-row:hover { background:linear-gradient(145deg,#14242e,#0c151b) !important;border-color:#8b6b31 !important;transform:translateY(-1px); }
         .hunt-sell-backdrop .hunt-sell-row:has(input[type="checkbox"]:checked) { border-color:#d2aa50 !important;box-shadow:inset 3px 0 #d2aa50,0 4px 12px #0008; }
         .hunt-sell-backdrop .hunt-sell-row[hidden] { display:none !important; }
-        .hunt-sell-backdrop .hunt-sell-art { width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle,#1b303d,#080e13 72%);border:1px solid #294554;border-radius:8px;overflow:hidden; }
+        .hunt-sell-backdrop .hunt-sell-art { width:60px;height:60px;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle,#1b303d,#080e13 72%);border:1px solid #294554;border-radius:8px;overflow:hidden; }
         .hunt-sell-backdrop .hunt-sell-art img { width:88%;height:88%;object-fit:contain;filter:drop-shadow(0 3px 4px #000b); }
         .hunt-sell-backdrop .hunt-sell-info { min-width:0; }
         .hunt-sell-backdrop .hunt-sell-kind { display:block;color:#68899d;font-size:8px;font-weight:850;letter-spacing:.09em;text-transform:uppercase;margin-bottom:3px; }
@@ -8575,7 +8652,7 @@
         .hunt-quality-tier-shortcut { padding:3px 8px;border:1px solid #42535d;border-radius:5px;background:#10191f;color:#afc0c8;font-size:9px;font-weight:900;cursor:pointer; }
         .hunt-quality-tier-shortcut:hover { color:#f1dfb7;border-color:#9b7939; }
         .hunt-sell-backdrop .npc-pokemon-row { grid-template-columns:auto 58px minmax(0,1fr) 92px 34px !important;min-height:112px; }
-        .hunt-sell-backdrop .npc-pokemon-row .hunt-sell-art { width:54px;height:54px;border-color:color-mix(in srgb,var(--tier-color) 55%,#294554); }
+        .hunt-sell-backdrop .npc-pokemon-row .hunt-sell-art { width:68px;height:68px;border-color:color-mix(in srgb,var(--tier-color) 55%,#294554); }
         .hunt-sell-backdrop .npc-pokemon-row { border-color:color-mix(in srgb,var(--tier-color) 52%,#263d4b) !important;background:linear-gradient(145deg,color-mix(in srgb,var(--tier-color) 10%,#101b22),#091116 75%) !important; }
         .hunt-sell-backdrop .npc-pokemon-row .hunt-sell-kind { color:var(--tier-color); }
         .hunt-sell-backdrop .npc-pokemon-row .market-stats { margin-top:5px; }
@@ -9178,8 +9255,8 @@
         .portable-depot-content .depot-entry::after { content:"";position:absolute;inset:-50% auto -50% -35%;width:18%;background:linear-gradient(100deg,transparent,#ffffff10,transparent);transform:skewX(-18deg);transition:left .42s;pointer-events:none; }
         .portable-depot-content .depot-entry:hover { border-color:color-mix(in srgb,var(--depot-accent) 75%,#d3b66c) !important;transform:translateY(-1px);background:linear-gradient(145deg,color-mix(in srgb,var(--depot-accent) 15%,#14242b),#0a1217 74%) !important; }
         .portable-depot-content .depot-entry:hover::after { left:125%; }
-        .depot-entry-art { position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:50px;height:50px;background:radial-gradient(circle,#1b303b,#070d11 73%);border:1px solid color-mix(in srgb,var(--depot-accent) 50%,#294450);border-radius:8px;overflow:hidden; }
-        .depot-entry-art img { width:43px !important;height:43px !important;object-fit:contain;filter:drop-shadow(0 3px 4px #000b); }.depot-pokemon-entry .depot-entry-art img{image-rendering:pixelated;}
+        .depot-entry-art { position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:62px;height:62px;background:radial-gradient(circle,#1b303b,#070d11 73%);border:1px solid color-mix(in srgb,var(--depot-accent) 50%,#294450);border-radius:8px;overflow:hidden; }
+        .depot-entry-art img { width:54px !important;height:54px !important;object-fit:contain;filter:drop-shadow(0 3px 4px #000b); }.depot-pokemon-entry .depot-entry-art img{image-rendering:pixelated;}
         .depot-entry-info { position:relative;z-index:1;display:block;min-width:0 !important; }
         .depot-entry-kind { display:block;margin-bottom:3px;color:var(--depot-accent);font-size:8px;font-weight:950;letter-spacing:.1em;text-transform:uppercase; }
         .depot-entry-name { display:block;color:#f0e5cb;font-size:12px;font-weight:900;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -9191,8 +9268,8 @@
         .depot-entry:hover .depot-entry-action { color:#171006 !important;background:linear-gradient(#dfc176,#b48937);border-color:#ac8332; }
         .depot-pokemon-entry { --depot-accent:var(--depot-tier,#6b8795) !important;min-height:100px !important; }
         .portable-depot-content.depot-view-list .depot-entry { grid-template-columns:42px minmax(0,1fr) auto auto;min-height:61px !important;padding:5px 7px !important;gap:7px; }
-        .portable-depot-content.depot-view-list .depot-entry-art { width:38px;height:38px;border-radius:7px; }
-        .portable-depot-content.depot-view-list .depot-entry-art img { width:33px !important;height:33px !important; }
+        .portable-depot-content.depot-view-list .depot-entry-art { width:48px;height:48px;border-radius:7px; }
+        .portable-depot-content.depot-view-list .depot-entry-art img { width:41px !important;height:41px !important; }
         .portable-depot-content.depot-view-list .depot-entry-kind { display:none; }
         .portable-depot-content.depot-view-list .depot-entry-name { font-size:11px; }
         .portable-depot-content.depot-view-list .depot-entry-meta { margin-top:3px;font-size:8px; }
@@ -9519,7 +9596,7 @@
 
             .hunt-sell-backdrop .script-npc-sell-window .sell-confirm-body { padding:7px !important; }
             .hunt-sell-backdrop .hunt-sell-row,.hunt-sell-backdrop .npc-pokemon-row { grid-template-columns:auto 44px minmax(0,1fr) 31px !important;min-height:94px;gap:6px !important;padding:7px !important; }
-            .hunt-sell-backdrop .hunt-sell-art,.hunt-sell-backdrop .npc-pokemon-row .hunt-sell-art { width:42px;height:42px; }
+            .hunt-sell-backdrop .hunt-sell-art,.hunt-sell-backdrop .npc-pokemon-row .hunt-sell-art { width:52px;height:52px; }
             .hunt-sell-backdrop .hunt-sell-row input[type="number"] { grid-column:2/4;width:100%; }
             .hunt-sell-backdrop .sell-confirm-footer { grid-template-columns:1fr;gap:5px; }
 
@@ -12477,6 +12554,154 @@
         html .cfg-window.script-mods-open .script-shopbar-back:disabled {
             opacity: .45; cursor: not-allowed;
         }
+
+        /* ===============================================================
+           PANEL DE AUTO-VENTA · TARJETA QUE SE PLIEGA
+           ===============================================================
+           Deja de ser una sola fila apretada —donde el nombre del sitio peleaba
+           con las cifras y con los botones— y pasa a ser una tarjeta que se
+           pliega en una tira. Las dos formas son el MISMO DOM: lo decide la
+           clase is-plegado, que el panel escribe desde su propio estado. */
+
+        .script-market-autosell-panel {
+            width: 17em;
+            overflow: hidden;
+            font-variant-numeric: tabular-nums;
+        }
+        .script-market-autosell-panel-bar {
+            display: flex; flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+            min-width: 0;
+        }
+
+        /* --- Cabecera: identidad, tiempo y la flecha de plegar --- */
+        .script-market-autosell-panel-grip {
+            display: flex; align-items: center; gap: .5em; min-width: 0;
+            padding: .6em .7em;
+            background: var(--casino-surface-head);
+            border-right: 0; border-bottom: 1px solid var(--casino-card-line);
+        }
+        .script-market-autosell-panel-ic { color: var(--bm-acc) !important; }
+        .script-market-autosell-panel-title { color: var(--bm-fg) !important; }
+        .script-market-autosell-panel-tiempo { margin-left: auto; }
+        .script-market-autosell-panel-plegar {
+            flex: 0 0 auto; width: 1.7em; height: 1.7em;
+            display: grid; place-items: center; padding: 0; cursor: pointer;
+            color: var(--bm-acc); background: var(--casino-well);
+            border: 1px solid var(--bm-acc); border-radius: var(--bm-r1);
+        }
+        .script-market-autosell-panel-plegar:hover {
+            background: color-mix(in srgb, var(--bm-acc) 18%, transparent);
+        }
+        .script-market-autosell-panel-plegar svg {
+            width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.9;
+            stroke-linecap: round; stroke-linejoin: round;
+            transition: transform var(--bm-t);
+        }
+        /* Desplegada, la flecha apunta hacia arriba: lo que hace es plegar. */
+        .script-market-autosell-panel:not(.is-plegado) .script-market-autosell-panel-plegar svg { transform: rotate(180deg); }
+
+        /* --- El sitio: su propia linea, y en dos si hace falta --- */
+        .script-market-autosell-panel-sitio {
+            display: block; flex: 0 0 auto; min-width: 0;
+            padding: .5em .7em 0; text-align: left;
+            color: var(--bm-fg3) !important; font-weight: 700; line-height: 1.25;
+            white-space: normal; overflow: hidden; max-height: 2.6em;
+        }
+
+        /* --- Las tres cifras, una por fila --- */
+        .script-market-autosell-panel-body { display: grid; gap: 1px; padding: .45em .7em .6em; }
+        .script-market-autosell-panel-stat {
+            display: flex; align-items: baseline; justify-content: space-between; gap: .6em;
+            padding: .32em 0;
+            background: none;
+            border-right: 0; border-bottom: 1px solid var(--casino-card-line);
+        }
+        .script-market-autosell-panel-stat:last-child { border-bottom: 0; }
+        .script-market-autosell-panel-stat b { font-size: 1.2em; }
+        .script-market-autosell-panel-stat small { white-space: nowrap; }
+        /* El "no vendidos" solo se resalta cuando hay alguno. */
+        .script-market-autosell-panel-stat.es-aviso {
+            background: color-mix(in srgb, var(--bm-bad) 12%, transparent);
+            border-radius: var(--bm-r1);
+        }
+        .script-market-autosell-panel-stat.es-aviso b { color: var(--bm-bad); }
+
+        /* --- El pie: estado y controles --- */
+        .script-market-autosell-panel-pie {
+            display: flex; align-items: center; gap: .4em;
+            padding: .45em .7em;
+            background: var(--casino-surface-head);
+            border-top: 1px solid var(--casino-card-line);
+        }
+        .script-market-autosell-panel-estado {
+            display: flex; align-items: center; gap: .35em;
+            color: var(--bm-fg3); font-size: .82em; font-weight: 700; white-space: nowrap;
+        }
+        .script-market-autosell-panel-estado i {
+            width: .6em; height: .6em; border-radius: 50%; background: var(--bm-ok);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--bm-ok) 22%, transparent);
+        }
+        .script-market-autosell-panel-ctrl { margin-left: auto; padding: 0; }
+        .script-market-autosell-panel-ctrl button {
+            color: var(--bm-fg2); background: var(--bm-3); border-color: var(--bm-l1);
+        }
+        .script-market-autosell-panel-ctrl button:hover {
+            color: var(--bm-fg); border-color: var(--bm-l2); background: var(--bm-4);
+        }
+        .script-market-autosell-panel-ctrl button[aria-pressed="true"] {
+            color: var(--bm-acc); border-color: var(--bm-acc);
+            background: color-mix(in srgb, var(--bm-acc) 18%, transparent);
+        }
+
+        /* --- La tira plegada ---
+           Solo el oro y los no vendidos acompañan al tiempo. El resto se esconde. */
+        .script-market-autosell-panel .script-market-autosell-panel-chip,
+        .script-market-autosell-panel .script-market-autosell-panel-aviso { display: none; }
+        .script-market-autosell-panel.is-plegado { width: max-content; }
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-grip {
+            padding: .4em .45em .4em .7em;
+            border-bottom: 0;
+        }
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-sitio,
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-body,
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-pie { display: none !important; }
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-chip:not([hidden]),
+        .script-market-autosell-panel.is-plegado .script-market-autosell-panel-aviso:not([hidden]) { display: flex; }
+        .script-market-autosell-panel-chip {
+            flex: 0 0 auto; align-items: baseline; gap: .35em;
+            padding: .2em .55em; border-radius: 999px;
+            background: var(--casino-well);
+            border: 1px solid color-mix(in srgb, var(--bm-gold) 45%, transparent);
+        }
+        .script-market-autosell-panel-chip b { color: var(--bm-gold); font-size: 1.05em; font-weight: 800; }
+        .script-market-autosell-panel-chip small {
+            color: color-mix(in srgb, var(--bm-gold) 78%, #ffffff);
+            font-size: .8em; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;
+        }
+        .script-market-autosell-panel-aviso {
+            flex: 0 0 auto; color: var(--bm-bad); font-weight: 900; font-size: 1.05em;
+        }
+
+        /* --- Los sprites de Pokemon, en pixel art ---
+           PokeAPI entrega dibujos de 96 px pensados para verse nitidos al
+           ampliarlos, no suavizados. El mercado los muestra a 54 px, asi que sin
+           esto salen emborronados. */
+        .script-market-window .market-art img { image-rendering: pixelated !important; }
+
+        /* --- Los tiers de los Held, que ya llegan al 5 ---
+           Los tres primeros ya tenian color en la hoja grande; estos dos se anaden
+           aqui para que la serie siga teniendo sentido: el 4 tira a rojo y el 5 al
+           cian, y ninguno se parece a los tres anteriores. */
+        .script-market-window .market-held-tier-badge.tier-4 {
+            border-color: color-mix(in srgb, var(--bm-bad) 50%, transparent) !important;
+            color: #ffd0d3 !important;
+            background: color-mix(in srgb, var(--bm-bad) 18%, transparent) !important;
+        }
+        .script-market-window .market-held-tier-badge.tier-5 {
+            border-color: color-mix(in srgb, #22d3ee 55%, transparent) !important;
+            color: #c8f6ff !important;
+            background: color-mix(in srgb, #22d3ee 18%, transparent) !important;
+        }
     `;
     appendStyleWhenReady(bmTheme);
 
@@ -13471,8 +13696,7 @@
     }
 
     function getMarlonPokemonSprite(offer) {
-        return getPokemonIconUrl(offer?.speciesId)
-            || getPokeApiSpriteUrl({ speciesId: offer?.speciesId })
+        return getMenuPokemonSprite(offer?.speciesId, offer?.shiny)
             || '/assets/pokeitems/36699.png';
     }
 
@@ -13781,7 +14005,7 @@
             }
             autoSellLog.entries.forEach(entry => {
                 const row = document.createElement('div');
-                const sprite = getPokemonIconUrl(entry.speciesId) || getPokeApiSpriteUrl({ speciesId:entry.speciesId });
+                const sprite = getMenuPokemonSprite(entry.speciesId, entry.shiny);
                 const when = new Date(entry.at);
                 row.className = 'script-casino-autosell-log-row';
                 row.style.setProperty('--casino-tier', getMarketPokemonQualityTheme(entry.quality)?.color || '#64748b');
@@ -13941,7 +14165,7 @@
             const definition = getMarketPokemonQualityTheme(poke?.quality);
             const iv = Number(poke?.ivTotal || 0);
             const name = poke?.name || 'Pokémon';
-            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const sprite = getMenuPokemonSprite(poke?.speciesId, poke?.shiny);
             const extra = pokes.length > 1 ? ` (+${pokes.length - 1})` : '';
             const title = options.tierHit
                 ? `${formatCasinoText(tr('casinoTierAlert'), { tier:definition?.label || '—' })}${extra}`
@@ -14194,7 +14418,7 @@
             const qualityTheme = getMarketPokemonQualityTheme(poke?.quality) || { color:'#64748b', label:'—' };
             const protectedPoke = isTeamPokemonProtected(poke);
             const sellValue = Number(poke?.sellValue || 0);
-            const sprite = getPokemonIconUrl(poke?.speciesId) || getPokeApiSpriteUrl(poke);
+            const sprite = getMenuPokemonSprite(poke?.speciesId, poke?.shiny);
             const stats = getTeamStats(poke);
             const reachedIvGoal = ivGoal > 0 && Number(poke?.ivTotal || 0) >= ivGoal;
             const busy = busyPokeId != null || busySpeciesId != null;
@@ -14802,7 +15026,7 @@
                     </div>
                     <div class="script-casino-price">${casinoIcon('coin')}<span>${Number(offer.price || 0).toLocaleString('pt-BR')}</span></div>
                     ${offer.isTrade ? `<div class="script-casino-requirements">
-                        <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getPokemonIconUrl(133) || getPokeApiSpriteUrl({ speciesId:133 }))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
+                        <span class="script-casino-requirement${offer.hasEevee ? '' : ' is-missing'}"><img src="${escapeHTML(getMenuPokemonSprite(133))}" alt="Eevee">${escapeHTML(tr('casinoEeveeRequirement'))}</span>
                         ${stoneRequired ? `<span class="script-casino-requirement${stoneHave >= stoneQty ? '' : ' is-missing'}">${stoneIcon ? `<img src="${escapeHTML(stoneIcon)}" alt="${escapeHTML(offer.stoneName || 'Stone')}">` : ''}${stoneHave.toLocaleString('pt-BR')}/${stoneQty.toLocaleString('pt-BR')} ${escapeHTML(offer.stoneName || 'Stone')}</span>` : ''}
                     </div>` : ''}
                 </div>
@@ -18300,7 +18524,7 @@
                     if (theme) row.style.setProperty('--depot-tier', theme.color);
                 }
                 const icon = document.createElement('img');
-                icon.src = kind === 'item' ? normalizeGameItemIcon(entry.icon) : getPokemonIconUrl(entry.speciesId);
+                icon.src = kind === 'item' ? normalizeGameItemIcon(entry.icon) : getMenuPokemonSprite(entry.speciesId, entry.shiny);
                 icon.alt = entry.name || '';
                 icon.style.cssText = `width:34px;height:34px;object-fit:contain;${kind === 'pokemon' ? 'image-rendering:pixelated;' : ''}flex:none;`;
                 icon.onerror = () => { icon.style.visibility = 'hidden'; };
@@ -18564,7 +18788,7 @@
                 }
                 const image = document.createElement('img');
                 if (isPokemon) {
-                    image.src = getPokemonIconUrl(entry.speciesId);
+                    image.src = getMenuPokemonSprite(entry.speciesId, entry.shiny);
                     image.alt = entry.name || '';
                     image.style.cssText = 'width:34px;height:34px;object-fit:contain;image-rendering:pixelated;flex:none;';
                     image.onerror = () => { image.style.visibility = 'hidden'; };
@@ -19247,7 +19471,7 @@
 
                 const art = document.createElement('span');
                 art.className = 'hunt-sell-art';
-                const sprite = getPokemonIconUrl(poke.speciesId);
+                const sprite = getMenuPokemonSprite(poke.speciesId, poke.shiny);
                 art.innerHTML = sprite ? `<img src="${escapeHTML(sprite)}" alt="${escapeHTML(pokeName)}">` : '<span>◉</span>';
                 art.querySelector('img')?.addEventListener('error', event => {
                     event.currentTarget.replaceWith(Object.assign(document.createElement('span'), { textContent: '◉' }));
@@ -19435,6 +19659,103 @@
             .filter(entry => String(entry?.category ?? '') === 'Pokemon' || entry?.kind === 'pokemon');
     }
 
+    /* ================= LA LISTA DE POKEMON SE PIDE CON browse=pokemon =================
+
+       MEDIDO el 2026-10-11 en el navegador del usuario, peticiones de solo lectura:
+
+         GET /api/game/market?category=All   -> 4.063 anuncios y
+                                                pkWindow: { cap: 600, more: true }
+         GET /api/game/market?browse=pokemon&page=1&sort=level
+                                             -> total: 40.842, pages: 3.404, 12 por pagina
+
+       O sea: en `category=All` el servidor solo deja ver una VENTANA de los 600
+       Pokemon mas recientes (lo declara el mismo con `pkWindow`), y el guion
+       buscaba en local dentro de esos 600. El mercado original del juego pide
+       `browse=pokemon`, que SI trae todos, sabe buscar (`q`), filtrar (`type`,
+       `shiny`, `ivMin/Max`, `lvMin/Max`, `qMin/Max`, `gradesOff`) y paginar
+       (`page`), y devuelve `total` y `pages` de verdad. Por eso el original
+       encuentra mucho mas.
+
+       Este constructor es PURO para poder probarlo sin navegador. `filters` es un
+       objeto plano con los valores de los controles de la ventana y `page` es la
+       pagina del servidor (1-based). */
+    const SCRIPT_MARKET_BROWSE_PAGE_SIZE = 12;
+
+    const MARKET_POKEMON_BROWSE_SORTS = Object.freeze([
+        'recent', 'price-asc', 'price-desc', 'iv-desc', 'power-desc', 'level-desc', 'quality-desc'
+    ]);
+
+    function buildMarketPokemonBrowseQuery(filters, page) {
+        const params = new URLSearchParams();
+        params.set('browse', 'pokemon');
+        params.set('page', String(Math.max(1, Math.floor(Number(page) || 1))));
+        const sort = String(filters?.sort ?? '').trim();
+        if (MARKET_POKEMON_BROWSE_SORTS.includes(sort)) params.set('sort', sort);
+        const speciesId = filters?.speciesId;
+        const hasSpecies = speciesId !== undefined && speciesId !== null && String(speciesId).trim() !== '';
+        if (hasSpecies) {
+            /* Con especie elegida el servidor filtra por `speciesId` y deja de mirar
+               `q` (es lo que hace el juego). Se usa para el precio de referencia. */
+            params.set('speciesId', String(speciesId).trim());
+        } else {
+            const query = String(filters?.query ?? '').trim();
+            if (query) params.set('q', query);
+        }
+        const type = String(filters?.type ?? '').trim();
+        if (type) params.set('type', type);
+        if (filters?.shiny) params.set('shiny', '1');
+        const setRange = (key, value) => {
+            const text = String(value ?? '').trim();
+            if (text !== '') params.set(key, text);
+        };
+        setRange('ivMin', filters?.ivMin);
+        setRange('ivMax', filters?.ivMax);
+        setRange('lvMin', filters?.levelMin);
+        setRange('lvMax', filters?.levelMax);
+        setRange('qMin', filters?.qualityMin);
+        setRange('qMax', filters?.qualityMax);
+        const hiddenTiers = Array.isArray(filters?.hiddenTiers) ? filters.hiddenTiers.filter(Boolean) : [];
+        if (hiddenTiers.length) params.set('gradesOff', hiddenTiers.join(','));
+        return params.toString();
+    }
+
+    /* Comparables de un Pokemon para el precio de referencia al vender: se pide por
+       especie con `browse=pokemon`. Primero el entorno del propio ejemplar (IV,
+       nivel y calidad a +-0,35), y si trae menos de tres, toda la especie. Antes
+       esto se comparaba contra la ventana de 600 de `category=All` y la mediana
+       salia de una muestra sesgada. */
+    async function fetchMarketPokemonComparables(entry) {
+        const speciesId = Number(entry?.speciesId ?? entry?.pokeId ?? 0);
+        if (!(speciesId > 0)) return [];
+        const shiny = Boolean(entry?.shiny);
+        const quality = Number(entry?.quality) || 0;
+        const iv = Number(entry?.ivTotal) || 0;
+        const level = Number(entry?.level) || 0;
+        const collect = async filters => {
+            const listings = [];
+            for (let page = 1; page <= 5; page += 1) {
+                const payload = await gameApiRequest(`/api/game/market?${buildMarketPokemonBrowseQuery(filters, page)}`);
+                const arr = getMarketListings(payload);
+                listings.push(...arr);
+                if (!arr.length || page >= (Number(payload?.pages) || 1)) break;
+            }
+            return listings;
+        };
+        const base = { speciesId, shiny, sort: 'quality-desc' };
+        const near = await collect({
+            ...base,
+            ivMin: iv > 0 ? Math.max(0, iv - 45) : '',
+            ivMax: iv > 0 ? iv + 45 : '',
+            levelMin: level > 0 ? Math.max(1, Math.floor(level * 0.75)) : '',
+            levelMax: level > 0 ? Math.ceil(level * 1.25) : '',
+            qualityMin: quality > 0 ? Math.max(0, quality - 0.35) : '',
+            qualityMax: quality > 0 ? quality + 0.35 : ''
+        });
+        if (near.length >= 3) return near;
+        const wide = await collect(base);
+        return wide.length ? wide : near;
+    }
+
     function normalizeMarketCurrency(value) {
         const currency = String(value || 'GOLD').trim().toUpperCase();
         return /DIAM|^DD$/.test(currency) ? 'DIAMONDS' : 'GOLD';
@@ -19477,6 +19798,16 @@
             || ref?.pokemonId != null
             || ref?.speciesId != null
             || ((entry?.ivTotal ?? ref?.ivTotal ?? entry?.iv ?? ref?.iv) != null && (entry?.stats || ref?.stats)));
+    }
+
+    /* La imagen de una publicacion del Mercado. Para los Pokemon se usa el sprite
+       pixel art de PokeAPI; para objetos y demas, el icono que ya trae la entrada.
+       Antes los Pokemon salian con el sprite del juego (/assets/pokeitems), que es
+       otro dibujo: los mismos Pokemon con otra piel. getPokeApiSpriteUrl ya cae
+       sola en getMarketEntryImage cuando no hay especie, asi que no hay dos
+       caminos que puedan separarse. */
+    function getMarketListingImage(entry) {
+        return isMarketPokemonListing(entry) ? getPokeApiSpriteUrl(entry) : getMarketEntryImage(entry);
     }
 
     function getMarketEntryImage(entry) {
@@ -20777,7 +21108,7 @@
                 <div class="market-held-filters" aria-label="${tr('marketHeldMachine')}">
                     <span class="market-held-filter-label">🎰 ${tr('marketHeldMachine')}</span>
                     <select class="market-held-item-filter" title="${tr('marketHeldAllItems')}"><option value="">${tr('marketHeldAllItems')}</option></select>
-                    <select class="market-held-tier-filter" title="${tr('marketHeldTier')}"><option value="">${tr('marketHeldAllTiers')}</option><option value="1">Tier I</option><option value="2">Tier II</option><option value="3">Tier III</option></select>
+                    <select class="market-held-tier-filter" title="${tr('marketHeldTier')}"><option value="">${tr('marketHeldAllTiers')}</option><option value="1">Tier I</option><option value="2">Tier II</option><option value="3">Tier III</option><option value="4">Tier IV</option><option value="5">Tier V</option></select>
                     <input class="market-held-quantity-min" type="number" min="1" step="1" placeholder="${tr('marketHeldQuantityMin')}">
                 </div>
                 <div class="market-pokemon-filters" style="display:none;gap:6px;padding:7px 12px 0;flex-wrap:wrap;">
@@ -21460,6 +21791,7 @@
                     if (buyVisibleQualityTiers.has(tier.label)) buyVisibleQualityTiers.delete(tier.label);
                     else buyVisibleQualityTiers.add(tier.label);
                     renderBuyQualityTierButtons();
+                    if (scheduleMarketPokemonBrowseReload()) return;
                     if ((marketMode === 'buy' || marketMode === 'featured') && activeCategory === 'Pokemon') render();
                 });
                 buyQualityTierButtons.appendChild(button);
@@ -22240,7 +22572,7 @@
                     row.classList.add('market-item-rarity');
                     row.style.setProperty('--market-item-color', itemTheme.color);
                 }
-                const image = getMarketEntryImage(entry);
+                const image = getMarketListingImage(entry);
                 const fallbackIcon = isPokemon ? '◉' : category === 'Diamonds' ? '💎' : '📦';
                 const kindLabel = isPokemon ? 'POKÉMON' : category === 'Poke Balls' ? 'POKÉ BALL' : category === 'Diamonds' ? 'MONEDA' : category === 'Stones' ? 'STONE' : 'OBJETO / DROP';
                 const details = isPokemon ? [ivTotal != null ? `${tr('ivTotal')}: ${ivTotal}/192` : '', quality != null ? `Q: ${Number(quality).toFixed(2)}` : ''].filter(Boolean).join(' · ') : '';
@@ -22313,7 +22645,7 @@
         const showSellEditor = entry => {
             const isPokemon = entry?.kind === 'pokemon';
             const isDiamond = Boolean(entry?.isDiamond || entry?.marketKind === 'diamonds');
-            const image = entry?.icon || getMarketEntryImage(entry);
+            const image = getMarketListingImage(entry) || entry?.icon;
             const qualityTheme = isPokemon ? getMarketPokemonQualityTheme(entry.quality) : null;
             const meta = isPokemon
                 ? `Nivel ${entry.level ?? 1} · IV ${entry.ivTotal ?? 0}/192 · Quality ×${Number(entry.quality || 0).toFixed(2)}${entry.shiny ? ' · ✨ Shiny' : ''}`
@@ -22379,7 +22711,7 @@
                 const iv = Number(listing?.ivTotal ?? ref.ivTotal) || 0;
                 const quality = Number(listing?.quality ?? ref.quality) || 0;
                 const theme = getMarketPokemonQualityTheme(quality) || { label: '—', color: '#3b6176' };
-                const image = getMarketEntryImage(listing) || getPokemonIconUrl(listing?.speciesId ?? ref.speciesId ?? sourceEntry.speciesId);
+                const image = getMarketListingImage(listing);
                 const currency = getMarketEntryCurrency(listing);
                 const price = getMarketEntryPrice(listing);
                 const icon = currency === 'DIAMONDS' ? '💎' : '💲';
@@ -22428,8 +22760,15 @@
             sellReference.style.display = 'block';
             sellReference.textContent = `${isPokemon ? tr('checkingPokemonPrice') : tr('checkingPrice')} ${entry.name}...`;
             try {
+                /* Un Pokemon con `speciesId` se compara contra TODOS los anuncios de
+                   su especie (`browse=pokemon&speciesId=...`), no contra la ventana
+                   de 600 de `category=All`: con 40.842 anuncios, la mediana de una
+                   muestra de 600 esta sesgada. */
+                const comparablePokemon = isPokemon && Number(entry?.speciesId ?? entry?.pokeId ?? 0) > 0
+                    ? await fetchMarketPokemonComparables(entry)
+                    : null;
                 const [marketPayload, diamondPayload] = await Promise.all([
-                    gameApiRequest(`/api/game/market?category=${resolveMarketCategoryRequest(isPokemon ? 'Pokemon' : 'All')}`),
+                    comparablePokemon ? null : gameApiRequest(`/api/game/market?category=${resolveMarketCategoryRequest(isPokemon ? 'Pokemon' : 'All')}`),
                     gameApiRequest('/api/game/market?category=Diamonds').catch(() => null)
                 ]);
                 if (requestId !== sellReferenceRequestId || selectedSellEntry !== entry) return;
@@ -22449,7 +22788,7 @@
                     const targetQuality = Number(entry.quality) || 0;
                     const targetIv = Number(entry.ivTotal) || 0;
                     const targetLevel = Number(entry.level) || 1;
-                    const sameSpecies = getMarketListings(marketPayload)
+                    const sameSpecies = (comparablePokemon || getMarketListings(marketPayload))
                         .filter(listing => {
                             const ref = listing?.pokemon || listing?.product || {};
                             const listedSpecies = listing?.speciesId ?? ref.speciesId;
@@ -22787,12 +23126,104 @@
             }
         };
 
+        /* ============ MODO BROWSE DE POKEMON (buscar y paginar en servidor) ============
+
+           La pestaña de Pokemon no se puede leer con `category`: el servidor solo
+           entrega `category=All` con una ventana de 600 Pokemon (`pkWindow`). El
+           mercado original pide `browse=pokemon`, paginado, y devuelve `total` y
+           `pages` de verdad. Aqui se reproduce ese camino SOLO en la pestaña de
+           comprar (destacados conserva su comportamiento). `pokemonBrowse` es el
+           estado de esa consulta; `buildMarketPokemonBrowseQuery` la arma. */
+        let pokemonBrowse = { listings: [], total: 0, pages: 1, lastPage: 0, key: '', requestId: 0 };
+        let pokemonBrowseTimer = 0;
+        const marketPokemonBrowseActive = () => activeCategory === 'Pokemon' && marketMode === 'buy';
+        const collectMarketPokemonBrowseFilters = () => {
+            const hiddenTiers = sellQualityTierDefinitions
+                .map(tier => tier.label)
+                .filter(label => !buyVisibleQualityTiers.has(label));
+            return {
+                query: search.value,
+                sort: sortSelect.value,
+                type: typeSelect.value,
+                shiny: shinyOnly.checked,
+                ivMin: ivMin.value,
+                ivMax: ivMax.value,
+                levelMin: levelMin.value,
+                levelMax: levelMax.value,
+                qualityMin: qualityMin.value,
+                qualityMax: qualityMax.value,
+                hiddenTiers
+            };
+        };
+        const fetchMarketPokemonBrowsePage = async (page, filters) => {
+            const payload = await gameApiRequest(`/api/game/market?${buildMarketPokemonBrowseQuery(filters, page)}`);
+            return {
+                listings: getMarketListings(payload),
+                total: Math.max(0, Number(payload?.total) || 0),
+                pages: Math.max(1, Number(payload?.pages) || 1)
+            };
+        };
+        /* El servidor pagina de 12 en 12, pero la ventana ensena de 30 en 30: se
+           piden las paginas que hagan falta hasta cubrir `renderLimit`. */
+        const ensureMarketPokemonBrowseCoverage = async requestId => {
+            const target = Math.max(SCRIPT_MARKET_PAGE_SIZE, renderLimit);
+            while (pokemonBrowse.listings.length < target && pokemonBrowse.lastPage < pokemonBrowse.pages) {
+                const next = await fetchMarketPokemonBrowsePage(pokemonBrowse.lastPage + 1, collectMarketPokemonBrowseFilters());
+                if (requestId !== pokemonBrowse.requestId) return;
+                pokemonBrowse.listings.push(...next.listings);
+                pokemonBrowse.total = next.total;
+                pokemonBrowse.pages = next.pages;
+                pokemonBrowse.lastPage += 1;
+                if (!next.listings.length) break;
+            }
+        };
+        const loadMarketPokemonBrowse = async () => {
+            const filters = collectMarketPokemonBrowseFilters();
+            const key = buildMarketPokemonBrowseQuery(filters, 1);
+            const requestId = ++pokemonBrowse.requestId;
+            renderLimit = SCRIPT_MARKET_PAGE_SIZE;
+            pokemonBrowse = { listings: [], total: 0, pages: 1, lastPage: 0, key, requestId };
+            status.textContent = tr('loading');
+            list.innerHTML = '';
+            try {
+                const first = await fetchMarketPokemonBrowsePage(1, filters);
+                if (requestId !== pokemonBrowse.requestId) return;
+                pokemonBrowse.listings = first.listings;
+                pokemonBrowse.total = first.total;
+                pokemonBrowse.pages = first.pages;
+                pokemonBrowse.lastPage = 1;
+                await ensureMarketPokemonBrowseCoverage(requestId);
+                if (requestId !== pokemonBrowse.requestId) return;
+            } catch (error) {
+                status.textContent = `${tr('loadFailed')} ${error.message || ''}`.trim();
+                return;
+            }
+            render();
+        };
+        /* Mismo gesto que el juego: se espera a que el jugador deje de teclear
+           (300 ms) antes de volver a preguntar al servidor. Devuelve true si el
+           browse se hizo cargo (y entonces NO hay que repintar en local). */
+        const scheduleMarketPokemonBrowseReload = () => {
+            if (!marketPokemonBrowseActive()) return false;
+            if (pokemonBrowseTimer) window.clearTimeout(pokemonBrowseTimer);
+            pokemonBrowseTimer = window.setTimeout(() => {
+                pokemonBrowseTimer = 0;
+                loadMarketPokemonBrowse();
+            }, 300);
+            return true;
+        };
         const render = () => {
             const query = search.value.trim().toLocaleLowerCase();
             const heldCategory = activeCategory === HELD_MACHINE_MARKET_CATEGORY;
             const rarityFilterActive = activeCategory !== 'Pokemon' && activeCategory !== 'Diamonds';
             const alertMode = marketMode === 'alerts';
-            const sourceListings = alertMode
+            /* En la pestaña de Pokemon con browse, la fuente es lo que YA filtro y
+               ordeno el servidor: volver a filtrar aqui recortaria de mas y solo
+               miraria la pagina cargada. El mercado original tampoco lo hace. */
+            const browseActive = marketPokemonBrowseActive();
+            const sourceListings = browseActive
+                ? pokemonBrowse.listings
+                : alertMode
                 ? [...getAvailableMarketAlertInbox(currentListings), ...getAvailableMarketItemAlertInbox(currentListings)]
                 : marketMode === 'featured'
                 ? getFeaturedPokemonListings(currentListings)
@@ -22806,6 +23237,11 @@
                 const entryCurrency = normalizeMarketCurrency(entry.currency || entry.currencyType || ref.currency || ref.currencyType);
                 if (entryCurrency === 'GOLD' && !showGold.checked) return false;
                 if (entryCurrency === 'DIAMONDS' && !showDiamonds.checked) return false;
+                /* En browse, la busqueda, el tipo, IV, nivel, calidad y tiers ya los
+                   aplico el servidor sobre TODO el mercado; repetirlos aqui solo
+                   miraria la pagina cargada y podria recortar de mas. La moneda si
+                   se filtra aqui, porque el browse no la trae. */
+                if (browseActive) return true;
                 if (heldCategory) {
                      const heldRule = getHeldMachineMarketRule(entry);
                      if (!heldRule) return false;
@@ -22839,15 +23275,18 @@
                 'level-desc': (a, b) => Number(b.level ?? -1) - Number(a.level ?? -1),
                 'quality-desc': (a, b) => Number(b.quality ?? -1) - Number(a.quality ?? -1)
             };
-            if (!alertMode && sorters[sortSelect.value]) filtered = [...filtered].sort(sorters[sortSelect.value]);
+            if (!alertMode && !marketPokemonBrowseActive() && sorters[sortSelect.value]) filtered = [...filtered].sort(sorters[sortSelect.value]);
             const visible = filtered.slice(0, renderLimit);
 
             list.innerHTML = '';
             const categoryLabel = alertMode ? tr('marketAlerts') : marketMode === 'featured'
                 ? tr('marketFeatured')
                 : (categorySelect.options[categorySelect.selectedIndex]?.text || activeCategory);
-            status.textContent = filtered.length
-                ? `${tr('showing')} ${visible.length.toLocaleString()} ${tr('of')} ${filtered.length.toLocaleString()} ${categoryLabel}`
+            /* Con browse el «de N» es el TOTAL del servidor (40.842), no lo que
+               llego en la pagina: es justo el dato que el jugador echaba en falta. */
+            const statusTotal = browseActive ? pokemonBrowse.total : filtered.length;
+            status.textContent = filtered.length || (browseActive && pokemonBrowse.total)
+                ? `${tr('showing')} ${visible.length.toLocaleString()} ${tr('of')} ${statusTotal.toLocaleString()} ${categoryLabel}`
                 : alertMode ? tr('alertNoMatches')
                     : marketMode === 'featured' && !getMarketFeaturedPokemon().length ? tr('featuredEmpty') : tr('noListings');
             visible.forEach(entry => {
@@ -22890,7 +23329,7 @@
                 const conversionText = converted
                     ? `≈ ${converted.icon} ${formatMarketValue(converted.value, converted.currency)}`
                     : '—';
-                const image = getMarketEntryImage(entry);
+                const image = getMarketListingImage(entry);
                 const kindLabel = heldRule ? `HELD MACHINE · TIER ${escapeHTML(heldRule.tierLabel)}`
                      : isPokemonListing ? 'POKÉMON'
                     : entryKind === 'ball' ? 'POKÉ BALL'
@@ -23011,6 +23450,11 @@
                         });
                         if (quantity <= buyQuantity || isPokemonListing) {
                             currentListings = currentListings.filter(item => item !== entry);
+                            /* En browse la lista que se pinta no es currentListings,
+                               sino pokemonBrowse.listings: sin esto, el anuncio
+                               comprado seguia en pantalla hasta recargar. */
+                            pokemonBrowse.listings = pokemonBrowse.listings.filter(item => item !== entry);
+                            pokemonBrowse.total = Math.max(0, pokemonBrowse.total - 1);
                         } else {
                             entry.quantity = quantity - buyQuantity;
                         }
@@ -23034,14 +23478,24 @@
                 row.querySelector('.market-buy-footer').appendChild(buyActions);
                 list.appendChild(row);
             });
-            if (visible.length < filtered.length) {
+            /* Con browse, «cargar mas» NO corta una lista local: pide al servidor
+               las paginas que falten hasta cubrir el nuevo tope. */
+            const browseRemaining = browseActive ? Math.max(0, pokemonBrowse.total - visible.length) : 0;
+            if (browseActive ? browseRemaining > 0 : visible.length < filtered.length) {
                 const more = document.createElement('button');
                 more.type = 'button';
                 more.className = 'mk-bulk-btn';
                 more.style.cssText = 'margin:5px auto;padding:8px 18px;';
-                more.textContent = `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
+                more.textContent = browseActive
+                    ? `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, browseRemaining)})`
+                    : `${tr('loadMore')} (+${Math.min(SCRIPT_MARKET_PAGE_SIZE, filtered.length - visible.length)})`;
                 more.addEventListener('click', () => {
                     renderLimit += SCRIPT_MARKET_PAGE_SIZE;
+                    if (browseActive) {
+                        more.disabled = true;
+                        ensureMarketPokemonBrowseCoverage(pokemonBrowse.requestId).then(render).catch(() => render());
+                        return;
+                    }
                     render();
                 });
                 list.appendChild(more);
@@ -23065,6 +23519,11 @@
                    pestana—, pero lo que se PIDE no puede ser 'Pokemon': el servidor contesta
                    con `listings: []` y la ventana se queda vacia. Ver
                    `resolveMarketCategoryRequest`. Por eso son dos cosas y no una. */
+                /* Solo la pestaña de Pokemon con browse se sale de `category`: el
+                   resto (objetos, piedras, bolas, diamantes) lo filtra el servidor
+                   bien y no se toca. `payload` se sigue pidiendo igual porque de el
+                   salen `mine`, `requests`, `catalog`... que el browse NO trae. */
+                const browseCategory = marketPokemonBrowseActive();
                 const categoryRequest = gameApiRequest(`/api/game/market?category=${encodeURIComponent(resolveMarketCategoryRequest(requestedCategory))}`);
                 const diamondRequest = requestedCategory === 'Diamonds'
                     ? categoryRequest
@@ -23112,10 +23571,15 @@
                     : marketMode === 'featured' ? getFeaturedPokemonListings(currentListings) : currentListings;
                 const selectedType = typeSelect.dataset.marketSelectedType ?? typeSelect.value;
                 delete typeSelect.dataset.marketSelectedType;
-                const types = [...new Set(filterSource.flatMap(entry => {
-                    const ref = entry.pokemon || entry.item || entry.product || {};
-                    return [entry.type1, entry.type2, ref.type1, ref.type2];
-                }).filter(Boolean))].sort();
+                /* En browse el tipo se filtra en el SERVIDOR, y la lista de tipos no
+                   puede salir de la pagina cargada (traeria solo esos 12). Se usa el
+                   catalogo de tipos del juego. */
+                const types = browseCategory
+                    ? Object.keys(TYPE_COLORS).map(type => type.toUpperCase()).sort()
+                    : [...new Set(filterSource.flatMap(entry => {
+                        const ref = entry.pokemon || entry.item || entry.product || {};
+                        return [entry.type1, entry.type2, ref.type1, ref.type2];
+                    }).filter(Boolean))].sort();
                 typeSelect.innerHTML = `<option value="">${tr('allTypes')}</option>${types.map(type => `<option value="${escapeHTML(type)}">${escapeHTML(type)}</option>`).join('')}`;
                 if (types.includes(selectedType)) typeSelect.value = selectedType;
                 const selectedRarity = itemRarityFilter.dataset.marketSelectedRarity ?? itemRarityFilter.value;
@@ -23139,6 +23603,7 @@
                 else if (marketMode === 'history') renderHistory();
                 else if (marketMode === 'mine') renderMyListings();
                 else if (marketMode === 'alerts') { renderAlertRules(); render(); }
+                else if (browseCategory) await loadMarketPokemonBrowse();
                 else render();
             } catch (error) {
                 console.warn('Falha ao carregar o mercado global:', error);
@@ -23391,6 +23856,7 @@
         [search, sortSelect, itemRarityFilter, showGold, showDiamonds, shinyOnly, ivMin, ivMax, levelMin, levelMax, qualityMin, qualityMax, typeSelect].forEach(control => control.addEventListener('input', () => {
             renderLimit = SCRIPT_MARKET_PAGE_SIZE;
             if (marketMode === 'mine') renderMyListings();
+            else if (control !== showGold && control !== showDiamonds && control !== itemRarityFilter && scheduleMarketPokemonBrowseReload()) { /* vuelve a buscar en el servidor */ }
             else render();
         }));
         [heldItemFilter, heldTierFilter, heldQuantityMin].forEach(control => control.addEventListener('input', () => {

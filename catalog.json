@@ -1,12 +1,12 @@
 {
     "schemaVersion":  1,
-    "updatedAt":  "2026-10-11T04:50:12Z",
+    "updatedAt":  "2026-10-11T09:05:11Z",
     "scripts":  [
                     {
                         "id":  "better-market-pro-vlite",
                         "name":  "Better market Pro Vlite",
                         "namespace":  "http://tampermonkey.net/",
-                        "version":  "1.0.0",
+                        "version":  "1.2.0",
                         "author":  "DiegoT34",
                         "summary":  "Mercado Global rediseñado LITE",
                         "description":  "Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. version lite Diseño mas limpio ",
@@ -22,9 +22,9 @@
                                         ],
                         "minLauncherVersion":  "0.22.1",
                         "downloadUrl":  "https://raw.githubusercontent.com/DiegoT34/PokeGrid-Script-Shop/main/scripts/better-market-pro-vlite.user.js",
-                        "sha256":  "6c0715525b3068cb6cbe84447cdad2ca88e2f544717a8cb17e752da56eb139de",
+                        "sha256":  "04160ffd7efad631ebc2fc69f8f5a3212f181e5a6f08c4c82f1c285989c40d21",
                         "homepage":  "https://github.com/DiegoT34/PokeGrid-Script-Shop",
-                        "changelog":  "Publicación 1.0.0",
+                        "changelog":  "Actualización 1.2.0",
                         "icon":  "BM",
                         "featured":  false,
                         "publishedAt":  "2026-10-11T04:50:12Z"
