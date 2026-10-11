@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better market Pro Vlite
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.3.0
 // @description  Mercado Global rediseñado, Held Machine, Daily Kill, Cassino portátil, vendedor de Stones y Exact IV Scanner completo. Sin Autocompra.
 // @match        *://poke.idleworld.online/*
 // @grant        none
