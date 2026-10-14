@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.3.0
+// @version      5.4.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -581,9 +581,55 @@
         { id: 'home3d',  name: 'Render 3D Home',        short: 'Home 3D',   url: id => `${POKEAPI_SPRITE_BASE}other/home/${id}.png`,                             shiny: id => `${POKEAPI_SPRITE_BASE}other/home/shiny/${id}.png`,                          px: false, cov: '33/33' },
         { id: 'dream3d', name: 'Render 3D Dream-World', short: 'Dream 3D',  url: id => `${POKEAPI_SPRITE_BASE}other/dream-world/${id}.svg`,                      shiny: () => '',                                                                                  px: false, cov: '30/33' },
         { id: 'artwork', name: 'Artwork oficial',       short: 'Artwork',   url: id => `${POKEAPI_SPRITE_BASE}other/official-artwork/${id}.png`,                  shiny: id => `${POKEAPI_SPRITE_BASE}other/official-artwork/shiny/${id}.png`,             px: false, cov: '33/33' },
-        { id: 'ani3d',   name: 'GIF animado 3D',        short: 'GIF 3D',    url: id => `${POKEAPI_SPRITE_BASE}other/showdown/${id}.gif`,                         shiny: id => `${POKEAPI_SPRITE_BASE}other/showdown/shiny/${id}.gif`,                     px: false, cov: '31/33', anim: true },
-        { id: 'anipx',   name: 'GIF animado pixel',     short: 'GIF pixel', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-v/black-white/animated/${id}.gif`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-v/black-white/animated/shiny/${id}.gif`, px: true, cov: '31/33', anim: true }
+        { id: 'ani3d',   name: 'GIF animado 3D',        short: 'GIF 3D',    url: id => `${POKEAPI_SPRITE_BASE}other/showdown/${id}.gif`,                         shiny: id => `${POKEAPI_SPRITE_BASE}other/showdown/shiny/${id}.gif`,                     px: false, cov: '351/428', anim: true },
+        { id: 'anipx',   name: 'GIF animado pixel',     short: 'GIF pixel', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-v/black-white/animated/${id}.gif`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-v/black-white/animated/shiny/${id}.gif`, px: true, cov: '375/428', anim: true },
+        /* LOS APNG.
+
+           Un APNG es un PNG que ademas lleva los fotogramas dentro (chunk acTL y
+           uno fcTL por fotograma). Los de estas cuatro carpetas lo son de verdad:
+           contados byte a byte, Emerald 39-40 fotogramas, Platino 36, HGSS 27 y
+           Diamond-Pearl los suyos. Chrome los reproduce igual que un GIF.
+
+           OJO CON LA EXTENSION: llegan como .png, no como .gif. Es lo que hay en
+           el repositorio y no es un error: un APNG ES un PNG.
+
+           La cobertura se ha medido sobre las 428 ESPECIES BASE del catalogo del
+           juego (el pokeId mas bajo de cada looktype), listando una por una las
+           carpetas del repositorio: no sobre una muestra de 33 como los numeros
+           antiguos de arriba, que venian de otra sonda. Que falten-species no
+           rompe nada: el <img> cae al respaldo pixel, que es estatico. */
+        { id: 'aniretro', name: 'APNG animado Retro Gen-III', short: 'APNG retro', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-iii/emerald/animated/${id}.png`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-iii/emerald/animated/shiny/${id}.png`, px: true, cov: '332/428', anim: true },
+        { id: 'ani4',    name: 'APNG animado Gen-IV Platino', short: 'APNG Platino', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/platinum/animated/${id}.png`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/platinum/animated/shiny/${id}.png`, px: true, cov: '362/428', anim: true },
+        { id: 'anihgss', name: 'APNG animado Gen-IV HGSS', short: 'APNG HGSS', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/heartgold-soulsilver/animated/${id}.png`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/heartgold-soulsilver/animated/shiny/${id}.png`, px: true, cov: '362/428', anim: true },
+        { id: 'anidp',   name: 'APNG animado Gen-IV Diamante', short: 'APNG DP', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/diamond-pearl/animated/${id}.png`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-iv/diamond-pearl/animated/shiny/${id}.png`, px: true, cov: '362/428', anim: true },
+        /* Platino y Diamante-Pearl tienen EL MISMO dibujo animado: sus ficheros
+           dan el mismo hash, comprobado. Se ofrecen los dos porque el juego los
+           dibuja distinto y hay quien lo quiera, pero no esperes ver dos
+           aspectos diferentes. */
+        /* Crystal es un GIF de verdad y el mas pobre de todos: 11 fotogramas,
+           56x56, y solo hay especies de las dos primeras generaciones (250 de
+           428). Se ofrece porque es el unico con el aire de los juegos
+           antiguos, pero conviene saber de antemano que es el que mas veces
+           se caera al pixel. */
+        { id: 'anicrystal', name: 'GIF animado Gen-II Crystal', short: 'GIF Crystal', url: id => `${POKEAPI_SPRITE_BASE}versions/generation-ii/crystal/animated/${id}.gif`, shiny: id => `${POKEAPI_SPRITE_BASE}versions/generation-ii/crystal/animated/shiny/${id}.gif`, px: true, cov: '250/428', anim: true }
     ]);
+
+    /* Que estilo animado sustituye a cada estilo fijo cuando se pide animar.
+
+       PokeAPI publica version animada de pocos estilos. Comprobado folder por
+       folder contra el repositorio: hay animated/ en generation-iii/emerald,
+       generation-iv/platinum, generation-iv/heartgold-soulsilver,
+       generation-iv/diamond-pearl, generation-ii/crystal,
+       generation-v/black-white y generation-v/icons.
+
+       NO hay carpeta animated/ en other/home, other/dream-world,
+       other/official-artwork ni generation-ix/scarlet-violet: para esos cuatro
+       no hay nada que animar. Aqui no se inventan rutas, asi que se quedan
+       como estan y por eso el interruptor no los cambia. */
+    const CARD_SPRITE_ANIMADO = Object.freeze({
+        pixel: 'anipx',
+        retro3: 'aniretro'
+    });
 
     /* Bolas de captura: sprites del propio juego.
        _catch y _broke son tiras VERTICALES (64x5760 y 64x4224) de 60 y 44
@@ -606,6 +652,10 @@
         /* La bola NO es una preferencia: se toma de la que se lanzo de verdad,
            via catch-result.ballId. */
         theme: '3', sprite: 'dream3d', bg: 'none',
+        /* Cambia el estilo fijo por su gemelo animado cuando PokeAPI lo publica
+           (pixel -> GIF gen-v, retro3 -> APNG Emerald). Los estilos sin version
+           animada no cambian: no hay nada que poner. */
+        spriteAnim: true,
         showPct: true, hitFx: true, glow: false, memoOpen: false,
         /* Fuerza del temblor al recibir un golpe, EN PORCENTAJE. 100 es como
            estaba. Van separadas la del aliado y la del salvaje porque no molesta
@@ -635,7 +685,23 @@
     const CARD_PREF_KEYS = Object.keys(CARD_PREFS_DEFAULTS);
 
     const themeById = id => CARD_THEMES.find(t => t.id === id) || CARD_THEMES[0];
-    const spriteById = id => CARD_SPRITES.find(s => s.id === id) || CARD_SPRITES[0];
+    /* El estilo que se esta usando DE VERDAD, que no siempre es el elegido.
+
+       Con la preferencia de animar puesta, un estilo fijo del que PokeAPI si
+       publica version animada se cambia por su gemelo. Los que no la tienen se
+       quedan igual, sin ruta inventada: es lo unico honesto cuando la carpeta
+       animated/ no existe en el repositorio.
+
+       Todo lo que pide un sprite pasa por aqui (card, escena 2D, menus), asi que
+       el cambio se aplica entero con tocar la preferencia. */
+    const spriteById = id => {
+        const base = CARD_SPRITES.find(s => s.id === id) || CARD_SPRITES[0];
+        if (scriptCardPreferences?.spriteAnim && !base.anim) {
+            const gemelo = CARD_SPRITE_ANIMADO[base.id];
+            if (gemelo) return CARD_SPRITES.find(s => s.id === gemelo) || base;
+        }
+        return base;
+    };
     const ballById = id => CAPTURE_BALLS.find(b => b.id === id) || CAPTURE_BALLS[0];
 
     function loadCardPreferences() {
@@ -3773,6 +3839,10 @@
 
         /* rejilla de sprites */
         .cc-sprite-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; padding:0 11px 11px; }
+        /* El interruptor de animar va justo debajo de la rejilla, dentro del
+           mismo bloque plegable. El margen lo separa de la ultima fila de
+           baldosas, que van pegadas al borde del bloque. */
+        .cc-sprite-anim-toggle { margin:0 11px 11px; }
         /* Muestras de fondo: cada baldosa lleva las mismas capas que el fondo
            real, asi que se ven tal cual quedaran en pantalla. */
         .cc-bg-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; padding:0 11px 11px; }
@@ -4185,7 +4255,12 @@
                mas: 108 menos el rotulo HP, los espacios y el relleno deja el
                carril por encima de esa cifra. El maximo evita que un nombre largo
                estire el cartel por toda la escena; a partir de ahi, el nombre se
-               mueve con la marquesina en vez de ensanchar la barra. */
+               mueve con la marquesina en vez de ensanchar la barra.
+
+               El maximo se queda en 146 a proposito, aunque ahora las barras
+               lleven la CIFRA REAL: por el ancho no cabe, y ensanchar el cartel
+               hacia los lados hacia que dos etiquetas de una fila de ocho se
+               montaran una en otra. La cifra va en su propia lnea, debajo. */
             box-sizing:border-box; min-width:108px; max-width:146px; }
         /* El texto va en un <b> propio para poder reescribirlo sin cargarse la
            punta de abajo ni las barras. */
@@ -4293,13 +4368,19 @@
            XP: solo el aliado, mas fina y azul.
            Critico (25 % o menos): el relleno pasa a rojo. */
         .cc-bar-line { position:relative; display:flex; align-items:center;
-            gap:5px; width:100%; padding-bottom:3px; }
-        .cc-bar-line + .cc-bar-line { margin-top:3px; }
+            gap:5px; width:100%; padding-bottom:3px;
+            /* Con la cifra real debajo de la barra, la linea tiene que poder
+               partirse en dos filas. Sin esto, la cifra (flex:0 0 auto) le
+               robaba ancho al carril (flex:1 1 auto) y la barra se hundia a 9 px
+               en las etiquetas de nombre corto, que son la mayoria: medido. Un
+               carril que cambia de ancho con el nombre es una barra que deja de
+               poder compararse con la de al lado, que era justo lo que la
+               colocaba en la etiqueta. */
+            flex-wrap:wrap; }        .cc-bar-line + .cc-bar-line { margin-top:3px; }
 
         /* La linea de debajo: un solo tono apagado, no un degradado. */
         .cc-bar-line::after { content:""; position:absolute; left:0; right:0; bottom:0;
             height:1px; background:rgba(245,179,1,.5); }
-
         .cc-bar-tag { flex:0 0 auto; font-size:8px; font-weight:800;
             letter-spacing:.06em; color:#c8d6e6; text-transform:uppercase;
             font-family:inherit; }
@@ -4316,6 +4397,39 @@
         .cc-nmbar-hp { height:8px; }
         /* XP: solo el aliado, mas fina y azul fijo. */
         .cc-nmbar-xp { height:6px; --cc-bar-fill:#3b82f6; }
+
+        /* LA CIFRA REAL, en su propia fila DEBAJO de la barra.
+
+           OJO: dentro de este bloque no se pueden escribir comillas invertidas.
+           Todo el CSS va dentro de un literal de plantilla (GM_addStyle), asi
+           que una sola pareja aqui parte la cadena y el script entero deja de
+           parsear.
+
+           Al principio la cifra iba al lado del carril, y medido salia mal: el
+           carril es flex:1 1 auto y la cifra flex:0 0 auto, asi que en las
+           etiquetas de nombre corto la cifra se llevaba el ancho y la barra se
+           quedaba en 9 px. Y no era solo estetico: un carril que depende de
+           como de largo sea el nombre hace que dos Pokemon de la misma fila no
+           se puedan comparar, que era justo lo que la barra ganaba al estar en
+           la etiqueta.
+
+           Con flex:0 0 100% la cifra salta a la segunda fila del flex-wrap y el
+           carril se queda con el ancho que tenia siempre. El cartel no crece:
+           por eso max-width sigue en 146.
+
+           tabular-nums para que el ancho del numero sea el mismo siempre: sin
+           eso la etiqueta respiraba en cada golpe al cambiar de cifra. */
+        .cc-bar-val { flex:0 0 100%; box-sizing:border-box; font-size:8px;
+            font-weight:700; line-height:1.1;
+            letter-spacing:0; text-transform:none; font-family:inherit;
+            font-variant-numeric:tabular-nums; color:#9fb2c7; white-space:nowrap;
+            /* Alineada con el carril, no con el rotulo: la cifra va con la
+               barra, no con la etiqueta HP.
+
+               El box-sizing no es cosmetico: con flex:0 0 100% mas este
+               relleno, sin el la caja mide 100 % + 18 px y se salia por la
+               derecha de la etiqueta (medido). */
+            padding-left:18px; overflow:hidden; text-overflow:clip; }
 
         /* La punta del cartel, del color del marco, para que se vea de donde
            sale el nombre. Sin difuminado: es un triangulo opaco. */
@@ -4771,7 +4885,7 @@
                 <details class="cc-card-block cc-fold" open>
                     <summary class="cc-card-block-h">Versión de imagen
                         <em class="cc-badge" data-cc-sprite-badge></em></summary>
-                    <p class="cc-hint">Fuente del sprite. Las dos que llevan punto verde son animadas.</p>
+                    <p class="cc-hint">Fuente del sprite. Las que llevan punto verde son animadas; al pasar el ratón, el aviso dice si un estilo fijo tiene versión animada o no.</p>
                     <div class="cc-sprite-grid" data-cc-sprites></div>
                 </details>
 
@@ -4885,7 +4999,14 @@
             tile.type = 'button';
             tile.className = `cc-sprite-tile${source.id === scriptCardPreferences.sprite ? ' on' : ''}`;
             tile.dataset.ccSprite = source.id;
-            tile.title = `${source.name} · cobertura ${source.cov}`;
+            tile.title = `${source.name} · cobertura ${source.cov}`
+                /* Se avisa en la propia baldosa de si ese estilo tiene version
+                   animada, porque el interruptor de abajo no cambia todos: para
+                   los que no la tienen se queda igual, y sin decir nada parece un
+                   interruptor que a veces no hace nada. */
+                + (source.anim ? ' · ya es animado'
+                    : CARD_SPRITE_ANIMADO[source.id] ? ' · tiene version animada'
+                        : ' · sin version animada');
             const img = document.createElement('img');
             img.src = source.url(76);
             img.alt = source.name;
@@ -4999,6 +5120,28 @@
                 after: () => applyCardPreferences()
             }));
         });
+
+        /* ---------- animar el estilo elegido ----------
+           Va con las opciones de sprite, justo debajo de la rejilla, y no dentro
+           de las de la card: lo que cambia es el dibujo del Pokemon.
+
+           Solo mueve los estilos que tienen gemelo animado. Los demas (Gen-IX,
+           Home 3D, Dream 3D y Artwork) se quedan como estan porque en el
+           repositorio de PokeAPI no hay carpeta animated/ para ellos: no es que
+           falte buscarla, es que no existe. */
+        const animRow = mkToggle({
+            key: 'spriteAnim', label: 'Animar el sprite',
+            desc: 'Cambia Pixel y Retro por su version animada. Los estilos sin '
+                + 'version animada en PokeAPI (Gen-IX, Home 3D, Dream 3D y Artwork) se quedan fijos.',
+            after: () => {
+                applyCardPreferences();
+                /* La escena 2D no se repinta sola: su fila se construye con la
+                   caja y el src del estilo, y eso no cambia con las preferencias. */
+                if (escenaActiva()) sceneSpriteHunters(sceneState.hunters);
+            }
+        });
+        animRow.classList.add('cc-sprite-anim-toggle');
+        spriteGrid.parentElement?.insertBefore(animRow, spriteGrid.nextSibling);
 
         /* ---------- fuerza del temblor ----------
            Dos deslizadores, uno por card. Van aqui, con las opciones de la card, y
@@ -8192,8 +8335,17 @@
     /* Ancho en px del sprite de un salvaje. Si aun no se ha dimensionado, se usa
        el que le tocaria por el estilo elegido. */
     function sceneLadoSprite() {
-        const medido = sceneState.hunters[0]?.spr?.offsetWidth || 0;
-        if (medido) return medido;
+        /* Ahora que cada Pokemon mide segun su tamano real, esto ya no puede ser
+           el lado del primero. `sceneColumnas()` reparte los huecos con UN solo
+           lado, y con la fila antigua daba igual porque todos median lo mismo;
+           ahora, si el lado fuera el de un Pokemon pequeno, el grande se saldria
+           del escenario o se montaria encima del de al lado (que es justo el
+           fallo que el comentario de ahi describia). Se queda con el mas ancho
+           de los que hay: sobran huecos, que no se ven, antes que sprites
+           superpuestos, que si. */
+        let lado = 0;
+        sceneState.hunters.forEach(h => { lado = Math.max(lado, h.spr?.offsetWidth || 0); });
+        if (lado) return lado;
         return sceneSpriteBox(scriptCardPreferences.sprite, false).w;
     }
 
@@ -8223,10 +8375,80 @@
        Armar el nombre a mano deja el prefijo a medias en el codigo, y el
        verificador de clases lo lee como un nombre entero: lo daba por una
        clase usada sin CSS. Con classList cada clase sale entera y sola. */
+    /* Un numero DE VERDAD, no un numero convertido.
+
+       `Number(null)` es 0, y `Number('')` tambien. Sin mirar el tipo antes, un
+       Pokemon al que aun no le ha llegado la vida se pintaria como «0/11.028»,
+       que no es un dato que falte: es un dato falso, y el ojo lo leeria como que
+       el Pokemon esta muriendo. */
+    function ccEsNumero(v) {
+        return typeof v === 'number' && isFinite(v);
+    }
+
+    /* Las cifras de las barras, en texto.
+
+       Se separan los miles con punto, que es como se leen los numeros grandes
+       en el resto del juego. `Intl` se pide una vez y se guarda: construir un
+       formateador en cada golpe es tirar CPU en un bucle que corre cada 800 ms
+       para cada Pokemon de la fila. Si `Intl` no existiera (nunca en un
+       navegador, pero el script tambien corre en pruebas) sale un numero sin
+       separador: feo, pero no roto. */
+    let ccFormatosNumero = null;
+    function ccNumeroChico(n) {
+        if (!ccEsNumero(n)) return '';
+        const v = n;
+        try {
+            if (!ccFormatosNumero) {
+                /* useGrouping 'always' para que tambien separe los miles en los
+                   numeros de cuatro cifras. Por defecto es-ES no los separa, y el
+                   resultado era «7872/11.028»: la misma cifra escrita de dos
+                   formas en la misma etiqueta. */
+                ccFormatosNumero = new Intl.NumberFormat('es-ES', {
+                    maximumFractionDigits: 0,
+                    useGrouping: 'always'
+                });
+            }
+            return ccFormatosNumero.format(v);
+        } catch (e) {
+            return String(Math.round(v));
+        }
+    }
+
+    /* Texto de la barra de VIDA: «7.872/11.028 · 71%».
+
+       El porcentaje va dentro aunque la barra ya lo muestre: el numero entero es
+       lo que no se lee solo, y el porcentaje es la referencia rapida. Sin datos
+       se devuelve cadena vacia y la cifra se oculta, en vez de pintar un 0 que
+       parece vida. */
+    function ccTextoVida(hp, maxHp) {
+        if (!ccEsNumero(hp) || !ccEsNumero(maxHp) || maxHp <= 0 || hp < 0) return '';
+        const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+        return `${ccNumeroChico(hp)}/${ccNumeroChico(maxHp)} · ${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}%`;
+    }
+
+    /* Texto de la barra de EXPERIENCIA: el absoluto y el porcentaje.
+
+       El socket NO manda el XP que falta para el siguiente nivel, solo el XP
+       acumulado (`latestPokemonData.xp`, del orden de los miles de millones en
+       una hunt normal). Como no hay dato del objetivo, no se calcula uno con una
+       curva inventada: se enseña el numero real y, al lado, el porcentaje que el
+       juego ya muestra en su HUD. */
+    function ccTextoXp(xp, pct) {
+        const partes = [];
+        if (ccEsNumero(xp) && xp >= 0) partes.push(ccNumeroChico(xp));
+        if (ccEsNumero(pct)) partes.push(`${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}%`);
+        return partes.join(' · ');
+    }
+
     function sceneCrearBarraNombre(clase) {
         /* La barra va dentro de una linea con su etiqueta ("HP" o "XP") a la
            izquierda. La etiqueta es un hijo aparte y no texto del carril para
-           poder reescribirla o quitarla sin tocar la barra. */
+           poder reescribirla o quitarla sin tocar la barra.
+
+           Y con la CIFRA REAL a la derecha, tambien en su propio <span>: si
+           fuera texto del carril se perderia al pintar el relleno, y el ancho
+           del carril (flex:1 1 auto) se comeria el hueco que necesita el
+           numero para que el texto largo no lo recorte. */
         const linea = document.createElement('span');
         linea.className = 'cc-bar-line';
         const tag = document.createElement('span');
@@ -8237,8 +8459,12 @@
         track.classList.add(clase === 'xp' ? 'cc-nmbar-xp' : 'cc-nmbar-hp');
         const fill = document.createElement('i');
         track.appendChild(fill);
+        const val = document.createElement('span');
+        val.className = 'cc-bar-val';
+        val.textContent = '';
         linea.appendChild(tag);
         linea.appendChild(track);
+        linea.appendChild(val);
         return linea;
     }
 
@@ -8720,10 +8946,178 @@
         return sprite.shiny(speciesId);
     }
 
-    function sceneSpriteBox(id, esHero) {
+    /* --------------------------------------------------------------- */
+    /* EL TAMANO DE CADA POKEMON (2026-10-14)                          */
+    /* --------------------------------------------------------------- */
+
+    /* El escenario dibujaba a todos los Pokemon con la MISMA caja: un Ditto de
+       3 dm ocupaba exactamente lo mismo que un Steelix de 92. PokeAPI ya se
+       consulta para el sprite y trae la altura en decimetros, asi que el dato
+       para compararlos de verdad ya estaba a mano y solo no se leia.
+
+       La escala sale de una RAIZ, no de una proporcion lineal. Entre 3 y 92 dm
+       hay un orden de magnitud: con proporcion lineal casi todos los medianos se
+       pegarian a uno de los dos topes y no se distinguirian entre si, que es
+       justo lo que se quiere evitar. Con la raiz los del medio se separan y los
+       extremos se ordenan solos. */
+
+    const SCENE_TAMANO_MIN = 0.75;
+    const SCENE_TAMANO_MAX = 1.50;
+    /* Altura de referencia: 10 dm, un Pokemon mediano. */
+    const SCENE_TAMANO_REF_DM = 10;
+    /* El exponente reparte el recorrido entre las horquillas: medido, con 0.62
+       se separan bien Bulbasaur (7 dm, 0.80) de Golem (14 dm, 1.23), que con
+       un exponente mayor acababan en el mismo sitio. */
+    const SCENE_TAMANO_EXPONENTE = 0.62;
+    /* Cuanto de lo que hay por encima de la banda de suelo puede ocupar la caja.
+       Con 1.0 un sprite tocaria el borde de arriba del escenario en las escenas
+       bajas; se deja un margen pequeno. */
+    const SCENE_TAMANO_TOPE_SUELO = 0.92;
+
+    /* Factor de escala a partir de la ALTURA REAL en decimetros.
+       PURA: no pide nada y no toca nada, que es lo que la hace comprobable. */
+    function ccEscalaPorTamano(alturaDm) {
+        const dm = Number(alturaDm);
+        if (!isFinite(dm) || dm <= 0) return 1;
+        const escala = Math.pow(dm / SCENE_TAMANO_REF_DM, SCENE_TAMANO_EXPONENTE);
+        return Math.max(SCENE_TAMANO_MIN, Math.min(SCENE_TAMANO_MAX, escala));
+    }
+
+    /* Lo que ya se sabe del tamaño de cada especie. Vive en la sesion, no solo en
+       memoria: el mismo Pokemon sale en varias areas y en varias filas, y volver
+       a preguntarlo cada vez seria tirar peticiones. */
+    const ccTamanoCache = new Map();
+    const ccTamanoVivo = new Map();
+    const CC_TAMANO_LLAVE = 'tamanos-pokemon-v1';
+    const CC_TAMANO_MAX_VIVOS = 4;
+    const CC_TAMANO_ESPERA_MS = 120;
+    const CC_TAMANO_MAX_GUARDADOS = 400;
+
+    function ccTamanosGuardados() {
+        try {
+            const crudo = sessionStorage.getItem(CC_TAMANO_LLAVE);
+            if (!crudo) return null;
+            const datos = JSON.parse(crudo);
+            return (datos && typeof datos === 'object') ? datos : null;
+        } catch (e) {
+            /* Sin permiso de almacenamiento o con el JSON dañado: se sigue, solo
+               que sin la cache entre areas. No es motivo para romper nada. */
+            return null;
+        }
+    }
+
+    function ccGuardarTamano(id, dato) {
+        ccTamanoCache.set(id, dato);
+        const guardados = ccTamanosGuardados() || {};
+        guardados[id] = dato;
+        const claves = Object.keys(guardados);
+        if (claves.length > CC_TAMANO_MAX_GUARDADOS) {
+            /* Se acotan por orden de aparicion: el recorte es para que la sesion
+               no crezca sin limite, y perder una medida antigua es lo de menos. */
+            claves.slice(0, claves.length - CC_TAMANO_MAX_GUARDADOS)
+                .forEach(k => { delete guardados[k]; });
+        }
+        try { sessionStorage.setItem(CC_TAMANO_LLAVE, JSON.stringify(guardados)); } catch (e) {}
+    }
+
+    let ccTamanoTurno = Promise.resolve();
+    let ccTamanoPendientes = 0;
+
+    /* La escala de una especie, o 1 si todavia no se sabe. Nunca 0: sin dato el
+       Pokemon se dibuja al tamaño de antes, que es lo que hacia el resto del
+       script. */
+    function ccEscalaDe(speciesId) {
+        const id = Number(ccEspecieSprite(speciesId) || speciesId);
+        const dato = ccTamanoCache.get(id);
+        return dato ? ccEscalaPorTamano(dato.h) : 1;
+    }
+
+    /* Pide el tamaño de una especie a PokeAPI y devuelve la escala, o null si no
+       se pudo.
+
+       Las peticiones van ENCADENADAS con una espera entre una y otra, y como
+       mucho hay cuatro esperando: una fila de ocho salvajes son ocho peticiones
+       seguidas, y PokeAPI es un servicio publico. Tambien se cachea el FRACASO,
+       como null: reintentar un id que ya se sabe que no viene no mejora nada y
+       retrasa a los demas. */
+    function ccPedirTamano(speciesId) {
+        const id = Number(ccEspecieSprite(speciesId) || speciesId);
+        if (!(id > 0)) return Promise.resolve(null);
+        if (ccTamanoCache.has(id)) return Promise.resolve(ccTamanoCache.get(id));
+        if (ccTamanoVivo.has(id)) return ccTamanoVivo.get(id);
+
+        const p = ccTamanoTurno.then(async () => {
+            while (ccTamanoPendientes >= CC_TAMANO_MAX_VIVOS) {
+                await new Promise(r => setTimeout(r, CC_TAMANO_ESPERA_MS));
+            }
+            ccTamanoPendientes += 1;
+            try {
+                const resp = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+                if (!resp.ok) throw new Error('PokeAPI respondio ' + resp.status);
+                const data = await resp.json();
+                const alto = Number(data?.height);
+                const peso = Number(data?.weight);
+                const guardado = { h: isFinite(alto) ? alto : null, w: isFinite(peso) ? peso : null };
+                ccGuardarTamano(id, guardado);
+                return ccEscalaPorTamano(guardado.h);
+            } catch (e) {
+                ccGuardarTamano(id, null);
+                return null;
+            } finally {
+                ccTamanoPendientes -= 1;
+            }
+        });
+        ccTamanoTurno = p.then(() => new Promise(r => setTimeout(r, CC_TAMANO_ESPERA_MS)));
+        ccTamanoVivo.set(id, p);
+        return p;
+    }
+
+    /* Pide el tamaño de lo que hay en pantalla. Cuando cada uno llega se vuelven
+       a pintar las cajas y se recoloca; se re-aplica TODO y no solo el suyo,
+       porque llega mas veces el mismo casi a la vez y porque pintar es mas
+       barato que repasar cual de los dos falta. */
+    function ccPedirTamanosDeEscena() {
+        const ids = [];
+        sceneState.hunters.forEach(h => { if (h.speciesId) ids.push(h.speciesId); });
+        if (sceneState.hero?.speciesId) ids.push(sceneState.hero.speciesId);
+        const faltan = [];
+        ids.forEach(id => {
+            const clave = Number(ccEspecieSprite(id) || id);
+            if (clave > 0 && !ccTamanoCache.has(clave) && faltan.indexOf(clave) === -1) {
+                faltan.push(clave);
+            }
+        });
+        faltan.forEach(id => {
+            ccPedirTamano(id).then(() => {
+                sceneSpriteHunters(sceneState.hunters);
+                sceneColocarDeferred();
+            });
+        });
+    }
+
+    function sceneSpriteBox(id, esHero, escala) {
+        /* El primer parametro es el ESTILO de sprite, no la especie: lo confunde
+           el nombre desde siempre y por eso se aclara aqui, que es donde se toca.
+
+           `escala` es el factor de ccEscalaPorTamano. El tope del final es lo que
+           garantiza que nada se salga por arriba: la caja no puede pasar de lo
+           que hay sobre la banda de suelo. Sin el, un Steelix a 1.5 en una
+           escena de 220 px de alto se iba del recuadro. */
         const sprite = spriteById(id);
         const base = sprite.px ? (esHero ? 118 : 104) : (esHero ? 140 : 124);
-        return { w: base, h: base, px: sprite.px, anim: !!sprite.anim };
+        const factor = Number(escala);
+        let lado = base * (isFinite(factor) && factor > 0 ? factor : 1);
+        const H = sceneState.col ? sceneAlto() : 0;
+        if (H) {
+            const suelo = SCENE_BG.get(sceneState.bg)?.suelo ?? 0.76;
+            const libre = (1 - suelo) * H * SCENE_TAMANO_TOPE_SUELO;
+            /* El recorte va ANTES del redondeo y hacia abajo: al redondear hacia
+               arriba, una caja de 48.76 px se iba a 49 y pasaba el tope por medio
+               pixel, que es justo lo que el tope promise. */
+            if (libre > 0 && lado > libre) lado = Math.floor(libre);
+        }
+        lado = Math.max(24, Math.round(lado));
+        return { w: lado, h: lado, px: sprite.px, anim: !!sprite.anim };
     }
 
     function sceneSpriteHunters(hunters) {
@@ -8733,7 +9127,10 @@
                de nuevo. Sin esto, elegir un GIF no movia nada hasta que se
                recargara el area. */
             scenePonerSprite(h);
-            const box = sceneSpriteBox(scriptCardPreferences.sprite, false);
+            /* Cada Pokemon con la caja que le toca por su tamaño real. Al no
+               saberlo todavia sale la de siempre, y cuando llegue el dato se
+               vuelve a pintar aqui. */
+            const box = sceneSpriteBox(scriptCardPreferences.sprite, false, ccEscalaDe(h.speciesId));
             h.spr.style.width = box.w + 'px';
             h.spr.style.height = box.h + 'px';
             h.spr.style.imageRendering = box.px ? 'pixelated' : 'auto';
@@ -8741,14 +9138,19 @@
             h.spr.style.animationDelay = `${(i * 0.23)}s`;
             h.spr.classList.toggle('cc-walk', box.anim && scriptCardPreferences.sceneWalk);
         });
-        const spr = sceneState.hero?.spr || sceneState.col?.querySelector('.cc-hero .cc-esc-spr');
+        const heroe = sceneState.hero;
+        const spr = heroe?.spr || sceneState.col?.querySelector('.cc-hero .cc-esc-spr');
         if (spr) {
-            const box = sceneSpriteBox(scriptCardPreferences.sprite, true);
+            const box = sceneSpriteBox(scriptCardPreferences.sprite, true, ccEscalaDe(heroe?.speciesId));
             spr.style.width = box.w + 'px';
             spr.style.height = box.h + 'px';
             spr.style.imageRendering = box.px ? 'pixelated' : 'auto';
             spr.classList.toggle('cc-walk', box.anim && scriptCardPreferences.sceneWalk);
         }
+        /* Al final, y no al principio: las cajas de arriba son las que se van a
+           pintar con el dato que llegue. Antes pedia con la fila todavia sin
+           colocar y se perdia el cambio de especie del heroe. */
+        ccPedirTamanosDeEscena();
     }
 
     /* Vacia la fila. `matarPrimero` desvanece al de delante en vez de borrarlo:
@@ -8841,7 +9243,12 @@
                 ? (viva.hp / viva.maxHp) * 100
                 : h.hpPct;
             if (typeof pct === 'number' && isFinite(pct)) h.hpPct = pct;
-            scenePintarBarraNombre(h.nm, 'hp', h.hpPct);
+            /* La cifra sale de la MISMA cuenta que el porcentaje, para que no
+               puedan contradecirse: si la cuenta aun no tiene al slot se pasa
+               cadena vacia y el numero se oculta, en vez de pintar la vida
+               estimada de la lista como si fuera la real. */
+            scenePintarBarraNombre(h.nm, 'hp', h.hpPct,
+                viva && viva.maxHp > 0 ? ccTextoVida(viva.hp, viva.maxHp) : '');
             sceneMostrarHp(h, sceneColorHp(h.hpPct));
             /* El estado "Buscando", en el mismo sitio que la barra y a proposito:
                esta funcion se llama justo despues de anotar un golpe, asi que el
@@ -9811,9 +10218,18 @@
            juego dice que el equipado es shiny (`field.heroShiny`), se pide la
            variante shiny y se cae a la normal si el estilo no la publica. */
         const heroSprite = id => (ccFieldState.heroShiny && ccShinyUrl(id)) || sceneSpriteUrl(id);
+        /* La ESPECIE del aliado, que hasta ahora se gastaba al construir la url y
+           se perdia. Se guarda porque el escenario la necesita para dos cosas:
+           pedirle a PokeAPI su tamano real, y saber cuando hay que volver a
+           pintar. La del socket manda: es la foto del equipado, con la forma
+           transformada del Ditto si la hay. */
+        let especieHeroe = 0;
         if (!spriteSrc && name && name !== 'Aliado') {
             const especieDelNombre = ccSpeciesIdFromCatalog(name) || 0;
-            if (especieDelNombre > 0) spriteSrc = heroSprite(especieDelNombre);
+            if (especieDelNombre > 0) {
+                especieHeroe = especieDelNombre;
+                spriteSrc = heroSprite(especieDelNombre);
+            }
         }
         /* Y por ultimo el socket, que trae la especie y el nivel del equipado. */
         const delSocket = latestPokemonData;
@@ -9822,7 +10238,11 @@
                `id` del Pokemon en el equipo. */
             const especie = Number(delSocket.speciesId || delSocket.id) || 0;
             if (!name) name = String(delSocket.name || delSocket.speciesName || '').trim();
-            if (!spriteSrc && especie > 0) spriteSrc = heroSprite(especie);
+            if (!spriteSrc && especie > 0) {
+                especieHeroe = especie;
+                spriteSrc = heroSprite(especie);
+            }
+            if (especie > 0) especieHeroe = especie;
         }
 
         if (!name) name = 'Aliado';
@@ -9832,7 +10252,7 @@
            golpe: la hoja que se pinta depende del tipo, y sin esto el aliado
            recibiria siempre el efecto de NORMAL. Se sacan del nombre con la misma
            funcion que usan los salvajes. */
-        sceneState.hero = { name, spr, el: hero, types: ccCreatureTypes(name) };
+        sceneState.hero = { name, spr, el: hero, types: ccCreatureTypes(name), speciesId: especieHeroe };
         sceneSpriteHunters(sceneState.hunters);
         sceneMedirPies(spr.src);
         sceneColocarDeferred();
@@ -9905,12 +10325,29 @@
 
     /* Escribe el relleno de una barra de la etiqueta. Devuelve false si la
        etiqueta no tiene esa barra, para no escribir a null. */
-    function scenePintarBarraNombre(nm, clase, valor) {
+    function scenePintarBarraNombre(nm, clase, valor, texto) {
         const sel = clase === 'xp' ? '.cc-nmbar-xp i' : '.cc-nmbar-hp i';
         const fill = nm?.querySelector(sel);
         if (!fill) return false;
         fill.style.width = Math.max(0, Math.min(100, valor)) + '%';
         if (clase === 'hp') fill.classList.toggle('cc-crit', valor <= 25);
+        /* La CIFRA va aparte del relleno y es OPCIONAL. `undefined` significa
+           «no me digas nada» y deja lo que hubiera: hay caminos que solo
+           pintan el porcentaje, y si aqui se escribiera siempre, cada uno de
+           ellos borraria el numero real que otro habia puesto. Con cadena
+           vacia se oculta, que es lo que toca cuando ya no hay dato. */
+        if (texto !== undefined) {
+            /* La cifra es hermana del carril, dentro de la misma linea. Se llega
+               por ahi, subiendo desde el relleno, en vez de por una clase propia
+               para HP y otra para XP: dos clases que solo existen en el JS son
+               dos reglas de CSS que el verificador buscara y no encontrara. */
+            const linea = fill.parentElement?.parentElement;
+            const val = linea?.querySelector('.cc-bar-val');
+            if (val) {
+                val.textContent = texto || '';
+                val.style.display = texto ? '' : 'none';
+            }
+        }
         return true;
     }
 
@@ -9947,14 +10384,20 @@
             if (barraHp) barraHp.style.setProperty('--cc-bar-fill', getTypeColor(tipos[0]) || '#22c55e');
         }
 
-        /* Las barras van a la etiqueta. Sin numero al lado: la barra en si ya da la
-           proporcion, y con el ancho del nombre no cabe el porcentaje sin
-           ampliar el recuadro por cada Pokemon. */
+        /* Las barras van a la etiqueta, y ahora tambien su CIFRA. Sin numero al
+           lado la barra en si ya daba la proporcion, y con el ancho del nombre no
+           cabia el dato exacto: se subio el tope del cartel y se reservo su
+           sitio. El dato sale del socket, que lo trae ya calculado. */
         const hp = scenePct(card.querySelector('#cpc-hp-fill, .cc-hp-fill, .cc-bar-hp i'));
-        if (hp !== null) scenePintarBarraNombre(etiqueta, 'hp', hp);
+        if (hp !== null) {
+            scenePintarBarraNombre(etiqueta, 'hp', hp,
+                ccTextoVida(ccFieldState.heroHp, ccFieldState.heroMaxHp));
+        }
 
         const xp = scenePct(card.querySelector('#cpc-xp-fill, .cc-xp-fill, .cc-bar-xp i'));
-        if (xp !== null) scenePintarBarraNombre(etiqueta, 'xp', xp);
+        if (xp !== null) {
+            scenePintarBarraNombre(etiqueta, 'xp', xp, ccTextoXp(latestPokemonData?.xp, xp));
+        }
 
         scenePintarEnemigos();
     }
@@ -9973,9 +10416,14 @@
         const hp = ccFieldState.heroMaxHp > 0
             ? Math.max(0, Math.min(100, (ccFieldState.heroHp / ccFieldState.heroMaxHp) * 100))
             : null;
-        if (hp !== null) scenePintarBarraNombre(etiqueta, 'hp', hp);
+        if (hp !== null) {
+            scenePintarBarraNombre(etiqueta, 'hp', hp,
+                ccTextoVida(ccFieldState.heroHp, ccFieldState.heroMaxHp));
+        }
         const xp = scenePct(document.querySelector('#cpc-xp-fill, .cc-xp-fill, .cc-bar-xp i'));
-        if (xp !== null) scenePintarBarraNombre(etiqueta, 'xp', xp);
+        if (xp !== null) {
+            scenePintarBarraNombre(etiqueta, 'xp', xp, ccTextoXp(latestPokemonData?.xp, xp));
+        }
     }
 
     /* Ya no hay panel de salvajes, asi que esta funcion no pinta nada.
