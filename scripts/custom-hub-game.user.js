@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.4.0
+// @version      5.5.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -670,13 +670,19 @@
         sceneScroll: true,     /* el fondo y el suelo se desplazan en loop */
         sceneWalk: true,       /* los GIF animados caminan */
         sceneSpeed: 45,        /* 0-100: mas alto, menos segundos por vuelta */
+        sceneEscala: 100,      /* 50-200: tanto por ciento del tamaño medido */
         sceneSize: 'recuadro', /* 'recuadro' centrado o 'full' a pantalla */
         sceneWidth: 70,        /* ancho del recuadro, 40-100 % */
         sceneHeight: 52,       /* alto del recuadro, 30-100 % */
         sceneCount: 8,         /* tope de salvajes en la fila, 1-8. Cuantos hay los
                             pone el juego; esto solo evita que se llene */
         sceneSuelo: true,      /* la banda de suelo HTML, que tapa la foto */
-        sceneGuia: false       /* guia y marcas de medicion */
+        sceneGuia: false,      /* guia y marcas de medicion */
+        /* Las barras de la etiqueta de cada Pokemon. Se apagan por separado
+           porque molestan mas en una fila de ocho que en un solo aliado, y cada
+           uno puede querer quitar solo una cosa. */
+        sceneStatsHero: true,
+        sceneStatsWild: true
     /* Se acabaron scenePanelOculto y scenePanelPos, que guardaban si el panel de
        salvajes estaba oculto y donde se habia arrastrado. El panel ya no existe.
        Sus valores siguen en el almacenamiento del navegador, sin efecto: borrarlos
@@ -716,9 +722,13 @@
                    regla, el typeof boolean de mas abajo los tiraria al valor
                    por defecto en cada carga. */
                 if (key === 'sceneSize') return [key, value === 'full' ? 'full' : 'recuadro'];
-                if (['sceneWidth', 'sceneHeight', 'sceneSpeed', 'sceneCount'].includes(key)) {
+                if (['sceneWidth', 'sceneHeight', 'sceneSpeed', 'sceneCount', 'sceneEscala'].includes(key)) {
                     const n = Number(value);
                     if (!Number.isFinite(n)) return [key, CARD_PREFS_DEFAULTS[key]];
+                    /* sceneEscala va aparte porque es la unica que no va de 0 a
+                       100: es un porcentaje sobre el tamaño medido y por debajo
+                       del 50 % ningun Pokemon se veria. */
+                    if (key === 'sceneEscala') return [key, Math.max(50, Math.min(200, Math.round(n)))];
                     const min = key === 'sceneWidth' ? 40 : key === 'sceneHeight' ? 30 : key === 'sceneCount' ? 1 : 0;
                     const max = key === 'sceneCount' ? 8 : 100;
                     return [key, Math.max(min, Math.min(max, Math.round(n)))];
@@ -4086,6 +4096,20 @@
             border-bottom:9px solid #ff2bd6; transform:translateX(-6px); }
         body.cc-esc-guia-on .cc-esc-guia, body.cc-esc-guia-on .cc-esc-marca { opacity:1; }
 
+        /* LAS ESTADISTICAS DE LA ETIQUETA, APAGADAS POR AJUSTE.
+
+           Se apagan las lineas de barra y se QUEDA EL NOMBRE. El nombre es lo
+           que dice de quien es cada Pokemon; las barras son el dato, y el dato
+           se puede querer fuera sin perder la etiqueta. Ademas asi el cartel
+           baja de unos 87 px a unos 24, que era justo lo que tapaba al sprite
+           de al lado.
+
+           Se hace con una clase en el body y no por nodos: hay hasta ocho
+           etiquetas en pantalla y se reconstruyen solas, asi que cualquier
+           ajuste hecho nodo a nodo se perderia al cambiar la fila. */
+        body.cc-esc-stats-hero-off .cc-esc-fighter.cc-hero .cc-bar-line,
+        body.cc-esc-stats-wild-off .cc-esc-fighter:not(.cc-hero) .cc-bar-line { display:none; }
+
         /* ---------- PLANO ----------
            Sin desenfoque de fondo, sin reflejo y sin canto especular: el estilo
            es plano, con la superficie opaca y un solo borde duro del color del
@@ -5189,11 +5213,31 @@
               after: on => document.body?.classList.toggle('cc-esc-suelo-off', !on) },
             { key: 'sceneGuia', label: 'Ver medidas',
               desc: 'La linea de suelo y las marcas de medicion.',
-              after: on => document.body?.classList.toggle('cc-esc-guia-on', !!on) }
+              after: on => document.body?.classList.toggle('cc-esc-guia-on', !!on) },
+            /* Las estadisticas de la etiqueta. Se resuelven con una clase en el
+               body y no tocando cada etiqueta: hay ocho en pantalla y se
+               reconstruyen solas, asi que hacerlo por nodos se perderia al
+               siguiente cambio de fila.
+
+               Se apagan SIN condiciones del modo: son clases del body, y si
+               solo se pusieran con el escenario montado se perderian al cambiar
+               de tema y volverian apagadas. */
+            { key: 'sceneStatsHero', label: 'Estadísticas del aliado',
+              desc: 'Vida y experiencia en su etiqueta.',
+              siempre: true,
+              after: on => document.body?.classList.toggle('cc-esc-stats-hero-off', !on) },
+            { key: 'sceneStatsWild', label: 'Estadísticas de los salvajes',
+              desc: 'Vida en la etiqueta de cada uno.',
+              siempre: true,
+              after: on => document.body?.classList.toggle('cc-esc-stats-wild-off', !on) }
         ].forEach(option => {
             sceneOpts.appendChild(mkToggle({
                 key: option.key, label: option.label, desc: option.desc,
-                after: on => { if (escenaActiva()) option.after(on); }
+                /* `siempre` se sale de la puerta del escenario: son clases del
+                   body, que no dependen de que el 2D este montado, y si solo se
+                   pusieran con el escenario delante se perderian al cambiar de
+                   tema. */
+                after: on => { if (option.siempre || escenaActiva()) option.after(on); }
             }));
         });
 
@@ -5238,6 +5282,14 @@
                    cualquiera de los dos tiene que recalcular los dos. */
                 if (key === 'sceneWidth' || key === 'sceneHeight') sceneAjustarTamano();
                 if (key === 'sceneSpeed') sceneAjustarLoop();
+                /* El ajuste de tamaño cambia las cajas de TODOS los Pokemon, y
+                   las cajas son las que reparten los huecos de la fila, asi que
+                   hay que repintar y recolocar: si solo se repintara, el mas
+                   grande se montaria encima del vecino. */
+                if (key === 'sceneEscala') {
+                    sceneSpriteHunters(sceneState.hunters);
+                    sceneColocarDeferred();
+                }
                 /* El tope de salvajes puede estar por debajo de los que hay, asi
                    que hay que reconstruir la fila entera. */
                 if (key === 'sceneCount') {
@@ -5253,6 +5305,10 @@
         mkRange('sceneWidth', 'Ancho', 40, 100);
         mkRange('sceneHeight', 'Alto', 30, 100);
         mkRange('sceneSpeed', 'Velocidad', 0, 100);
+        /* El tamaño de los sprites, sobre lo que dicta PokeAPI. Al 100 % es lo
+           medido; es el unico ajuste que depende de los datos de tamano, asi que
+           va junto a los demas del escenario y no en las opciones de la card. */
+        mkRange('sceneEscala', 'Tamaño de los sprites', SCENE_ESCALA_MIN, SCENE_ESCALA_MAX);
 
         const cajaEscena = wrap.querySelector('[data-cc-scene]');
         const notaEscena = document.createElement('p');
@@ -8961,18 +9017,55 @@
        justo lo que se quiere evitar. Con la raiz los del medio se separan y los
        extremos se ordenan solos. */
 
-    const SCENE_TAMANO_MIN = 0.75;
-    const SCENE_TAMANO_MAX = 1.50;
-    /* Altura de referencia: 10 dm, un Pokemon mediano. */
-    const SCENE_TAMANO_REF_DM = 10;
+    const SCENE_TAMANO_MIN = 0.90;
+    const SCENE_TAMANO_MAX = 2.40;
+    /* Altura de referencia: 7.5 dm, un Pokemon mediano. Bajarla de 10 hace que
+       todo el reparto suba, sin tocar la forma de la curva. */
+    const SCENE_TAMANO_REF_DM = 7.5;
     /* El exponente reparte el recorrido entre las horquillas: medido, con 0.62
-       se separan bien Bulbasaur (7 dm, 0.80) de Golem (14 dm, 1.23), que con
-       un exponente mayor acababan en el mismo sitio. */
+       se separan bien Bulbasaur (7 dm) de Golem (14 dm), que con un exponente
+       mayor acababan en el mismo sitio. */
     const SCENE_TAMANO_EXPONENTE = 0.62;
-    /* Cuanto de lo que hay por encima de la banda de suelo puede ocupar la caja.
-       Con 1.0 un sprite tocaria el borde de arriba del escenario en las escenas
-       bajas; se deja un margen pequeno. */
-    const SCENE_TAMANO_TOPE_SUELO = 0.92;
+    /* El tope de la caja, como FRACCION DEL ALTO DEL ESCENARIO.
+
+       Antes se media contra lo que habia por encima de la banda de suelo, y
+       eso estrangulaba la escala entera: medido en el juego, la banda esta en
+       y=458 de un escenario de 585, o sea que sobre ella solo quedaban 127 px,
+       y el tope de 0.92 de eso daba 116 px. MEDIDO: los tres Pokemon de la fila
+      -salida 115, 115 y 115 px. Todos contra el tope, todos iguales: la escala
+       por tamaño no hacia nada y el deslizador tampoco, porque subirlo solo
+       pedia una caja mas grande que el tope recortaba igual.
+
+       El sprite se apoya en la linea de suelo y sube hacia arriba; no flota en
+       el cielo. Encima de la linea hay 458 px de escenario de los 585, asi que
+       lo que manda es el alto total, no el hueco sobre la banda.
+
+       El suelo del tope es la caja SIN escala (base): si el escenario es tan
+       bajo que el tope queda por debajo de la caja de partida, se deja pasar
+       la de partida. Ese desborde es el que tenia el escenario antes de la
+       escala por tamaño, y es preferible a encojer a todos por debajo de como
+       se veia. */
+    const SCENE_TAMANO_TOPE_ESCENA = 0.60;
+    /* EL AJUSTE DEL USUARIO, en tanto por ciento del valor medido. Se aplica
+       DESPUES de la curva, nunca dentro: la curva es el dato de PokeAPI y el
+       ajuste es la opinion de quien mira, y si se mezclaran no se podria saber
+       cuanto de lo que se ve es medida y cuanto es gusto. */
+    const SCENE_ESCALA_MIN = 50;
+    const SCENE_ESCALA_MAX = 200;
+    /* La horquilla del ajuste. Sin tope de arriba, el 200 % de una caja ya
+       recortada por SCENE_TAMANO_TOPE_SUELO daria sprites que se salen; el
+       recorte del final sigue mandando, pero aqui se acota antes. */
+    const SCENE_ESCALA_MIN_AJUSTE = SCENE_ESCALA_MIN / 100;
+    const SCENE_ESCALA_MAX_AJUSTE = SCENE_ESCALA_MAX / 100;
+
+    /* Cuanto multiplica el usuario la escala medida. 1 es «tal cual sale de
+       PokeAPI». Un valor raro, cero o negativo se traduce a 1: antes que
+       dejar el escenario sin sprites, se aplica el dato. */
+    function ccMultiplicadorEscena() {
+        const v = Number(scriptCardPreferences?.sceneEscala);
+        if (!isFinite(v) || v <= 0) return 1;
+        return Math.max(SCENE_ESCALA_MIN_AJUSTE, Math.min(SCENE_ESCALA_MAX_AJUSTE, v / 100));
+    }
 
     /* Factor de escala a partir de la ALTURA REAL en decimetros.
        PURA: no pide nada y no toca nada, que es lo que la hace comprobable. */
@@ -9023,13 +9116,17 @@
     let ccTamanoTurno = Promise.resolve();
     let ccTamanoPendientes = 0;
 
-    /* La escala de una especie, o 1 si todavia no se sabe. Nunca 0: sin dato el
-       Pokemon se dibuja al tamaño de antes, que es lo que hacia el resto del
-       script. */
+    /* La escala de una especie, ya con el ajuste del usuario puesto encima.
+
+       Cuando no se sabe el tamaño real se devuelve el multiplicador a secas, no
+       1: el ajuste es del usuario y tiene que notarse tambien en los Pokemones
+       cuya medida no llego todavia (si no, habria Pokemon que crecen con el
+       deslizador y otros que se quedan quietos sin explicacion). El recorte
+       final de la caja evita que se salgan. */
     function ccEscalaDe(speciesId) {
         const id = Number(ccEspecieSprite(speciesId) || speciesId);
         const dato = ccTamanoCache.get(id);
-        return dato ? ccEscalaPorTamano(dato.h) : 1;
+        return ccMultiplicadorEscena() * (dato ? ccEscalaPorTamano(dato.h) : 1);
     }
 
     /* Pide el tamaño de una especie a PokeAPI y devuelve la escala, o null si no
@@ -9109,12 +9206,13 @@
         let lado = base * (isFinite(factor) && factor > 0 ? factor : 1);
         const H = sceneState.col ? sceneAlto() : 0;
         if (H) {
-            const suelo = SCENE_BG.get(sceneState.bg)?.suelo ?? 0.76;
-            const libre = (1 - suelo) * H * SCENE_TAMANO_TOPE_SUELO;
-            /* El recorte va ANTES del redondeo y hacia abajo: al redondear hacia
-               arriba, una caja de 48.76 px se iba a 49 y pasaba el tope por medio
-               pixel, que es justo lo que el tope promise. */
-            if (libre > 0 && lado > libre) lado = Math.floor(libre);
+            /* Se recorta con Math.floor ANTES del redondeo del final: al
+               redondear hacia arriba, una caja de 350.4 px se iba a 351 y
+               pasaba el tope por medio pixel, que es justo lo que el tope
+               promete. Y el suelo es la caja sin escala, por lo que explica el
+               SCENE_TAMANO_TOPE_ESCENA de arriba. */
+            const tope = Math.max(base, H * SCENE_TAMANO_TOPE_ESCENA);
+            if (lado > tope) lado = Math.floor(tope);
         }
         lado = Math.max(24, Math.round(lado));
         return { w: lado, h: lado, px: sprite.px, anim: !!sprite.anim };
@@ -10175,6 +10273,11 @@
         if (bg) bg.style.backgroundImage = `url("${fondo.url}")`;
         document.body?.classList.toggle('cc-esc-suelo-off', !scriptCardPreferences.sceneSuelo);
         document.body?.classList.toggle('cc-esc-guia-on', !!scriptCardPreferences.sceneGuia);
+        /* Las estadisticas tambien arrancan desde la preferencia guardada, no solo
+           desde el interruptor: si solo se tocaran al pulsar, al recargar la
+           pagina se verian encendidas aunque estieran apagadas. */
+        document.body?.classList.toggle('cc-esc-stats-hero-off', !scriptCardPreferences.sceneStatsHero);
+        document.body?.classList.toggle('cc-esc-stats-wild-off', !scriptCardPreferences.sceneStatsWild);
         sceneAjustarTamano();
         sceneAjustarLoop();
         sceneColocarDeferred();
