@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUSTOM HUB GAME
 // @namespace    http://tampermonkey.net/
-// @version      5.5.0
+// @version      5.6.0
 // @description  Rediseño responsivo con carga optimizada, tamaños configurables, paneles plegables y Capture Bar persistente.
 // @match        *://poke.idleworld.online/*
 // @grant        GM_addStyle
@@ -4267,43 +4267,113 @@
            La barra toma el ancho del texto, no un ancho fijo: con nombres
            largos como «Furious Magmar» un ancho fijo dejaria la barra mas
            ancha que el nombre y el recuadro descuadrado. */
+        /* EL CARTEL DEL POKEMON: PANEL DE JUEGO, PLANO
+           ----------------------------------------------------
+           Peticion: "mas estilo de juego, mas UI game, no neones, no blur, no
+           glow". Todo lo que hay aqui es plano por construccion:
+
+             - Sin desenfoque, sin fondo translucido, sin sombras difusas. La
+               unica sombra es una desplazada y DURA (3 px sin difuminado), que es
+               sombra de etiquetado, no resplandor.
+             - Sin halos ni brillos: los rellenos son planos y los bordes, lineas
+               de 1 px.
+             - Las fichas de tipo son color SOLIDO con una linea oscura debajo,
+               que es bisel (el relieve de los botones de siempre), no glow.
+
+           ESTRUCTURA, de arriba abajo:
+             1. cabecera: nombre + nivel + fichas de tipo, sobre una tira propia
+             2. una linea por barra: rotulo, carril, cifra
+             3. la fila de "Buscando", en los salvajes a los que aun no se ha
+                pegado
+
+           Lo que hace de esto "UI de juego" y no una etiqueta de texto es que
+           hay piezas con peso visual distinto: la cabecera esta sobre un fondo
+           mas claro que las barras, el acento de color va en el borde izquierdo
+           como barra solida, y las cifras van alineadas a la derecha en columna
+           para que el ojo las compare en vertical. */
         .cc-esc-nm { position:absolute; left:50%; bottom:100%; transform:translateX(-50%);
-            font-size:11px; font-weight:800; white-space:nowrap; padding:3px 7px 4px;
-            border-radius:3px; background:#12161f; color:#f4f8fd;
-            border:1px solid var(--ac,#fb7185);
-            box-shadow:3px 3px 0 rgba(0,0,0,.55); z-index:2;
-            display:flex; flex-direction:column; align-items:stretch; gap:2px;
-            /* ANCHO MINIMO Y MAXIMO DEL CARTEL.
+            font-size:11px; font-weight:800; white-space:nowrap;
+            padding:0; border-radius:2px;
+            background:#0b1018; color:#e8eef7;
+            border:1px solid #2c3849;
+            /* El acento de color va como barra SOLIDA en el canto, no como marco
+               completo: asi el tipo se lee de un vistazo sin que la etiqueta
+               parezca un adorno. */
+            border-left:3px solid var(--ac,#fb7185);
+            box-shadow:3px 3px 0 rgba(0,0,0,.6); z-index:2;
+            display:flex; flex-direction:column; align-items:stretch;
+            box-sizing:border-box; min-width:136px; max-width:214px;
+            /* ---- EL PANEL SIGUE A SU POKEMON ----
 
-               El minimo es lo que garantiza que el carril tenga siempre 72 px o
-               mas: 108 menos el rotulo HP, los espacios y el relleno deja el
-               carril por encima de esa cifra. El maximo evita que un nombre largo
-               estire el cartel por toda la escena; a partir de ahi, el nombre se
-               mueve con la marquesina en vez de ensanchar la barra.
+               El sprite se mece con ccBob (1.7 s) o, si esta en marcha, con
+               ccWalk (0.56 s). El panel lleva un movimiento PROPIO con ese mismo
+               periodo y el mismo desfase por Pokemon, pero retrasado: cuando el
+               sprite baja, el panel todavia sube; cuando el sprite sube, el
+               panel llega tarde. Esa diferencia es la que se ve: no es que el
+               panel se mueva, es que lo esta llevando consigo.
 
-               El maximo se queda en 146 a proposito, aunque ahora las barras
-               lleven la CIFRA REAL: por el ancho no cabe, y ensanchar el cartel
-               hacia los lados hacia que dos etiquetas de una fila de ocho se
-               montaran una en otra. La cifra va en su propia lnea, debajo. */
-            box-sizing:border-box; min-width:108px; max-width:146px; }
+               Sin retardo seria un rigid-body y solo se notaria el rebote.
+
+               Todo con transform, que no toca layout ni paint. Y fuera del
+               hilo principal, que es lo que evita que esto se caiga de frames
+               con la pagina ocupada; un rAF por fotograma con nueve estilos
+               leidos, que es justo lo que este proyecto se coviene evitar.
+
+               El pivote va ABAJO (50% 100%), que es donde el panel esta unido al
+               Pokemon: estirando desde abajo el cuello se alarga, y desde el
+               centro el texto se tuerne dentro de su caja. */
+            transform: translateX(-50%);
+            transform-origin: 50% 100%;
+            animation: ccCabeceo 1.7s ease-in-out infinite; }
+        /* El retardo se escribe desde el script, sumando el de su sprite. */
+        .cc-esc-nm.cc-walk { animation-name: ccCabeceoAndar; animation-duration: .56s; }
+        /* La inclinacion va con el mismo reloj que el resto: es una cabeceo, no
+           una inclinacion propia. Medio grado es lo justo para que se lea sin
+           que el texto parezca torcido. */
+        @keyframes ccCabeceo {
+            0%, 100% { transform: translateX(-50%) translateY(0) scale(1) rotate(0deg); }
+            50%      { transform: translateX(-50%) translateY(-4px) scaleY(1.035) scaleX(.985) rotate(-.5deg); } }
+        @keyframes ccCabeceoAndar {
+            0%, 100% { transform: translateX(-50%) translateY(0) scale(1) rotate(0deg); }
+            50%      { transform: translateX(-50%) translateY(-4.5px) scaleY(1.04) scaleX(.98) rotate(-.5deg); } }
+        /* Con movimiento reducido el panel se queda pegado al sprite y sin mas.
+           Sigue siendo un panel de datos: quitarle el vaiven entero, no solo el
+           estiramiento. */
+        @media (prefers-reduced-motion:reduce) {
+            .cc-esc-nm, .cc-esc-nm.cc-walk { animation:none; transform:translateX(-50%); } }
         /* El texto va en un <b> propio para poder reescribirlo sin cargarse la
            punta de abajo ni las barras. */
-        /* La fila agrupa nombre y nivel: una linea, centrada, y por debajo las barras.
-           Sin ella el nivel caeria en su propia linea y el recuadro se mediria
-           por el texto mas corto de los dos.
+        /* La cabecera agrupa nombre, nivel y fichas. La tira tiene fondo propio
+           para separar la identidad del dato.
 
-           RECORTA: si el nombre no cabe, se corta y se mueve en vez de empujar el
-           cartel y con el la barra. */
-        .cc-nmrow { display:flex; justify-content:center; align-items:baseline;
-            gap:4px; overflow:hidden; max-width:100%; }
-        .cc-esc-nmtxt { font-weight:inherit; white-space:nowrap; }
-        .cc-nmlv { white-space:nowrap; }
+           RECORTA: si el nombre no cabe, se corta y se mueve en vez de empujar
+           el cartel y con el las barras. */
+        .cc-nmrow { display:flex; align-items:center; gap:5px;
+            padding:4px 6px 4px 7px; max-width:100%;
+            background:#131c28; border-bottom:1px solid #243244;
+            overflow:hidden; }
+        .cc-esc-nmtxt { font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+            font-size:10px; color:#f2f7ff; white-space:nowrap;
+            /* El nombre es lo UNICO que se encoge: el nivel y las fichas tienen
+               ancho fijo y no se mueven. Por eso la marquesina se mide sobre el
+               texto, no sobre la fila. */
+            flex:0 1 auto; overflow:hidden; }
+        .cc-nmlv { flex:0 0 auto; white-space:nowrap;
+            font-size:8px; font-weight:800; letter-spacing:.02em; color:#9fb2c7;
+            background:#0b1018; border-bottom:1px solid #3b4b60; padding:1px 3px; }
+        /* Las fichas de tipo, a la derecha de la cabecera. El margen automatico
+           las pega al canto, que es donde se leen los datos rapidos. */
+        .cc-nmtipos { flex:0 0 auto; display:inline-flex; gap:3px; margin-left:auto; }
+        .cc-nmtipo { font-size:7.5px; font-weight:800; letter-spacing:.06em;
+            padding:1px 4px; color:var(--tc-txt,#0b0f16);
+            background:var(--tc,#78716c);
+            /* Bisel, no glow: una linea oscura debajo del color solido. Es el
+               relieve de los botones de siempre y no hace nada de luz. */
+            border-bottom:1px solid rgba(0,0,0,.45); }
         /* LA MARQUESINA la enciende el script, y solo cuando el texto desborda de
            verdad: si cabe, no se mueve nada. El recorrido va en --cc-marq, que el
            script calcula como los pixeles que sobran (en negativo). */
-        .cc-nmrow.cc-marquesina { justify-content:flex-start; }
-        .cc-nmrow.cc-marquesina .cc-esc-nmtxt,
-        .cc-nmrow.cc-marquesina .cc-nmlv {
+        .cc-nmrow.cc-marquesina .cc-esc-nmtxt {
             animation:ccMarquesina 5s linear infinite alternate; }
         @keyframes ccMarquesina {
             0%, 10% { transform:translateX(0); }
@@ -4311,9 +4381,58 @@
         /* Con movimiento reducido no se mueve: se deja el recorte. Es preferible
            un nombre cortado a una linea desplazandose sola. */
         @media (prefers-reduced-motion:reduce) {
-            .cc-nmrow.cc-marquesina .cc-esc-nmtxt,
-            .cc-nmrow.cc-marquesina .cc-nmlv { animation:none; transform:none; }
+            .cc-nmrow.cc-marquesina .cc-esc-nmtxt { animation:none; transform:none; }
         }
+
+        /* BARRAS DEL ESCENARIO - PLANAS, CON ANCHO MINIMO GARANTIZADO
+           ---------------------------------------------------------
+           Una linea por barra: rotulo, carril y cifra en la MISMA linea. La
+           cifra volvio a su sitio al lado porque la cabecera nueva es la que
+           marca el ancho del cartel (136-214 px); antes no habia sitio, y por eso
+           iba debajo y el cartel crecia hacia abajo.
+
+           ANCHO MINIMO DEL CARRIL: el carril tiene min-width propio (56 px), no
+           lo que sobra del rotulo y la cifra. Depender del sobrante hacia que
+           el carril se hundiera a 9 px en las etiquetas de cabecera corta:
+           medido. Un carril que cambia de ancho con el nombre es una barra que
+           deja de poder compararse con la de al lado.
+
+           El nombre, si no cabe, se mueve con una marquesina. La clase que la
+           enciende la pone el script, que es el unico que puede medir si el
+           texto desborda.
+
+           HP: la llevan todos. Color = tipo principal, via --cc-bar-fill.
+           XP: solo el aliado, mas fina y azul.
+           Critico (25 % o menos): el relleno pasa a rojo. */
+        .cc-bar-line { position:relative; display:flex; align-items:center;
+            gap:5px; width:100%; padding:3px 6px; }
+        .cc-bar-line + .cc-bar-line { border-top:1px solid #1a2430; }
+        /* El filete amarillo de debajo de cada renglon se ha ido: era un resto
+           del medidor antiguo y con las lineas de borde ya separa el dato. */
+        .cc-bar-line::after { display:none; }
+        .cc-bar-tag { flex:0 0 auto; width:12px; font-size:8px; font-weight:800;
+            letter-spacing:.04em; color:#8fa3ba; font-family:inherit; }
+
+        .cc-nmbar { position:relative; flex:1 1 auto; min-width:56px; display:block;
+            height:9px; border:1px solid #2c3849; background:#060a10; }
+        .cc-nmbar i { display:block; height:100%; width:0;
+            background:var(--cc-bar-fill,#22c55e);
+            transition:width .18s ease-out; }
+        /* Critico: al 25 % o menos el relleno pasa a rojo. */
+        .cc-nmbar i.cc-crit { --cc-bar-fill:#c0392b; }
+        /* La de VIDA: no declara color, lo pone el tipo. */
+        .cc-nmbar-hp { height:9px; }
+        /* XP: solo el aliado, mas fina y azul fijo. */
+        .cc-nmbar-xp { height:5px; --cc-bar-fill:#4a90d9; }
+
+        /* LA CIFRA REAL, alineada a la derecha en columna.
+
+           tabular-nums para que el ancho del numero sea el mismo siempre: sin
+           eso el renglon respiraba en cada golpe al cambiar de cifra. */
+        .cc-bar-val { flex:0 0 auto; font-size:8px; font-weight:700;
+            letter-spacing:0; text-transform:none; font-family:inherit;
+            font-variant-numeric:tabular-nums; color:#a9bcd2;
+            white-space:nowrap; text-align:right; }
 
         /* ESTADO "BUSCANDO": EL SALVAJE AL QUE TODAVIA NO LE HEMOS PEGADO
            --------------------------------------------------------------
@@ -4353,15 +4472,17 @@
            SIEMPRE, incluso en los salvajes ya atacados. Se resuelve con
            especificidad y no moviendo el bloque de sitio, porque el orden se
            rompe en cuanto alguien anade una regla en medio. */
-        .cc-esc-nm .cc-esc-near { display:none; justify-content:center; }
+        .cc-esc-nm .cc-esc-near { display:none; justify-content:flex-start; }
         .cc-esc-fighter.cc-near .cc-esc-nm .cc-esc-near { display:flex; }
         /* Esa fila es de texto: no lleva la linea de debajo del renglon. */
         .cc-esc-near::after { display:none; }
+        /* Sin capsula: era una pastilla redonda con fondo translucido y borde
+           suave, o sea un "chip" moderno. En un panel de juego esto es un
+           RENGLON: la palabra en mayusculas al principio de su linea, con el
+           icono girando al lado. El fondo lo pone la fila, no la palabra. */
         .cc-near-tag { display:inline-flex; align-items:center; gap:4px;
-            padding:2px 7px 2px 5px; border-radius:999px;
-            font-size:8px; font-weight:800; letter-spacing:.06em;
-            text-transform:uppercase; color:#dbe9ff;
-            background:rgba(96,165,250,.16); border:1px solid rgba(96,165,250,.5); }
+            font-size:8px; font-weight:800; letter-spacing:.08em;
+            text-transform:uppercase; color:#cfe0f2; }
 
         @media (prefers-reduced-motion:reduce) {
             .cc-near-spin { animation:none; }
@@ -4369,91 +4490,6 @@
         /* El nivel va detras del nombre. Mismo motivo que el texto: hijo aparte
            para poder reescribirlo sin tocar lo de al lado. */
         .cc-nmlv { font-weight:inherit; color:#93a7bd; font-size:9.5px; }
-
-        /* BARRAS DEL ESCENARIO - PLANAS, CON ANCHO MINIMO GARANTIZADO
-           ---------------------------------------------------------
-           Se pidio pasar del medidor segmentado con brillo a un estilo mas plano.
-
-           Ahora: carril de una sola pieza, con borde fino y relleno SOLIDO del
-           color del tipo. Sin segmentos en diagonal y sin brillo alrededor. La
-           unica concesion al original es la linea fina de debajo, que se queda
-           porque separa la barra del fondo sin ser un efecto.
-
-           ANCHO MINIMO. La etiqueta lleva min-width (108 px) y max-width (146).
-           Con el rotulo HP a la izquierda y los espacios, al carril le quedan
-           SIEMPRE 72 px o mas: una barra mas corta no deja leer el progreso.
-
-           El nombre, si no cabe en ese ancho, se mueve con una marquesina. Asi se
-           lee entero SIN tocar el tamano de la barra, que es lo que se pedia. La
-           clase que la enciende la pone el script, que es el unico que puede
-           medir si el texto desborda.
-
-           HP: la llevan todos. Color = tipo principal, via --cc-bar-fill.
-           XP: solo el aliado, mas fina y azul.
-           Critico (25 % o menos): el relleno pasa a rojo. */
-        .cc-bar-line { position:relative; display:flex; align-items:center;
-            gap:5px; width:100%; padding-bottom:3px;
-            /* Con la cifra real debajo de la barra, la linea tiene que poder
-               partirse en dos filas. Sin esto, la cifra (flex:0 0 auto) le
-               robaba ancho al carril (flex:1 1 auto) y la barra se hundia a 9 px
-               en las etiquetas de nombre corto, que son la mayoria: medido. Un
-               carril que cambia de ancho con el nombre es una barra que deja de
-               poder compararse con la de al lado, que era justo lo que la
-               colocaba en la etiqueta. */
-            flex-wrap:wrap; }        .cc-bar-line + .cc-bar-line { margin-top:3px; }
-
-        /* La linea de debajo: un solo tono apagado, no un degradado. */
-        .cc-bar-line::after { content:""; position:absolute; left:0; right:0; bottom:0;
-            height:1px; background:rgba(245,179,1,.5); }
-        .cc-bar-tag { flex:0 0 auto; font-size:8px; font-weight:800;
-            letter-spacing:.06em; color:#c8d6e6; text-transform:uppercase;
-            font-family:inherit; }
-
-        .cc-nmbar { position:relative; flex:1 1 auto; min-width:0; display:block;
-            height:8px; border-radius:2px; overflow:hidden;
-            background:#0a1018; border:1px solid rgba(255,255,255,.10); }
-        .cc-nmbar i { display:block; height:100%; width:0; border-radius:1px;
-            background:var(--cc-bar-fill,#22c55e);
-            transition:width .18s ease-out; }
-        /* Critico: al 25 % o menos el relleno pasa a rojo. */
-        .cc-nmbar i.cc-crit { --cc-bar-fill:#ef4444; }
-        /* La de VIDA: no declara color, lo pone el tipo. */
-        .cc-nmbar-hp { height:8px; }
-        /* XP: solo el aliado, mas fina y azul fijo. */
-        .cc-nmbar-xp { height:6px; --cc-bar-fill:#3b82f6; }
-
-        /* LA CIFRA REAL, en su propia fila DEBAJO de la barra.
-
-           OJO: dentro de este bloque no se pueden escribir comillas invertidas.
-           Todo el CSS va dentro de un literal de plantilla (GM_addStyle), asi
-           que una sola pareja aqui parte la cadena y el script entero deja de
-           parsear.
-
-           Al principio la cifra iba al lado del carril, y medido salia mal: el
-           carril es flex:1 1 auto y la cifra flex:0 0 auto, asi que en las
-           etiquetas de nombre corto la cifra se llevaba el ancho y la barra se
-           quedaba en 9 px. Y no era solo estetico: un carril que depende de
-           como de largo sea el nombre hace que dos Pokemon de la misma fila no
-           se puedan comparar, que era justo lo que la barra ganaba al estar en
-           la etiqueta.
-
-           Con flex:0 0 100% la cifra salta a la segunda fila del flex-wrap y el
-           carril se queda con el ancho que tenia siempre. El cartel no crece:
-           por eso max-width sigue en 146.
-
-           tabular-nums para que el ancho del numero sea el mismo siempre: sin
-           eso la etiqueta respiraba en cada golpe al cambiar de cifra. */
-        .cc-bar-val { flex:0 0 100%; box-sizing:border-box; font-size:8px;
-            font-weight:700; line-height:1.1;
-            letter-spacing:0; text-transform:none; font-family:inherit;
-            font-variant-numeric:tabular-nums; color:#9fb2c7; white-space:nowrap;
-            /* Alineada con el carril, no con el rotulo: la cifra va con la
-               barra, no con la etiqueta HP.
-
-               El box-sizing no es cosmetico: con flex:0 0 100% mas este
-               relleno, sin el la caja mide 100 % + 18 px y se salia por la
-               derecha de la etiqueta (medido). */
-            padding-left:18px; overflow:hidden; text-overflow:clip; }
 
         /* La punta del cartel, del color del marco, para que se vea de donde
            sale el nombre. Sin difuminado: es un triangulo opaco. */
@@ -8441,6 +8477,28 @@
         return typeof v === 'number' && isFinite(v);
     }
 
+    /* Que color de texto va sobre un color de tipo.
+
+       Los tipos de la tabla del juego van del verde intenso al gris apagado, y
+       el texto blanco se pierde sobre los claros. Se mira la luminancia del
+       color y se elige: oscuro encima de claro, claro encima de oscuro.
+
+       Se calcula en vez de tener una lista a mano porque la tabla de tipos es
+       del juego y puede cambiar: una lista se quedaria vieja sin avisar. */
+    function ccTextoSobre(color) {
+        const m = /^#?([0-9a-f]{6})$/i.exec(String(color || ''));
+        if (!m) return '#0b0f16';
+        const n = parseInt(m[1], 16);
+        const r = (n >> 16) & 255;
+        const g = (n >> 8) & 255;
+        const b = n & 255;
+        /* Luminancia relativa aproximada sobre sRGB. No es la formula WCAG
+           completa, que exige linealizar los canales: para decidir entre texto
+           casi blanco y casi negro, esto basta y es mucho mas legible. */
+        const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        return lum > 0.55 ? '#0b0f16' : '#f4f8fd';
+    }
+
     /* Las cifras de las barras, en texto.
 
        Se separan los miles con punto, que es como se leen los numeros grandes
@@ -8478,8 +8536,14 @@
        parece vida. */
     function ccTextoVida(hp, maxHp) {
         if (!ccEsNumero(hp) || !ccEsNumero(maxHp) || maxHp <= 0 || hp < 0) return '';
-        const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
-        return `${ccNumeroChico(hp)}/${ccNumeroChico(maxHp)} · ${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}%`;
+        /* La vida se recorta a la maxima antes de escribirse. MEDIDO en el juego:
+           un salvaje marco «2.704/2.700 · 100 %», que no es un dato raro sino
+           una cuenta viva que va por delante del maximo un instante. Puesto
+           tal cual, el ojo lee un Pokemon con 4 de vida mas de los que puede
+           tener. */
+        const h = Math.min(hp, maxHp);
+        const pct = Math.max(0, Math.min(100, (h / maxHp) * 100));
+        return `${ccNumeroChico(h)}/${ccNumeroChico(maxHp)} · ${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}%`;
     }
 
     /* Texto de la barra de EXPERIENCIA: el absoluto y el porcentaje.
@@ -8552,7 +8616,8 @@
        texto. */
     function sceneAjustarMarquesina(nm) {
         const fila = nm?.querySelector('.cc-nmrow');
-        if (!fila) return;
+        const txt = nm?.querySelector('.cc-esc-nmtxt');
+        if (!fila || !txt) return;
         fila.classList.remove('cc-marquesina');
         /* Sin medidas todavia (la fila aun no esta colocada) no se puede decidir:
            se prueba en el siguiente fotograma, que ya tiene caja. */
@@ -8566,7 +8631,11 @@
             }
             return;
         }
-        const sobra = fila.scrollWidth - fila.clientWidth;
+        /* Se mide el TEXTO, no la fila. Antes la fila era solo el nombre, asi
+           que daba igual; con el nivel y las fichas de tipo al lado, lo que se
+           desborda es el nombre y medir la fila entera no lo detectaba nunca:
+           el nombre ya venia recortado y la marquesina no se encendia. */
+        const sobra = txt.scrollWidth - txt.clientWidth;
         if (sobra <= 2) return;
         fila.style.setProperty('--cc-marq', (-sobra) + 'px');
         fila.classList.add('cc-marquesina');
@@ -8618,17 +8687,32 @@
     function sceneCrearNombre(nombre, barras) {
         const nm = document.createElement('span');
         nm.className = 'cc-esc-nm';
-        /* Nombre y nivel van en una FILA propia. Si fueran dos hijos sueltos de la
-           etiqueta, que es una columna, el nivel caeria en su propia linea y el
-           recuadro se mediria por el mas corto de los dos: medido, «Golem
-           Nv. 324» daba un recuadro de 55 px para 77 px de texto, y el nombre
-           se salia por fuera. */
+        /* Nombre, nivel y tipos van en una FILA DE CABECERA propia. Si fueran
+           hijos sueltos de la etiqueta, que es una columna, cada uno caeria en
+           su propia linea y el recuadro se mediria por el mas corto: medido,
+           «Golem Nv. 324» daba un recuadro de 55 px para 77 px de texto, y el
+           nombre se salia por fuera.
+
+           Los tres van en la misma fila y en ese orden: lo que identifica al
+           Pokemon, cuanto tiene, y de que tipo es. El ancho lo manda la fila,
+           no la barra, que por debajo se estira. */
         const fila = document.createElement('span');
         fila.className = 'cc-nmrow';
         const txt = document.createElement('b');
         txt.className = 'cc-esc-nmtxt';
         txt.textContent = nombre;
         fila.appendChild(txt);
+        /* El nivel se crea SIEMPRE, tambien para los salvajes aunque no se
+           rellene. Antes se insertaba a posteriori y solo en el heroe: si el
+           nivel no llegaba, no habia sitio donde ponerlo aunque llegara luego. */
+        const lv = document.createElement('b');
+        lv.className = 'cc-nmlv';
+        fila.appendChild(lv);
+        /* Las fichas de tipo. El allied es el unico que tiene dos; los salvajes
+           pueden traer uno o ninguno. */
+        const tipos = document.createElement('span');
+        tipos.className = 'cc-nmtipos';
+        fila.appendChild(tipos);
         nm.appendChild(fila);
         if (barras === 'doble') {
             nm.appendChild(sceneCrearBarraNombre('hp'));
@@ -8645,6 +8729,51 @@
         punta.className = 'cc-punta';
         nm.appendChild(punta);
         return nm;
+    }
+
+    /* Las fichas de tipo del cartel.
+
+       Solo se redibujan cuando la lista cambia de verdad: lacomparacion va por
+       la clave que se guarda en el propio nodo, porque en el escenario se
+       repinta la fila entera en cada mensaje del campo y rehacer dos o tres
+       <span> por Pokemon cada vez es trabajo tirado. */
+    function scenePonerTipos(nm, tipos) {
+        const host = nm?.querySelector('.cc-nmtipos');
+        if (!host) return;
+        const lista = (Array.isArray(tipos) ? tipos : [tipos])
+            .map(t => String(t || '').trim().toUpperCase())
+            .filter(t => t && TYPE_COLORS[t.toLowerCase()])
+            .slice(0, 2);
+        const clave = lista.join('/');
+        if (host.dataset.ccTipos === clave) return;
+        host.dataset.ccTipos = clave;
+        host.textContent = '';
+        lista.forEach(tipo => {
+            const color = getTypeColor(tipo);
+            const chip = document.createElement('span');
+            chip.className = 'cc-nmtipo';
+            chip.style.setProperty('--tc', color);
+            chip.style.setProperty('--tc-txt', ccTextoSobre(color));
+            chip.textContent = tipo;
+            host.appendChild(chip);
+        });
+    }
+
+    /* El acento de color de una etiqueta entera: las fichas de tipo del cartel,
+       el marco y el relleno de la barra de vida. Los tres del color del primer
+       tipo, que es el que manda en la partida.
+
+       Va en una sola funcion porque los tres tienen que ir juntos: si el marco
+       fuera del tipo y el relleno de otro, la etiqueta contaria dos cosas
+       distintas y el ojo no sabria cual es cual. */
+    function scenePintarTipoEtiqueta(nm, tipos) {
+        if (!nm) return;
+        scenePonerTipos(nm, tipos);
+        const color = tipos && tipos.length ? getTypeColor(tipos[0]) : '';
+        if (!color) return;
+        nm.style.setProperty('--ac', color);
+        const barra = nm.querySelector('.cc-nmbar-hp');
+        if (barra) barra.style.setProperty('--cc-bar-fill', color);
     }
 
     function sceneRebuild() {
@@ -9218,6 +9347,22 @@
         return { w: lado, h: lado, px: sprite.px, anim: !!sprite.anim };
     }
 
+    /* El retardo del panel respecto a su sprite: eso es lo que hace que parezca
+       que lo lleva en vez de que se mueva a la vez.
+
+       Se mide a partir del retardo que YA tiene el sprite, no repitiendo la
+       cuenta: si el desfase de la fila cambia, el del panel sale solo y los dos
+       no pueden quedar descuadrados. El retardo extra es MAS CORTO en marcha
+       (0.05 s de 0.56) que en reposo (0.15 s de 1.7): el mismo porcentaje del
+       ciclo, que es lo que mantiene la sensacion igual en los dos modos. */
+    const SCENE_ETIQUETA_RETRASO = { idle: 0.15, walk: 0.05 };
+    function sceneRetrasoEtiqueta(nm, spr) {
+        if (!nm || !spr) return;
+        const base = parseFloat(spr.style.animationDelay || '0') || 0;
+        const extra = nm.classList.contains('cc-walk') ? SCENE_ETIQUETA_RETRASO.walk : SCENE_ETIQUETA_RETRASO.idle;
+        nm.style.animationDelay = (base + extra) + 's';
+    }
+
     function sceneSpriteHunters(hunters) {
         hunters.forEach((h, i) => {
             /* El src va aqui y no solo al crear: cambiar de estilo de sprite es
@@ -9235,6 +9380,9 @@
             /* Desfase en el idle: si todos se mueven igual parecen un bloque. */
             h.spr.style.animationDelay = `${(i * 0.23)}s`;
             h.spr.classList.toggle('cc-walk', box.anim && scriptCardPreferences.sceneWalk);
+            /* La etiqueta va con el mismo reloj que su sprite, y por detras. */
+            if (h.nm) h.nm.classList.toggle('cc-walk', box.anim && scriptCardPreferences.sceneWalk);
+            sceneRetrasoEtiqueta(h.nm, h.spr);
         });
         const heroe = sceneState.hero;
         const spr = heroe?.spr || sceneState.col?.querySelector('.cc-hero .cc-esc-spr');
@@ -9243,7 +9391,11 @@
             spr.style.width = box.w + 'px';
             spr.style.height = box.h + 'px';
             spr.style.imageRendering = box.px ? 'pixelated' : 'auto';
-            spr.classList.toggle('cc-walk', box.anim && scriptCardPreferences.sceneWalk);
+            const andando = box.anim && scriptCardPreferences.sceneWalk;
+            spr.classList.toggle('cc-walk', andando);
+            const nmHeroe = heroe?.nm || sceneState.col?.querySelector('.cc-hero .cc-esc-nm');
+            if (nmHeroe) nmHeroe.classList.toggle('cc-walk', andando);
+            sceneRetrasoEtiqueta(nmHeroe, spr);
         }
         /* Al final, y no al principio: las cajas de arriba son las que se van a
            pintar con el dato que llegue. Antes pedia con la fila todavia sin
@@ -9369,6 +9521,10 @@
            se ve el sprite shiny. Sigue puesta porque en los dos estilos sin
            variante (Gen-IX y Dream-World) es el unico aviso. */
         if (entry.shiny) nm.insertAdjacentHTML('beforeend', ccStar());
+        /* Las fichas de tipo y el color de acento, aqui al montar. Antes el
+           marco de los salvajes era un rojo fijo de la hoja de estilo, asi que
+           un alleviating de roca y otro de agua se veian exactamente igual. */
+        scenePintarTipoEtiqueta(nm, entry.types);
         el.appendChild(spr);
         el.appendChild(nm);
         /* La silueta del desenlace va en un hijo PROPIO, que lleva una copia del
@@ -9531,6 +9687,7 @@
                 vivo.mapaFila = Number(e.mapaFila) || 0;
                 vivo.mapaCol = Number(e.mapaCol) || 0;
                 vivo.types = e.types || vivo.types;
+                if (e.types) scenePintarTipoEtiqueta(vivo.nm, vivo.types);
                 if (e.name && vivo.name !== e.name) {
                     vivo.name = e.name;
                     scenePonerNombre(vivo.nm, e.name);
@@ -9635,6 +9792,7 @@
                entren uno detras de otro conforme se detectan. */
             hunter.el.classList.add('cc-enter');
             hunter.spr.style.animationDelay = `${(pedidas - 1 - i) * 0.12}s`;
+            sceneRetrasoEtiqueta(hunter.nm, hunter.spr);
             window.setTimeout(() => hunter.el?.classList.remove('cc-enter'), 700);
             sceneState.hunters.push(hunter);
         }
@@ -9679,6 +9837,10 @@
         Array.isArray(pos) ? pos[1] : 0);
         el.classList.toggle('cc-objetivo', indice === 0);
         hunter.spr.style.animationDelay = `${indice * 0.23}s`;
+        /* La etiqueta se reordena con su Pokemon, asi que su retardo tambien: si
+           el hueco cambia, el desfase de la fila cambia, y el panel tiene que
+           seguir yendo por detras y no quedarse con el del hueco anterior. */
+        sceneRetrasoEtiqueta(hunter.nm, hunter.spr);
         /* La llamada a sceneColumnas() de arriba acaba de recalcular el
            desplazamiento de centrado, porque al cambiar cuantos salvajes hay el
            conjunto se recentra. El aliado se coloca aqui tambien para que no se
@@ -9777,7 +9939,11 @@
         if (!nombre) return null;
         return { name: nombre,
                  speciesId: ccWildState.baseSpecies || ccSpeciesIdFromCatalog(nombre) || 1,
-                 types: ccCreatureTypes(nombre), hpPct: 100 };
+                 /* Los tipos salen del CATALOGO por especie, no del nombre. Con un
+                    Ditto transformado el nombre es el del Ditto y sus tipos
+                    tambien: se veian los de Ditto en vez de los de la forma. */
+                 types: ccTiposEspecie(ccWildState.baseSpecies || ccSpeciesIdFromCatalog(nombre) || 0, nombre),
+                 hpPct: 100 };
     }
 
     /* Arma la lista de salvajes de la fila.
@@ -10355,7 +10521,7 @@
            golpe: la hoja que se pinta depende del tipo, y sin esto el aliado
            recibiria siempre el efecto de NORMAL. Se sacan del nombre con la misma
            funcion que usan los salvajes. */
-        sceneState.hero = { name, spr, el: hero, types: ccCreatureTypes(name), speciesId: especieHeroe };
+        sceneState.hero = { name, spr, el: hero, types: ccTiposEspecie(especieHeroe, name), speciesId: especieHeroe };
         sceneSpriteHunters(sceneState.hunters);
         sceneMedirPies(spr.src);
         sceneColocarDeferred();
@@ -10461,7 +10627,18 @@
         if (!card) return;
 
         const nombre = card.querySelector('.cc-name')?.textContent?.trim() || '-';
-        const nivel = card.querySelector('.cc-lv')?.textContent?.trim() || '';
+        /* El nivel del aliado.
+
+           Se pedia la card primero y se acabo tomando del SOCKET. MEDIDO en el
+           juego: la card del Golem no tiene ningun elemento con clase de nivel
+           —`querySelectorAll` no encuentra ni uno— y su texto plano va
+           «GolemLegendary RockGround 7597/13944 HP...Vel881 NV EXP 50% POD
+           12336»: el rotulo «NV» aparece pero la cifra no. El socket si lo
+           manda, en cada `pokes` y en cada `poke-xp`, y es el dato de verdad. */
+        const nivelCard = card.querySelector('.cc-lv')?.textContent?.trim() || '';
+        const nivelSocket = Number(latestPokemonData?.level);
+        const nivel = nivelCard
+            || (Number.isFinite(nivelSocket) && nivelSocket > 0 ? 'Nv. ' + Math.round(nivelSocket) : '');
         const etiqueta = sceneState.hero?.el?.querySelector('.cc-esc-nm')
             || col.querySelector('.cc-hero .cc-esc-nm');
         if (etiqueta) {
@@ -10475,10 +10652,14 @@
                 lv.className = 'cc-nmlv';
                 etiqueta.querySelector('.cc-esc-nmtxt')?.after(lv);
             }
-            lv.textContent = nivel ? ' ' + nivel : '';
+            lv.textContent = nivel;
+            /* El nivel y los tipos van en la cabecera, al lado del nombre. El
+               nivel entra tal cual lo trae la card («Nv. 533») y las fichas de
+               tipo se pintan aqui, que es donde ya se conoce la especie. */
+            scenePonerTipos(etiqueta, sceneState.hero?.types);
             /* El marco de la etiqueta toma el color del tipo del aliado, que
                antes lo llevaba el panel. */
-            const tipos = ccCreatureTypes(nombre);
+            const tipos = sceneState.hero?.types?.length ? sceneState.hero.types : ccTiposEspecie(sceneState.hero?.speciesId || 0, nombre);
             etiqueta.style.setProperty('--ac', getTypeColor(tipos[0]) || '#7c6de8');
             /* Y la barra de vida, el mismo color de tipo. Se pinta aqui y no solo
                en sceneRefreshHero porque esta funcion corre al montar la
